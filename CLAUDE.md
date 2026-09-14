@@ -131,11 +131,11 @@ uvicorn main:app --host 127.0.0.1 --port 8000
 飞书渠道补完、存储 SQLite 化 + 会话历史持久化、异动提醒、大盘指数行情。
 已知问题 P5（WebChat 鉴权）、P2（法定节假日）、P6（测试基座）同日完成。
 
-后续迭代建议：
-1. **全模块代码审计**：[docs/AUDIT.md](docs/AUDIT.md) 审查进度表 14 个模块全部未审查
-2. **P3 会话历史保留工具调用上下文**（见 [docs/STATUS.md](docs/STATUS.md) 第三节）
-3. **P4 东财健康探针**（定时查常青股票，失败告警）
-4. 测试补齐：scheduler 时间函数 export 后补测、外部接口层录制 fixture
+> ⚠️ **接手第一件事**：当前机器上 `.env` 不存在、data-service 依赖未安装，
+> 系统跑不起来。先按 [docs/STATUS.md](docs/STATUS.md) 第二节"S0 环境前置"逐项就位。
+
+后续迭代按 [docs/STATUS.md](docs/STATUS.md) 第二节**待办优先级总表**执行
+（S0 环境 → S1 P3 工具上下文 / P4 健康探针 → S2 审计与测试补齐 → S3 体验项）。
 
 ## 文档维护义务（每次改动代码后对照执行）
 
