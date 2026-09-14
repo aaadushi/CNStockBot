@@ -146,6 +146,7 @@ uvicorn main:app --host 127.0.0.1 --port 8000
 | 排查并解决了一个坑（>15 分钟、报错有迷惑性、外部接口非直觉行为） | [docs/PITFALLS.md](docs/PITFALLS.md)（按模板回填） |
 | 做代码审查 / 修复了审计问题 | [docs/AUDIT.md](docs/AUDIT.md)（严格遵守其中的角色权限规则） |
 | 改了目录结构、开发流程、关键决策 | 本文件（CLAUDE.md） |
+| 新增/下线了用户可见功能、接口端点、启动前置条件 | [README.md](README.md)（及 [data-service/README.md](data-service/README.md)，如涉及微服务端点） |
 
 对照上表逐行判断，**仅更新适用的行；均不适用则无需动文档**，不必为此请示。
 原则：文档和代码不同步，比没有文档更糟——下一个 agent 会被误导。

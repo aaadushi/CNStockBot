@@ -40,7 +40,7 @@ registry 找到技能 → skill.execute(args, ctx)    (skills/bundled/watchlist/
         DataProvider 接口
        /                \
 EastmoneyProvider    PythonServiceProvider
-（行情，直连）        （新闻/公告/财报，HTTP 调用 data-service）
+（行情/指数，直连）   （新闻/公告/财报/搜索/交易日历，HTTP 调用 data-service）
        \                /
         CompositeProvider（默认：各取所长）
 ```

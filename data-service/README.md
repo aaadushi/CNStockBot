@@ -25,6 +25,10 @@ uvicorn main:app --host 127.0.0.1 --port 8000
 | `GET /health` | 健康检查 |
 | `GET /quote/{code}` | 实时行情（Node 侧默认走东财直连，这个是备用） |
 | `GET /news/{code}?limit=10` | 个股新闻 |
+| `GET /search?keyword=` | 股票名称→代码搜索（全量表缓存 + 模糊匹配） |
+| `GET /announcements/{code}` | 个股公告（巨潮资讯，近 30 天） |
+| `GET /financials/{code}` | 财报摘要（新浪，按报告期倒序） |
+| `GET /trade-calendar?year=` | 交易日历（新浪，用于跳过法定节假日） |
 
 ## 注意
 
