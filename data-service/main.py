@@ -140,6 +140,36 @@ def announcements(
     return items
 
 
+# --- 交易日历 ---
+# ak.tool_trade_date_hist_sina() 返回全量历史交易日（trade_date 列，datetime.date），
+# 进程内缓存 24 小时；主服务再按年缓存（年内数据不变）。
+_trade_cal_cache: dict = {"df": None, "ts": 0.0}
+_TRADE_CAL_TTL = 24 * 3600
+
+
+def _load_trade_dates():
+    now = time.time()
+    if _trade_cal_cache["df"] is None or now - _trade_cal_cache["ts"] > _TRADE_CAL_TTL:
+        _trade_cal_cache["df"] = ak.tool_trade_date_hist_sina()
+        _trade_cal_cache["ts"] = now
+    return _trade_cal_cache["df"]
+
+
+@app.get("/trade-calendar")
+def trade_calendar(year: int = Query(default=0, ge=0)):
+    """A 股交易日历（新浪财经）。返回指定年份的交易日列表 ["YYYY-MM-DD", ...]。
+    year 为 0 时返回全部历史。法定节假日等休市日不在列表中。"""
+    try:
+        df = _load_trade_dates()
+    except Exception as e:
+        raise HTTPException(status_code=502, detail=f"AKShare 交易日历获取失败: {e}")
+    dates = [str(d) for d in df["trade_date"]]
+    if year:
+        prefix = f"{year}-"
+        dates = [d for d in dates if d.startswith(prefix)]
+    return dates
+
+
 @app.get("/financials/{code}")
 def financials(code: str, limit: int = Query(default=4, le=20)):
     """个股财务报表摘要（新浪财经），按报告期倒序返回最近 limit 期。

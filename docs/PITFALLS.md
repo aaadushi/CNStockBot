@@ -31,6 +31,17 @@
 
 ## 1. TypeScript / Node.js / 工具链
 
+### [2026-09-14] Windows 下 node:sqlite 不关连接，临时目录 rmSync 报 EPERM
+- **现象**：测试用 `DATA_DIR` 指向临时目录起真实 SQLite，用例全绿，但 `afterAll` 里
+  `rmSync(tmpDir, { recursive: true })` 报 `EPERM: operation not permitted`。
+- **根因**：Windows 上被进程持有的数据库文件句柄不允许删除；`Store` 的
+  `DatabaseSync` 连接没暴露公开 `close()`。
+- **解法**：测试里用 `(store as unknown as { db: { close(): void } }).db.close()`
+  绕过 TS private 关连接后再清理。**长期建议给 `Store` 加公开的 `close()` 方法**，
+  加完后删掉这个绕过写法。
+- **涉及文件**：`tests/store.test.ts`、`src/storage/store.ts`
+- **预防**：Windows 上写涉及文件句柄的测试，清理失败先查是否有连接/流没关。
+
 ### [2026-09-14] Git Bash 下测试脚本的 /tmp 路径与环境变量不一致
 - **现象**：测试脚本往 `/tmp/x/data/store.json` 写了文件，程序却从
   `C:/Users/.../Temp/x/data/` 读，迁移逻辑"没触发"，排查半天以为代码有 bug。
@@ -148,12 +159,22 @@
 
 ## 5. 调度 / 时区
 
+### [2026-09-14] 调度器节假日判断放在"触发时"而非"算延迟时"——结构不能乱改
+- **现象**：（设计约束，非 bug 记录）给调度器加法定节假日判断时，容易想把
+  `msUntilNextRun` 改成 async 直接算到"下一个交易日"。
+- **根因**：`msUntilNextRun` 是同步函数，调度链靠 `finally` 里的 `scheduleDaily()`
+  重新调度保持不断链；改成 async 会动整个调度结构，风险大且无必要。
+- **解法**：保持现有结构——`msUntilNextRun` 只同步跳周末，节假日判断在定时器
+  **触发那一刻**做（`await tradeCalendar.isTradeDay(...)`，非交易日打日志跳过当日），
+  `finally` 里的重新调度照常执行。改动 scheduler.ts 时**不能丢 `finally` 的重新调度**。
+- **涉及文件**：`src/alerts/scheduler.ts`、`src/data/pythonService.ts`（TradeCalendar）
+
 ### [2026-09] 收盘日报在错误时间触发
 - **现象**：部署到海外服务器后，15:30 推送变成了凌晨触发。
 - **根因**：`new Date()` 用的是服务器本地时区，必须显式换算到北京时间。
 - **解法**：见 `msUntilNextRun()` 的换算逻辑（`src/alerts/scheduler.ts:14`）；
   任何新增定时任务都必须用同样的北京时间换算，**不要直接用本地时区 setHours**。
-  另注意：该实现只跳过周末，**不跳法定节假日**——节假日会推送空/昨日行情，属已知限制。
+  法定节假日已跳（`TradeCalendar`，2026-09-14 起），交易日历服务挂掉时降级为只跳周末。
 - **涉及文件**：`src/alerts/scheduler.ts`
 
 ## 6. 渠道

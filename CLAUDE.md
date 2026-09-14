@@ -72,6 +72,7 @@ npm install
 # 主服务（进程 1）
 npm run dev          # tsx watch 热重载开发
 npm run typecheck    # 提交前必须过
+npm test             # vitest 单测（tests/），提交前必须全绿
 npm run build && npm start   # 生产运行
 
 # 数据微服务（进程 2，新闻/搜索的主数据源需要它；只调行情可以不启动）
@@ -84,7 +85,7 @@ uvicorn main:app --host 127.0.0.1 --port 8000
 
 ### 完成一项改动后的验收清单
 
-1. `npm run typecheck` 通过；改了 Python 则 `python -m py_compile data-service/main.py` 通过
+1. `npm run typecheck` 与 `npm test` 通过；改了 Python 则 `python -m py_compile data-service/main.py` 通过
 2. `GET http://localhost:18790/health` 返回数据源与技能清单符合预期
 3. 打开 `http://localhost:18790/webchat` 发一条覆盖你改动的消息，确认链路通
    （改技能就触发该技能；改数据层就分别在有/无 data-service 两种状态下验证）
@@ -124,9 +125,13 @@ uvicorn main:app --host 127.0.0.1 --port 8000
 
 **原路线图已全部完成**（截至 2026-09-14）：search 技能、公告技能、财报技能、
 飞书渠道补完、存储 SQLite 化 + 会话历史持久化、异动提醒、大盘指数行情。
+已知问题 P5（WebChat 鉴权）、P2（法定节假日）、P6（测试基座）同日完成。
 
-后续迭代建议从 [docs/STATUS.md](docs/STATUS.md) 第三节"已知问题"里挑
-（痛感从高到低：P5 鉴权 → P2 法定节假日 → P6 自动化测试 → P3 工具调用上下文）。
+后续迭代建议：
+1. **全模块代码审计**：[docs/AUDIT.md](docs/AUDIT.md) 审查进度表 14 个模块全部未审查
+2. **P3 会话历史保留工具调用上下文**（见 [docs/STATUS.md](docs/STATUS.md) 第三节）
+3. **P4 东财健康探针**（定时查常青股票，失败告警）
+4. 测试补齐：scheduler 时间函数 export 后补测、外部接口层录制 fixture
 
 ## 文档维护义务（每次改动代码后对照执行）
 

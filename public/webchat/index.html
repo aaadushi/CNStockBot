@@ -38,6 +38,22 @@
     const userId = localStorage.getItem('cnstockbot_uid') ||
       (() => { const id = 'web_' + Math.random().toString(36).slice(2, 10); localStorage.setItem('cnstockbot_uid', id); return id; })();
 
+    // 访问口令：首次打开提示输入，存入 localStorage；401 时清除并提示重新输入
+    let accessToken = localStorage.getItem('cnstockbot_token') || '';
+    function ensureToken() {
+      while (!accessToken) {
+        const t = prompt('请输入访问口令（ACCESS_TOKEN，见服务端启动日志或 .env）：');
+        if (t === null) continue; // 用户点取消则继续询问，没有口令无法使用
+        accessToken = t.trim();
+      }
+      localStorage.setItem('cnstockbot_token', accessToken);
+    }
+    function clearToken() {
+      accessToken = '';
+      localStorage.removeItem('cnstockbot_token');
+    }
+    ensureToken();
+
     const chat = document.getElementById('chat');
     const input = document.getElementById('input');
     const sendBtn = document.getElementById('send');
@@ -51,6 +67,20 @@
       return div;
     }
 
+    // 统一带鉴权头的 fetch；遇 401 清口令并提示重输
+    async function apiFetch(url, options = {}) {
+      options.headers = Object.assign({}, options.headers, {
+        'Authorization': 'Bearer ' + accessToken,
+      });
+      const res = await fetch(url, options);
+      if (res.status === 401) {
+        clearToken();
+        ensureToken();
+        throw new Error('口令错误，已请重新输入，请重试操作');
+      }
+      return res;
+    }
+
     async function send() {
       const text = input.value.trim();
       if (!text) return;
@@ -59,7 +89,7 @@
       sendBtn.disabled = true;
       const pending = addMsg('思考中…', 'bot');
       try {
-        const res = await fetch('/api/chat', {
+        const res = await apiFetch('/api/chat', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ userId, message: text }),
@@ -82,10 +112,10 @@
     // 轮询离线通知（收盘日报等推送）
     setInterval(async () => {
       try {
-        const res = await fetch('/api/inbox?userId=' + encodeURIComponent(userId));
+        const res = await apiFetch('/api/inbox?userId=' + encodeURIComponent(userId));
         const { messages } = await res.json();
         for (const m of messages || []) addMsg(m, 'bot');
-      } catch { /* 忽略轮询错误 */ }
+      } catch { /* 忽略轮询错误（含 401 重输提示） */ }
     }, 30000);
   </script>
 </body>

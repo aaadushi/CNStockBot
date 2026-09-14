@@ -150,7 +150,8 @@
 
 - **实现方式**：FastAPI + AKShare，包一层 HTTP 给 Node 主服务调用。端点：
   `/health`、`/quote/{code}`（盘口快照）、`/news/{code}`、`/search?keyword=`、
-  `/announcements/{code}`（个股公告，巨潮资讯）、`/financials/{code}`（财报摘要，新浪）。
+  `/announcements/{code}`（个股公告，巨潮资讯）、`/financials/{code}`（财报摘要，新浪）、
+  `/trade-calendar?year=`（交易日历，新浪，进程内缓存 24h；2026-09-14 新增，供调度器跳法定节假日）。
   主服务侧客户端是 `PythonServiceProvider`，`DATA_PROVIDER=python` 时全量走微服务，
   默认组合模式把新闻/公告/财报/搜索路由给它。
 - **代码位置**：[data-service/main.py](../data-service/main.py)、
@@ -165,11 +166,16 @@
 
 - **实现方式**：Express 静态托管 `public/webchat/` 聊天页；`POST /api/chat`
   同步等 Agent 回复；`notify()` 的消息存内存 Map，前端轮询 `GET /api/inbox` 取走（取后即删）。
+  **访问口令鉴权（2026-09-14，解决 P5）**：`requireAccessToken` 中间件保护所有 `/api/*`，
+  校验 `Authorization: Bearer <token>`，失败 401；口令来自 `config.accessToken`
+  （`.env` 的 `ACCESS_TOKEN`，未配置时启动随机生成并打印控制台）；静态页面不鉴权；
+  前端首次打开弹窗输口令存 localStorage，401 时清除并要求重输。
 - **代码位置**：[src/channels/webchat.ts](../src/channels/webchat.ts)、
   前端 [public/webchat/](../public/webchat/)、渠道接口 [src/channels/types.ts](../src/channels/types.ts)
-- **改动入口**：加鉴权（STATUS P5）→ `/api/chat` 和 `/api/inbox` 两处；
+- **改动入口**：改鉴权方式（如多用户）→ `requireAccessToken` 中间件 + 前端 `apiFetch()`；
   通知改 WebSocket/SSE → `notify()` 与前端轮询逻辑
-- **注意事项**：inbox 是内存存储，重启丢通知；无鉴权，公网部署前先解决 P5。
+- **注意事项**：inbox 是内存存储，重启丢通知；口令是明文共享口令、非多用户体系，
+  公网部署建议在 .env 固定强口令并配合 HTTPS。
 
 ## 14. 飞书渠道（2026-09-14 补完）
 
@@ -203,9 +209,12 @@
   启动接线在 [src/index.ts](../src/index.ts) `startScheduler(...)`
 - **改动入口**：改推送时间/格式 → `buildDailyReport` / `msUntilNextRun`；
   调阈值/频率/开关 → `.env` 的 `ALERT_*` 变量；加新定时任务 → `startScheduler` 里加调度循环
-- **注意事项**：两个任务都只跳周末、**不跳法定节假日**（STATUS P2）——节假日异动轮询
-  会拿到收盘后的静态行情，不会触发误报但白白请求；新任务必须复用 `beijingNow()` 换算，
-  别直接用本地时区（PITFALLS.md 调度条目）。
+- **注意事项**：法定节假日已跳（2026-09-14，解决 P2）——两个任务触发前先
+  `await tradeCalendar.isTradeDay()`（`TradeCalendar` 在 `src/data/pythonService.ts`，
+  数据来自 data-service `/trade-calendar`，按年缓存；服务挂掉自动降级为只跳周末，
+  可用 `TRADE_CALENDAR_ENABLED=false` 关闭）。节假日判断放在**触发时**而不是算延迟时，
+  `finally` 里的重新调度不能丢（PITFALLS.md 调度条目）；新任务必须复用 `beijingNow()`
+  换算，别直接用本地时区。
 
 ## 16. 存储（SQLite）
 
@@ -228,3 +237,19 @@
   环境变量说明 `.env.example`
 - **改动入口**：加配置 → config.ts 加字段 + `.env.example` 加中文注释
 - **注意事项**：项目是 ESM（`"type": "module"`），相对 import 必须带 `.js` 后缀（PITFALLS.md 工具链条目）。
+
+## 18. 测试基座（vitest，2026-09-14 新增）
+
+- **实现方式**：vitest 3.x（零配置文件，默认 node 环境 + Vite 内置 NodeNext 解析，
+  直接 import src 下的 TS 模块）；`npm test` = `vitest run`。首批 35 条单测：
+  `tests/eastmoney.test.ts`（toSecid 规则、行情解析 ÷100 / `"-"` / Referer，fetch 全 mock）、
+  `tests/search.test.ts`（search_stock 入参校验与格式化，mock ctx）、
+  `tests/store.test.ts`（真实 SQLite 往返，`DATA_DIR` 指向临时目录隔离）。
+- **代码位置**：[tests/](../tests/)、`package.json` 的 `test` script
+- **改动入口**：加测试 → `tests/*.test.ts` 直接加文件；外部接口层用 mock fetch /
+  录制 fixture，不打真实网络
+- **注意事项**：tsconfig `include` 只有 `src/**`，tests/ 不在 typecheck 范围
+  （vitest 转译不做类型检查），如要纳入需另建 tsconfig；Windows 下 Store 的
+  DatabaseSync 不关连接会导致临时目录删不掉，目前用绕过 TS private 的方式 close
+  （PITFALLS.md 工具链条目，长期建议给 Store 加公开 `close()`）；scheduler 的
+  时间函数未导出，export 后即可补测。

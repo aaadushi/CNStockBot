@@ -10,6 +10,10 @@ import { config } from '../config.js';
 import type { Channel } from '../channels/types.js';
 import type { DataProvider, Quote } from '../data/provider.js';
 import type { Store } from '../storage/store.js';
+import { TradeCalendar } from '../data/pythonService.js';
+
+/** 交易日历单例：判断当日是否 A 股交易日（跳法定节假日），服务不可用时降级为只跳周末 */
+const tradeCalendar = new TradeCalendar();
 
 /** 当前北京时间（服务器在任何时区都对） */
 function beijingNow(): Date {
@@ -28,7 +32,7 @@ function msUntilNextRun(hour: number, minute: number): number {
   return target.getTime() - bj.getTime();
 }
 
-/** 是否处于 A 股盘中交易时段（北京时间，仅判断工作日 + 连续竞价时段，不跳法定节假日——见 STATUS P2） */
+/** 是否处于 A 股盘中连续竞价时段（北京时间，仅判断工作日 + 时段；法定节假日由 tradeCalendar 另行判断） */
 function isTradingTime(bj: Date): boolean {
   const day = bj.getDay();
   if (day === 0 || day === 6) return false;
@@ -67,7 +71,7 @@ function startPriceAlerts(store: Store, data: DataProvider, channels: Channel[])
   const tick = async (): Promise<void> => {
     const bj = beijingNow();
     try {
-      if (isTradingTime(bj)) {
+      if (isTradingTime(bj) && (await tradeCalendar.isTradeDay(bj))) {
         const today = dateKey(bj);
         // 跨天后清掉前一天的记录
         for (const k of alerted) if (!k.startsWith(today)) alerted.delete(k);
@@ -119,6 +123,11 @@ export function startScheduler(store: Store, data: DataProvider, channels: Chann
     console.log(`[scheduler] 下次收盘日报推送在 ${(delay / 3_600_000).toFixed(1)} 小时后`);
     setTimeout(async () => {
       try {
+        // 触发时再判断当日是否交易日：法定节假日（春节/国庆等休市日）跳过推送
+        if (!(await tradeCalendar.isTradeDay(beijingNow()))) {
+          console.log('[scheduler] 今日非交易日，跳过收盘日报推送');
+          return;
+        }
         for (const userId of store.allUsers()) {
           const report = await buildDailyReport(store, data, userId);
           for (const ch of channels) await ch.notify(userId, report);

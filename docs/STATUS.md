@@ -23,10 +23,10 @@
 | 股票搜索 `search_stock` | `src/skills/bundled/search/` | ✅ 可用 | Python 全量表优先，东财 suggest 降级；2026-09 新增 |
 | 公告查询 `get_stock_announcements` | `src/skills/bundled/announcement/` | ✅ 可用 | 巨潮资讯个股公告，依赖 Python data-service 运行；2026-09-14 新增 |
 | 财报查询 `get_stock_financials` | `src/skills/bundled/financials/` | ✅ 可用 | 新浪财务摘要（按报告期），依赖 Python data-service 运行；2026-09-14 新增 |
-| WebChat 网页聊天 | `src/channels/webchat.ts` + `public/webchat/` | ✅ 可用 | 无鉴权（见问题 P5） |
-| 离线通知收件箱（/api/inbox 轮询） | `src/channels/webchat.ts` | ✅ 可用 | 内存存储，重启丢失 |
-| 收盘日报定时推送（交易日 15:30） | `src/alerts/scheduler.ts` | ✅ 可用 | 不跳法定节假日（见问题 P2） |
-| 异动提醒（盘中轮询，超阈值推送） | `src/alerts/scheduler.ts` | ✅ 可用 | 默认 ±5%、每 5 分钟，每股每日只报一次；2026-09-14 新增 |
+| WebChat 网页聊天 | `src/channels/webchat.ts` + `public/webchat/` | ✅ 可用 | API 需访问口令（Bearer），静态页面不鉴权；2026-09-14 解决 P5 |
+| 离线通知收件箱（/api/inbox 轮询） | `src/channels/webchat.ts` | ✅ 可用 | 内存存储，重启丢失；同在口令保护内 |
+| 收盘日报定时推送（交易日 15:30） | `src/alerts/scheduler.ts` | ✅ 可用 | 已跳法定节假日（交易日历降级只跳周末）；2026-09-14 解决 P2 |
+| 异动提醒（盘中轮询，超阈值推送） | `src/alerts/scheduler.ts` | ✅ 可用 | 默认 ±5%、每 5 分钟，每股每日只报一次；非交易日不轮询 |
 | 大盘指数查询 `get_market_index` | `src/skills/bundled/index/` | ✅ 可用 | 8 个常用指数显式 secid 映射，不传参返回核心指数概览；2026-09-14 新增 |
 | Python 数据微服务（行情/新闻/搜索） | `data-service/main.py` | ✅ 可用 | FastAPI + AKShare |
 | 飞书渠道 | `src/channels/feishu.ts` | ✅ 可用 | 验签/token 缓存/回复/去重/主动推送均已实现（2026-09-14 补完）；chat_id 映射在内存，重启后需用户先发一条消息才能收到推送 |
@@ -34,18 +34,16 @@
 ## 二、待实现功能
 
 **原路线图（公告/财报/飞书/持久化/异动提醒/大盘指数）已于 2026-09-14 全部完成。**
-后续迭代建议从第三节"已知问题"里挑（痛感从高到低：P5 鉴权 → P2 法定节假日 → P6 测试 → P3 工具上下文）。
+P5 鉴权、P2 法定节假日、P6 测试基座同日完成（三 agent 并行，见更新日志）。
+后续迭代建议从第三节"已知问题"里挑（痛感从高到低：P3 工具上下文 → P4 东财健康探针），
+或做 AUDIT.md 的全模块代码审计（14 个模块均未审查）。
 
 ## 三、已知问题（按痛感排序）
 
 > 每条给出：影响、根因、建议修法。解决后从本节移除并记入更新日志。
 > **P 编号是稳定 ID，解决后不重排**（其他文档按编号引用本节）。
 
-### P2 收盘日报不跳法定节假日
-- **影响**：春节/国庆等休市日照常推送，内容是昨日（或停牌前）行情，误导用户。
-- **根因**：`msUntilNextRun` 只跳过周末（`src/alerts/scheduler.ts:19`）。
-- **建议修法**：维护法定节假日列表（可硬编码年度列表，或 AKShare 有
-  `ak.tool_trade_date_hist_sina()` 交易日历可走 data-service）；触发时先判断当日是否交易日。
+### P2 ~~收盘日报不跳法定节假日~~（已解决，见更新日志 2026-09-14）
 
 ### P3 会话历史丢失工具调用上下文
 - **影响**：用户追问"它为什么涨"时，LLM 看不到上一轮工具返回的原始数据，只能凭
@@ -60,22 +58,29 @@
 - **建议修法**：出错时先按 PITFALLS.md 排查；长期可考虑给关键路径加健康探针
   （定时查一只常青股票如 600519，失败即告警）。
 
-### P5 无任何鉴权，userId 由前端自报
-- **影响**：任何人改个 userId 参数就能查/改别人的自选股、消耗 LLM 额度。
-  仅局域网/自用部署时可接受，**暴露公网前必须解决**。
-- **根因**：`/api/chat`、`/api/inbox` 直接信任请求里的 userId（`src/channels/webchat.ts`）。
-- **建议修法**：最小方案是启动时生成访问口令，前端带 token 头；完整方案接飞书等
-  渠道后以渠道身份为准，webchat 降级为调试入口。
+### P5 ~~无任何鉴权，userId 由前端自报~~（已解决，见更新日志 2026-09-14）
 
-### P6 无自动化测试
-- **影响**：重构数据源/技能时只能靠手测，回归风险高。
-- **建议修法**：优先给纯函数补单测（`toSecid`、调度器时间换算、搜索排序），
-  用 vitest；外部接口层用录制好的响应做 fixture。
+### P6 ~~无自动化测试~~（已解决，见更新日志 2026-09-14）
 
 ---
 
 ## 更新日志
 
+- 2026-09-14：解决问题 P5——WebChat 增加访问口令鉴权。`config.ts` 新增 `accessToken`
+  （读 `.env` 的 `ACCESS_TOKEN`，未配置时启动随机生成并打印到控制台）；`webchat.ts`
+  用中间件保护所有 `/api/*`（Bearer 校验，失败 401），静态页面与 `/health`、
+  `/feishu/events` 不鉴权；前端首次打开弹窗输入口令存 localStorage，401 时自动要求
+  重输。注意：口令是明文共享口令，非多用户体系；公网部署建议在 .env 固定强口令并配合 HTTPS。
+- 2026-09-14：解决问题 P2——收盘日报与异动提醒跳过法定节假日。data-service 新增
+  `/trade-calendar?year=` 端点（`ak.tool_trade_date_hist_sina`，进程内缓存 24h）；
+  主服务新增 `TradeCalendar` 类（按年缓存，服务不可用时降级为只跳周末，失败结果
+  缓存 10 分钟防重试风暴）；调度器在日报触发和异动轮询前判断交易日；新增配置
+  `TRADE_CALENDAR_ENABLED`（默认 true，收编在 `config.tradeCalendarEnabled`）。
+- 2026-09-14：解决问题 P6——搭建 vitest 测试基座（`npm test`），首批 35 条单测：
+  toSecid 规则、东财行情解析（÷100 / `"-"` / Referer，fetch 全 mock）、search_stock
+  技能格式化、Store 自选股/会话历史 SQLite 往返（临时目录隔离，不碰项目 data/）。
+  scheduler 时间函数未导出，待 export 后补测；外部接口层仍待录制 fixture。
+  （以上三项由三个并行 agent 完成，验证：typecheck + 35 测试全绿。）
 - 2026-09-14：get_market_index 技能上线（大盘指数行情）——8 个常用指数显式 secid
   映射（规避 000001 个股/指数歧义），不传参返回核心指数概览；东财直连，已用真实
   接口验证。**原路线图全部完成。**
