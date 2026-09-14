@@ -77,6 +77,17 @@
 
 ## 3. Python / AKShare（data-service）
 
+### [2026-09-14] `stock_financial_abstract` 参数名是 `stock`，返回值全是带单位字符串
+- **现象**：按惯例写 `symbol="600519"` 会报 TypeError（未知参数）；拿到的"净利润"是
+  `"999,862,000.00元"` 这种字符串，直接 `float()` 会炸。
+- **根因**：该接口爬新浪财务摘要页，参数命名为 `stock`；页面数值本身带"元"后缀和
+  千分位逗号，AKShare 原样返回 str。
+- **解法**：调用写 `ak.stock_financial_abstract(stock=code)`；本项目不做数值清洗，
+  原样传给 LLM 阅读（端点 `col_map` 注释有说明）。若未来要做同比/环比计算，
+  先 strip "元" 和逗号再转 float。
+- **涉及文件**：`data-service/main.py` 的 `/financials` 端点
+- **预防**：接 AKShare 新接口前先查官方文档确认参数名，不要想当然复用 `symbol`。
+
 ### [2026-09-14] 巨潮公告接口查询结果为空时抛 KeyError 而非返回空表
 - **现象**：`ak.stock_zh_a_disclosure_report_cninfo` 对无公告的代码/时间范围抛 `KeyError`，
   端点 502，主服务把它当"服务故障"报给用户。

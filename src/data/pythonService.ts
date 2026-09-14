@@ -3,7 +3,7 @@
  * 适合新闻、公告、财报等东财公开接口不便覆盖的数据。
  */
 import { config } from '../config.js';
-import type { Announcement, DataProvider, NewsItem, Quote } from './provider.js';
+import type { Announcement, DataProvider, FinancialReport, NewsItem, Quote } from './provider.js';
 
 export class PythonServiceProvider implements DataProvider {
   readonly name = 'python-akshare';
@@ -28,6 +28,10 @@ export class PythonServiceProvider implements DataProvider {
 
   async getAnnouncements(code: string, limit = 10): Promise<Announcement[]> {
     return this.get<Announcement[]>(`/announcements/${code}?limit=${limit}`);
+  }
+
+  async getFinancials(code: string, limit = 4): Promise<FinancialReport[]> {
+    return this.get<FinancialReport[]>(`/financials/${code}?limit=${limit}`);
   }
 
   async search(keyword: string): Promise<{ code: string; name: string }[]> {

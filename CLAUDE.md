@@ -121,14 +121,14 @@ uvicorn main:app --host 127.0.0.1 --port 8000
 
 ## 下一步路线（按优先级）
 
-1. **财报技能**：财报摘要 + LLM 解读（`ak.stock_financial_abstract`，data-service 加端点）
-2. **飞书渠道补完**（`feishu.ts` 里的 TODO：签名验证、token 缓存、主动推送）
-3. **会话历史持久化** + Store 换 SQLite（`node:sqlite` 内置模块即可，免原生编译）
-4. **异动提醒**：用户自选股涨跌幅超阈值时主动推送（scheduler 增加盘中轮询任务）
-5. 大盘指数行情（上证指数 000001 等，注意指数与个股 secid 规则不同，东财指数前缀也是 1./0.）
+1. **飞书渠道补完**（`feishu.ts` 里的 TODO：签名验证、token 缓存、主动推送）
+2. **会话历史持久化** + Store 换 SQLite（`node:sqlite` 内置模块即可，免原生编译）
+3. **异动提醒**：用户自选股涨跌幅超阈值时主动推送（scheduler 增加盘中轮询任务）
+4. 大盘指数行情（上证指数 000001 等，注意指数与个股 secid 规则不同，东财指数前缀也是 1./0.）
 
 已完成：search 技能（2026-09，名称→代码，AKShare 缓存 + 东财 suggest 降级）；
-公告技能（2026-09-14，`get_stock_announcements`，巨潮资讯个股公告）。
+公告技能（2026-09-14，`get_stock_announcements`，巨潮资讯个股公告）；
+财报技能（2026-09-14，`get_stock_financials`，新浪财务摘要 + LLM 解读）。
 
 ## 文档维护义务（每次改动代码后对照执行）
 

@@ -81,7 +81,22 @@
   （PITFALLS.md Python 条目）；CLAUDE.md 旧版写的 `ak.stock_notice_report` 是
   按日期查全市场公告的接口，不适合个股查询，不要误用（DATA_SOURCES.md）。
 
-## 7. 自选股管理（manage_watchlist）
+## 7. 财报查询（get_stock_financials，2026-09-14 新增）
+
+- **实现方式**：调 `DataProvider.getFinancials(code, limit)` → Python 微服务
+  `/financials/{code}` → `ak.stock_financial_abstract(stock=code)`（新浪财经财务摘要，
+  按报告期倒序，默认 4 期）。技能把各期关键指标格式化成文本回给 LLM，由 LLM 做趋势解读
+  （SYSTEM_PROMPT 的免责声明规则自动覆盖）。
+- **代码位置**：[src/skills/bundled/financials/](../src/skills/bundled/financials/)、
+  [src/data/pythonService.ts](../src/data/pythonService.ts)、
+  [data-service/main.py](../data-service/main.py) 的 `/financials` 端点
+- **改动入口**：增删指标字段 → main.py 端点的 `col_map` + provider.ts 的
+  `FinancialReport` 接口 + 技能格式化；要数值计算（如同比）→ 先在端点里清洗掉
+  "元"后缀和千分位逗号（目前原样返回字符串，只适合 LLM 阅读）
+- **注意事项**：该接口参数名是 `stock` 而非 `symbol`；返回值全是带单位的中文字符串；
+  部分股票历史数据被新浪截断到 100 条（PITFALLS.md Python 条目）。
+
+## 8. 自选股管理（manage_watchlist）
 
 - **实现方式**：add/remove/list 三操作。add 前先 `getQuote` 验证代码真实存在（顺便拿名称）；
   list 时对每只自选股并发拉实时行情一并展示。存储按 userId 隔离。
@@ -91,7 +106,7 @@
 - **注意事项**：add 的 `getQuote` 验证意味着停牌股票**加不进**自选（会抛错）——
   如需支持加停牌股，把验证降级为 search 或捕获错误后仅按代码添加。
 
-## 8. 股票搜索（search_stock，2026-09 新增）
+## 9. 股票搜索（search_stock，2026-09 新增）
 
 - **实现方式**：双层数据源——优先 Python 微服务 `/search`（`ak.stock_info_a_code_name()`
   全量代码表进程内缓存 24h，按"完全 > 前缀 > 包含"三级打分排序）；微服务不可用时
@@ -106,7 +121,7 @@
 - **注意事项**：SYSTEM_PROMPT 已引导"先搜后查、有歧义让用户选、搜不到禁止凭记忆作答"，
   改 prompt 时别删掉这条；suggest 接口字段是非官方的（PITFALLS.md 东财条目）。
 
-## 9. 行情数据源（东财直连）
+## 10. 行情数据源（东财直连）
 
 - **实现方式**：`fetch` 调 `push2.eastmoney.com/api/qt/stock/get`，带
   `Referer: https://quote.eastmoney.com/` 头；`toSecid()` 做代码→secid 转换
@@ -117,13 +132,13 @@
 - **注意事项**：secid 规则对指数不通用（000001 股票=平安银行 vs 指数=上证指数），
   做指数功能时需单独映射。
 
-## 10. Python 数据微服务（data-service）
+## 11. Python 数据微服务（data-service）
 
 - **实现方式**：FastAPI + AKShare，包一层 HTTP 给 Node 主服务调用。端点：
   `/health`、`/quote/{code}`（盘口快照）、`/news/{code}`、`/search?keyword=`、
-  `/announcements/{code}`（个股公告，巨潮资讯）。
+  `/announcements/{code}`（个股公告，巨潮资讯）、`/financials/{code}`（财报摘要，新浪）。
   主服务侧客户端是 `PythonServiceProvider`，`DATA_PROVIDER=python` 时全量走微服务，
-  默认组合模式把新闻/公告/搜索路由给它。
+  默认组合模式把新闻/公告/财报/搜索路由给它。
 - **代码位置**：[data-service/main.py](../data-service/main.py)、
   客户端 [src/data/pythonService.ts](../src/data/pythonService.ts)、
   组合逻辑 [src/data/index.ts](../src/data/index.ts)
@@ -132,7 +147,7 @@
 - **注意事项**：AKShare 接口失效先 `pip install -U akshare`（PITFALLS.md）；
   端点统一用 try/except 包成 502 结构化错误，别让堆栈传到主服务。
 
-## 11. WebChat 渠道与离线收件箱
+## 12. WebChat 渠道与离线收件箱
 
 - **实现方式**：Express 静态托管 `public/webchat/` 聊天页；`POST /api/chat`
   同步等 Agent 回复；`notify()` 的消息存内存 Map，前端轮询 `GET /api/inbox` 取走（取后即删）。
@@ -142,7 +157,7 @@
   通知改 WebSocket/SSE → `notify()` 与前端轮询逻辑
 - **注意事项**：inbox 是内存存储，重启丢通知；无鉴权，公网部署前先解决 P5。
 
-## 12. 飞书渠道（骨架）
+## 13. 飞书渠道（骨架）
 
 - **实现方式**：已实现 url_verification 挑战应答和 `im.message.receive_v1` 事件接收
   （立即 200 防重推）；回复发送、验签、token 管理、去重均未实现。
@@ -150,7 +165,7 @@
 - **改动入口**：补完按文件头 TODO 四步走；启用开关是 `.env` 的 `ENABLE_FEISHU=true`
 - **注意事项**：`notify()` 需要维护 userId→chat_id 映射，这是做主动推送的前置。
 
-## 13. 收盘日报定时推送
+## 14. 收盘日报定时推送
 
 - **实现方式**：手写 `setTimeout` 调度器，每次执行完重新排下一次（自动跳过周末）。
   `msUntilNextRun()` 显式换算北京时间（服务器在任何时区都对）。报告对自选股并发
@@ -163,7 +178,7 @@
 - **注意事项**：不跳法定节假日（STATUS P2）；新定时任务必须复用北京时间换算，
   别直接用本地时区（PITFALLS.md 调度条目）。
 
-## 14. 存储（JSON 文件）
+## 15. 存储（JSON 文件）
 
 - **实现方式**：单文件 `data/store.json`（已 gitignore），启动时整读、每次写操作整文件落盘。
   接口已按"可换 SQLite"设计——方法签名不变即可替换实现。
@@ -172,7 +187,7 @@
   存新数据（如会话历史）→ `StoreData` 接口加字段 + 对应读写方法
 - **注意事项**：多实例部署会互相覆盖（STATUS P7）。
 
-## 15. 配置与启动装配
+## 16. 配置与启动装配
 
 - **实现方式**：全部配置来自 `.env`（dotenv），集中在 `config.ts` 一个对象里导出，
   代码里禁止直接读 `process.env`。`src/index.ts` 是装配层：Store → DataProvider →

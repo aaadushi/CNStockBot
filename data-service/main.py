@@ -140,5 +140,31 @@ def announcements(
     return items
 
 
-# TODO（下一版）：
-# - /financials/{code}     财报摘要（ak.stock_financial_abstract）
+@app.get("/financials/{code}")
+def financials(code: str, limit: int = Query(default=4, le=20)):
+    """个股财务报表摘要（新浪财经），按报告期倒序返回最近 limit 期。
+
+    注意：该接口参数名是 stock 而非 symbol；数值是带"元"后缀和千分位逗号的
+    字符串（如 "999,862,000.00元"），原样返回给主服务由 LLM 阅读，不做数值清洗。
+    """
+    try:
+        df = ak.stock_financial_abstract(stock=code)
+    except Exception as e:
+        raise HTTPException(status_code=502, detail=f"AKShare 财报获取失败: {e}")
+    if df is None or df.empty:
+        return []
+    # 列名 → 稳定输出字段；新浪若改版缺列则该字段为空串
+    col_map = {
+        "period": "截止日期",
+        "revenue": "主营业务收入",
+        "netProfit": "净利润",
+        "totalAssets": "资产总计",
+        "longTermDebt": "长期负债合计",
+        "financeCost": "财务费用",
+        "netAssetsPerShare": "每股净资产-摊薄/期末股数",
+        "cashFlowPerShare": "每股现金流",
+    }
+    items = []
+    for _, row in df.head(limit).iterrows():
+        items.append({k: str(row.get(col, "") or "") for k, col in col_map.items()})
+    return items

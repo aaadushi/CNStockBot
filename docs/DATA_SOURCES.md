@@ -26,7 +26,7 @@ GET https://searchapi.eastmoney.com/api/suggest/get?input=茅台&type=14&count=1
 | `ak.stock_bid_ask_em(symbol)` | 实时盘口快照（已接入 /quote） |
 | `ak.stock_zh_a_disclosure_report_cninfo(symbol, market, keyword, category, start_date, end_date)` | 个股公告，巨潮资讯（已接入 /announcements；无 period 参数，按日期范围查） |
 | `ak.stock_notice_report(symbol, date)` | 公告大全，**按日期查全市场**（非个股接口，未接入；勿用于个股公告） |
-| `ak.stock_financial_abstract(symbol)` | 财报摘要（TODO） |
+| `ak.stock_financial_abstract(stock)` | 财报摘要，新浪（已接入 /financials；**参数名是 stock**，返回带"元"单位的字符串） |
 | `ak.stock_info_a_code_name()` | 全量代码名称表（已接入 /search，进程内缓存 24h） |
 
 AKShare 文档：https://akshare.akfamily.xyz/
