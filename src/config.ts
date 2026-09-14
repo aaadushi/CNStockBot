@@ -16,6 +16,13 @@ export const config = {
 
   dataDir: process.env.DATA_DIR ?? './data',
 
+  /** 异动提醒：盘中轮询自选股，涨跌幅超阈值主动推送 */
+  alerts: {
+    enabled: process.env.ALERT_ENABLED !== 'false',
+    thresholdPct: Number(process.env.ALERT_THRESHOLD_PCT ?? 5),
+    intervalMinutes: Number(process.env.ALERT_INTERVAL_MINUTES ?? 5),
+  },
+
   feishu: {
     enabled: process.env.ENABLE_FEISHU === 'true',
     appId: process.env.FEISHU_APP_ID ?? '',

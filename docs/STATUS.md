@@ -26,13 +26,13 @@
 | WebChat 网页聊天 | `src/channels/webchat.ts` + `public/webchat/` | ✅ 可用 | 无鉴权（见问题 P5） |
 | 离线通知收件箱（/api/inbox 轮询） | `src/channels/webchat.ts` | ✅ 可用 | 内存存储，重启丢失 |
 | 收盘日报定时推送（交易日 15:30） | `src/alerts/scheduler.ts` | ✅ 可用 | 不跳法定节假日（见问题 P2） |
+| 异动提醒（盘中轮询，超阈值推送） | `src/alerts/scheduler.ts` | ✅ 可用 | 默认 ±5%、每 5 分钟，每股每日只报一次；2026-09-14 新增 |
 | Python 数据微服务（行情/新闻/搜索） | `data-service/main.py` | ✅ 可用 | FastAPI + AKShare |
 | 飞书渠道 | `src/channels/feishu.ts` | ✅ 可用 | 验签/token 缓存/回复/去重/主动推送均已实现（2026-09-14 补完）；chat_id 映射在内存，重启后需用户先发一条消息才能收到推送 |
 
 ## 二、待实现功能（按优先级）
 
-1. **异动提醒**：自选股涨跌幅超阈值主动推送（scheduler 增加盘中轮询任务）
-2. **大盘指数行情**：上证指数等（注意指数与个股 secid 规则不同，见 PITFALLS.md 东财条目）
+1. **大盘指数行情**：上证指数等（注意指数与个股 secid 规则不同，见 PITFALLS.md 东财条目）
 
 ## 三、已知问题（按痛感排序）
 
@@ -74,6 +74,10 @@
 
 ## 更新日志
 
+- 2026-09-14：异动提醒上线——盘中（工作日 9:30-11:30 / 13:00-15:00 北京时间）每
+  N 分钟轮询全部自选股，涨跌幅超阈值（默认 ±5%）主动推送，每股每日只报一次；
+  新增配置 ALERT_ENABLED / ALERT_THRESHOLD_PCT / ALERT_INTERVAL_MINUTES；
+  全部用户代码去重后并发拉行情避免重复请求东财。路线图仅剩大盘指数行情。
 - 2026-09-14：存储换 SQLite（node:sqlite 内置模块，`data/store.db`）+ 会话历史持久化，
   解决问题 P1 与 P7；旧 store.json 启动时自动迁移并改名 .migrated；
   `engines` 提升为 Node >= 22.13；下一任务建议从待办第 1 条（异动提醒）开始。

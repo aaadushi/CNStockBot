@@ -31,7 +31,7 @@
 | 行情数据 | 东方财富公开接口直连（`src/data/eastmoney.ts`） | 免 key、实时、够用 |
 | 新闻/公告数据 | Python 微服务 + AKShare（`data-service/`） | A 股免费数据生态在 Python 侧，包 HTTP 比 Node 逆向更稳 |
 | 存储 | SQLite（`node:sqlite` 内置模块，`src/storage/store.ts`） | 免原生编译、零依赖；旧 JSON 自动迁移 |
-| 调度 | 手写 setTimeout 调度器（`src/alerts/scheduler.ts`） | 目前只有一个定时任务；任务多了换 node-cron |
+| 调度 | 手写 setTimeout 调度器（`src/alerts/scheduler.ts`） | 收盘日报 + 异动提醒两个任务；任务再多换 node-cron |
 | 会话历史 | SQLite 持久化（`src/agent/loop.ts` 读写 Store） | 只存 user/assistant 问答对，tool 消息丢弃 |
 
 ## 目录地图
@@ -56,7 +56,7 @@ src/
     types.ts          Channel 接口：mount(app, agent) + notify(userId, text)
     webchat.ts        网页聊天 + 离线通知收件箱（GET /api/inbox 轮询）
     feishu.ts         飞书渠道：验签/回复/主动推送已实现，默认不启用（ENABLE_FEISHU=true 开启）
-  alerts/scheduler.ts 每交易日 15:30（北京时间）收盘日报推送
+  alerts/scheduler.ts 定时任务：收盘日报（15:30 北京时间）+ 盘中异动提醒（超阈值推送）
 data-service/         Python FastAPI + AKShare 微服务（新闻等）
 public/webchat/       内置聊天网页
 docs/                 文档库：STATUS（功能与问题）/ FEATURES（实现手册）/ PITFALLS（踩坑病例）/ AUDIT（代码审计）/ 架构与数据源
@@ -122,14 +122,14 @@ uvicorn main:app --host 127.0.0.1 --port 8000
 
 ## 下一步路线（按优先级）
 
-1. **异动提醒**：用户自选股涨跌幅超阈值时主动推送（scheduler 增加盘中轮询任务）
-2. 大盘指数行情（上证指数 000001 等，注意指数与个股 secid 规则不同，东财指数前缀也是 1./0.）
+1. 大盘指数行情（上证指数 000001 等，注意指数与个股 secid 规则不同，东财指数前缀也是 1./0.）
 
 已完成：search 技能（2026-09，名称→代码，AKShare 缓存 + 东财 suggest 降级）；
 公告技能（2026-09-14，`get_stock_announcements`，巨潮资讯个股公告）；
 财报技能（2026-09-14，`get_stock_financials`，新浪财务摘要 + LLM 解读）；
 飞书渠道（2026-09-14，验签/token 缓存/回复/去重/主动推送补完）；
-存储 SQLite 化 + 会话历史持久化（2026-09-14，`node:sqlite`，旧 JSON 自动迁移）。
+存储 SQLite 化 + 会话历史持久化（2026-09-14，`node:sqlite`，旧 JSON 自动迁移）；
+异动提醒（2026-09-14，盘中轮询自选股，默认 ±5% 阈值，每股每日只报一次）。
 
 ## 文档维护义务（每次改动代码后对照执行）
 
