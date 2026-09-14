@@ -157,13 +157,24 @@
   通知改 WebSocket/SSE → `notify()` 与前端轮询逻辑
 - **注意事项**：inbox 是内存存储，重启丢通知；无鉴权，公网部署前先解决 P5。
 
-## 13. 飞书渠道（骨架）
+## 13. 飞书渠道（2026-09-14 补完）
 
-- **实现方式**：已实现 url_verification 挑战应答和 `im.message.receive_v1` 事件接收
-  （立即 200 防重推）；回复发送、验签、token 管理、去重均未实现。
-- **代码位置**：[src/channels/feishu.ts](../src/channels/feishu.ts)（头部注释有完整接入步骤和 TODO 清单）
-- **改动入口**：补完按文件头 TODO 四步走；启用开关是 `.env` 的 `ENABLE_FEISHU=true`
-- **注意事项**：`notify()` 需要维护 userId→chat_id 映射，这是做主动推送的前置。
+- **实现方式**：`/feishu/events` 接收事件——url_verification 挑战应答、
+  X-Lark-Signature 验签（HMAC-SHA256，key 为 `FEISHU_ENCRYPT_KEY`，对
+  `timestamp\nnonce\nkey\nrawBody` 计算）、verification token 二次校验、
+  message_id 去重（10 分钟窗口），然后**立即 200、异步处理**。文本消息解析后喂给
+  Agent（群聊自动去掉 `@_user_N` 占位符），回复走
+  `POST /open-apis/im/v1/messages?receive_id_type=chat_id`；tenant_access_token
+  内存缓存、到期前 2 分钟自动刷新。`notify()` 主动推送依赖 openId→chat_id 映射
+  （从收到的消息学习，内存态）。
+- **代码位置**：[src/channels/feishu.ts](../src/channels/feishu.ts)（文件头有完整接入步骤）；
+  rawBody 保留逻辑在 [src/index.ts](../src/index.ts) 的 `express.json({ verify })`
+- **改动入口**：启用开关与凭据 → `.env`（`ENABLE_FEISHU`/`FEISHU_APP_ID`/
+  `FEISHU_APP_SECRET`/`FEISHU_VERIFICATION_TOKEN`/`FEISHU_ENCRYPT_KEY`）；
+  支持图片/富文本消息 → `handleMessageEvent` 的 `message_type` 分支
+- **注意事项**：验签必须配置 `FEISHU_ENCRYPT_KEY`，未配置会跳过并告警（仅限内网调试）；
+  chat_id 映射重启即丢，重启后用户需先发一条消息才能收到收盘推送；
+  验签依赖原始请求体，**改全局 JSON 中间件时不能删掉 verify 回调**（PITFALLS.md 渠道条目）。
 
 ## 14. 收盘日报定时推送
 

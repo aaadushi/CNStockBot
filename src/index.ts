@@ -21,7 +21,14 @@ const channels: Channel[] = [new WebChatChannel()];
 if (config.feishu.enabled) channels.push(new FeishuChannel());
 
 const app = express();
-app.use(express.json());
+// verify 回调保留原始请求体，飞书事件验签（HMAC 对 raw body 计算）需要它
+app.use(
+  express.json({
+    verify: (req, _res, buf) => {
+      (req as typeof req & { rawBody?: Buffer }).rawBody = buf;
+    },
+  }),
+);
 
 app.get('/health', (_req, res) => {
   res.json({ ok: true, dataProvider: data.name, skills: listSkills().map((s) => s.name) });

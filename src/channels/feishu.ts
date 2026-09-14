@@ -1,66 +1,198 @@
 /**
- * 飞书（Lark）机器人渠道 —— 骨架 / TODO。
+ * 飞书（Lark）机器人渠道。
  *
  * 接入步骤（参考 https://open.feishu.cn/document/server-docs/event-subscription-guide）：
  * 1. 在飞书开放平台创建企业自建应用，启用机器人能力，拿到 App ID / Secret。
  * 2. 事件订阅配置请求地址：https://<你的域名>/feishu/events
- * 3. 处理 url_verification 挑战（下方已实现）；接收 im.message.receive_v1 事件。
- * 4. 回复消息需先获取 tenant_access_token，再调 POST /open-apis/im/v1/messages?receive_id_type=chat_id。
+ * 3. 环境变量：FEISHU_APP_ID / FEISHU_APP_SECRET / FEISHU_VERIFICATION_TOKEN /
+ *    FEISHU_ENCRYPT_KEY（事件订阅里开启"加密策略"后必填，用于验签）。
+ * 4. 机器人回复与主动推送都走 POST /open-apis/im/v1/messages?receive_id_type=chat_id，
+ *    鉴权用 tenant_access_token（本文件内缓存 + 提前 2 分钟自动刷新）。
  *
- * TODO：
- * - [ ] 校验请求签名（X-Lark-Signature）
- * - [ ] tenant_access_token 缓存与自动刷新
- * - [ ] notify() 主动推送（需要维护 userId -> chat_id 映射）
- * - [ ] 消息去重（飞书会重推事件）
+ * 实现要点：
+ * - 验签：X-Lark-Signature = HMAC-SHA256(key=ENCRYPT_KEY,
+ *   msg= timestamp\nnonce\nENCRYPT_KEY\n原始请求体) 的 hex。需要原始请求体，
+ *   由 index.ts 的 express.json({ verify }) 把 rawBody 挂到 req 上。
+ * - 事件立即 200 再异步处理，避免飞书因超时重推（PITFALLS.md 渠道条目）。
+ * - 消息按 message_id 去重（保留 10 分钟）；userId -> chat_id 映射从收到的消息学习，
+ *   存内存（重启后需用户先发一条消息才能再收到推送，见 STATUS 已知限制）。
  */
+import crypto from 'node:crypto';
+import type { Express, Request } from 'express';
 import { config } from '../config.js';
 import type { Channel } from './types.js';
 import type { Agent } from '../agent/loop.js';
 
+const FEISHU_API = 'https://open.feishu.cn';
+const DEDUP_TTL_MS = 10 * 60 * 1000;
+
 interface FeishuEvent {
   challenge?: string;
   type?: string;
-  header?: { event_type?: string };
+  token?: string; // 旧版事件结构的 verification token
+  header?: { event_type?: string; token?: string };
   event?: {
     sender?: { sender_id?: { open_id?: string } };
-    message?: { message_id?: string; chat_id?: string; content?: string };
+    message?: {
+      message_id?: string;
+      chat_id?: string;
+      message_type?: string;
+      content?: string;
+    };
   };
+}
+
+/** 取原始请求体（index.ts 的 express.json verify 回调挂载） */
+function rawBodyOf(req: Request): string {
+  const raw = (req as Request & { rawBody?: Buffer }).rawBody;
+  return raw ? raw.toString('utf8') : JSON.stringify(req.body ?? {});
 }
 
 export class FeishuChannel implements Channel {
   readonly name = 'feishu';
+  private token: { value: string; expiresAt: number } | null = null;
+  /** openId -> chatId，从收到的消息学习（主动推送的前提） */
+  private chatByOpenId = new Map<string, string>();
+  /** messageId -> 处理时间戳，事件去重 */
+  private seenMessages = new Map<string, number>();
 
-  mount(app: import('express').Express, agent: Agent): void {
-    app.post('/feishu/events', async (req, res) => {
+  mount(app: Express, agent: Agent): void {
+    app.post('/feishu/events', (req, res) => {
       const body = req.body as FeishuEvent;
 
-      // URL 验证挑战
+      // URL 验证挑战（配置请求地址时飞书发的一次性请求）
       if (body.type === 'url_verification' && body.challenge) {
         res.json({ challenge: body.challenge });
         return;
       }
 
-      if (body.header?.event_type === 'im.message.receive_v1') {
-        const openId = body.event?.sender?.sender_id?.open_id ?? 'unknown';
-        try {
-          const content = JSON.parse(body.event?.message?.content ?? '{}') as { text?: string };
-          const reply = await agent.handleMessage(`feishu:${openId}`, content.text ?? '');
-          // TODO: 调用飞书 API 把 reply 发回 chat_id
-          console.log(`[feishu] 待回复 ${body.event?.message?.chat_id}: ${reply}`);
-        } catch (err) {
-          console.error('[feishu] 处理消息失败:', err);
-        }
-        res.json({ ok: true }); // 立即 200，避免飞书重推
+      // 验签（配置了 ENCRYPT_KEY 才启用；未配置则跳过并在启动时告警）
+      if (!this.verifySignature(req)) {
+        console.warn('[feishu] 验签失败，已丢弃事件');
+        res.status(401).json({ error: 'invalid signature' });
         return;
       }
 
-      res.json({ ok: true });
+      // verification token 二次校验（旧版在 body.token，新版在 header.token）
+      const expected = config.feishu.verificationToken;
+      if (expected) {
+        const got = body.header?.token ?? body.token ?? '';
+        if (got !== expected) {
+          console.warn('[feishu] verification token 不匹配，已丢弃事件');
+          res.status(401).json({ error: 'invalid token' });
+          return;
+        }
+      }
+
+      res.json({ ok: true }); // 立即 200，避免飞书重推
+
+      if (body.header?.event_type === 'im.message.receive_v1') {
+        this.handleMessageEvent(body, agent).catch((err) =>
+          console.error('[feishu] 处理消息失败:', err),
+        );
+      }
     });
+
+    if (!config.feishu.encryptKey) {
+      console.warn('[feishu] 未配置 FEISHU_ENCRYPT_KEY，事件验签已跳过（公网部署请务必配置）');
+    }
   }
 
-  async notify(_userId: string, _text: string): Promise<void> {
-    // TODO: 通过飞书 API 主动推送，需要 config.feishu.appId/appSecret 换取 token
-    if (!config.feishu.appId) return;
-    console.warn('[feishu] notify 尚未实现');
+  /** 主动推送：userId 形如 "feishu:<openId>"，需先收到过该用户的消息学到 chat_id */
+  async notify(userId: string, text: string): Promise<void> {
+    const openId = userId.replace(/^feishu:/, '');
+    const chatId = this.chatByOpenId.get(openId);
+    if (!chatId) {
+      console.warn(`[feishu] 无法推送 ${userId}：尚未记录其 chat_id（用户需先给机器人发一条消息）`);
+      return;
+    }
+    await this.sendText(chatId, text);
+  }
+
+  private async handleMessageEvent(body: FeishuEvent, agent: Agent): Promise<void> {
+    const msg = body.event?.message;
+    const openId = body.event?.sender?.sender_id?.open_id;
+    if (!msg?.message_id || !msg.chat_id || !openId) return;
+    if (msg.message_type !== 'text') return; // 图片/富文本等暂不处理
+
+    // 去重：飞书超时重推会带相同 message_id
+    const now = Date.now();
+    if (this.seenMessages.has(msg.message_id)) return;
+    this.seenMessages.set(msg.message_id, now);
+    for (const [id, ts] of this.seenMessages) {
+      if (now - ts > DEDUP_TTL_MS) this.seenMessages.delete(id);
+    }
+
+    // 学习 userId -> chat_id 映射
+    this.chatByOpenId.set(openId, msg.chat_id);
+
+    let text: string;
+    try {
+      const content = JSON.parse(msg.content ?? '{}') as { text?: string };
+      // 群聊 @机器人 时文本里带 @_user_1 占位符，去掉再喂给 Agent
+      text = (content.text ?? '').replace(/@_user_\d+/g, '').trim();
+    } catch {
+      return; // content 不是合法 JSON，忽略
+    }
+    if (!text) return;
+
+    const reply = await agent.handleMessage(`feishu:${openId}`, text);
+    await this.sendText(msg.chat_id, reply);
+  }
+
+  /** X-Lark-Signature 验签；未配置 ENCRYPT_KEY 时直接放行 */
+  private verifySignature(req: Request): boolean {
+    const key = config.feishu.encryptKey;
+    if (!key) return true;
+    const timestamp = req.header('x-lark-request-timestamp') ?? '';
+    const nonce = req.header('x-lark-request-nonce') ?? '';
+    const signature = req.header('x-lark-signature') ?? '';
+    if (!timestamp || !nonce || !signature) return false;
+    const digest = crypto
+      .createHmac('sha256', key)
+      .update(`${timestamp}\n${nonce}\n${key}\n${rawBodyOf(req)}`)
+      .digest('hex');
+    // 长度不等时 timingSafeEqual 会抛错，先比较长度
+    return signature.length === digest.length &&
+      crypto.timingSafeEqual(Buffer.from(signature), Buffer.from(digest));
+  }
+
+  /** tenant_access_token：内存缓存，到期前 2 分钟自动刷新 */
+  private async tenantToken(): Promise<string> {
+    if (this.token && Date.now() < this.token.expiresAt) return this.token.value;
+    const res = await fetch(`${FEISHU_API}/open-apis/auth/v3/tenant_access_token/internal`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        app_id: config.feishu.appId,
+        app_secret: config.feishu.appSecret,
+      }),
+    });
+    const data = (await res.json()) as { code?: number; msg?: string; tenant_access_token?: string; expire?: number };
+    if (data.code !== 0 || !data.tenant_access_token) {
+      throw new Error(`获取 tenant_access_token 失败: ${data.msg ?? res.status}`);
+    }
+    this.token = {
+      value: data.tenant_access_token,
+      expiresAt: Date.now() + ((data.expire ?? 7200) - 120) * 1000,
+    };
+    return this.token.value;
+  }
+
+  private async sendText(chatId: string, text: string): Promise<void> {
+    const token = await this.tenantToken();
+    const res = await fetch(`${FEISHU_API}/open-apis/im/v1/messages?receive_id_type=chat_id`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+      body: JSON.stringify({
+        receive_id: chatId,
+        msg_type: 'text',
+        content: JSON.stringify({ text }),
+      }),
+    });
+    const data = (await res.json()) as { code?: number; msg?: string };
+    if (data.code !== 0) {
+      throw new Error(`飞书消息发送失败: ${data.msg ?? res.status}（chat_id=${chatId}）`);
+    }
   }
 }

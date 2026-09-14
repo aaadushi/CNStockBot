@@ -148,6 +148,17 @@
 
 ## 6. 渠道
 
+### [2026-09-14] 飞书验签结果偶发不匹配：express.json 消费了原始请求体
+- **现象**：按官方算法算 HMAC-SHA256 本地复现正确，但线上验签总失败。
+- **根因**：签名是对**原始请求体字节**计算的；`express.json()` 解析后再
+  `JSON.stringify(body)` 得到的字符串与原字节可能不同（空格、key 顺序、Unicode 转义），
+  HMAC 自然对不上。
+- **解法**：`express.json({ verify: (req, _res, buf) => req.rawBody = buf })` 保留原始
+  Buffer，验签时用 rawBody（已在 `src/index.ts` + `feishu.ts rawBodyOf()` 处理）。
+  **改全局 JSON 中间件时不能删 verify 回调。**
+- **涉及文件**：`src/index.ts`、`src/channels/feishu.ts`
+- **预防**：任何需要验签的 webhook（飞书/钉钉/GitHub）都必须用 raw body 验签。
+
 ### [2026-09] 飞书事件重复触发机器人回复
 - **现象**：用户发一条消息，机器人回了两三条。
 - **根因**：飞书要求事件接口快速返回 200，否则重推同一事件。

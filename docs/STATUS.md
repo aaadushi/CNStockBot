@@ -27,14 +27,13 @@
 | 离线通知收件箱（/api/inbox 轮询） | `src/channels/webchat.ts` | ✅ 可用 | 内存存储，重启丢失 |
 | 收盘日报定时推送（交易日 15:30） | `src/alerts/scheduler.ts` | ✅ 可用 | 不跳法定节假日（见问题 P2） |
 | Python 数据微服务（行情/新闻/搜索） | `data-service/main.py` | ✅ 可用 | FastAPI + AKShare |
-| 飞书渠道 | `src/channels/feishu.ts` | ⚠️ 骨架 | 只收消息，回复/推送/验签全是 TODO |
+| 飞书渠道 | `src/channels/feishu.ts` | ✅ 可用 | 验签/token 缓存/回复/去重/主动推送均已实现（2026-09-14 补完）；chat_id 映射在内存，重启后需用户先发一条消息才能收到推送 |
 
 ## 二、待实现功能（按优先级）
 
-1. **飞书渠道补完**：验签、tenant_access_token 缓存、notify 主动推送、消息去重（`feishu.ts` 头部 TODO）
-2. **会话历史持久化** + Store 换 SQLite（用 `node:sqlite` 内置模块，免原生编译）
-3. **异动提醒**：自选股涨跌幅超阈值主动推送（scheduler 增加盘中轮询任务）
-4. **大盘指数行情**：上证指数等（注意指数与个股 secid 规则不同，见 PITFALLS.md 东财条目）
+1. **会话历史持久化** + Store 换 SQLite（用 `node:sqlite` 内置模块，免原生编译）
+2. **异动提醒**：自选股涨跌幅超阈值主动推送（scheduler 增加盘中轮询任务）
+3. **大盘指数行情**：上证指数等（注意指数与个股 secid 规则不同，见 PITFALLS.md 东财条目）
 
 ## 三、已知问题（按痛感排序）
 
@@ -43,7 +42,7 @@
 ### P1 会话历史进程重启即丢失
 - **影响**：用户重启服务后，机器人"失忆"，多轮对话上下文断裂。
 - **根因**：`Agent.histories` 是内存 Map（`src/agent/loop.ts:24`）。
-- **建议修法**：落到 Store（连带做待办第 2 条的 SQLite 化）；注意存取格式与现有
+- **建议修法**：落到 Store（连带做待办第 1 条的 SQLite 化）；注意存取格式与现有
   `ChatMessage[]` 对齐，写入时机在 `handleMessage` 末尾。
 
 ### P2 收盘日报不跳法定节假日
@@ -80,12 +79,16 @@
 ### P7 多进程/多实例部署会互相覆盖数据
 - **影响**：水平扩展或误开两个实例时，自选股数据互相覆盖丢失。
 - **根因**：JSON 单文件存储，整文件读改写（`src/storage/store.ts`）。
-- **建议修法**：随待办第 2 条换 SQLite 自然解决（单文件锁）；或干脆声明"单实例部署"。
+- **建议修法**：随待办第 1 条换 SQLite 自然解决（单文件锁）；或干脆声明"单实例部署"。
 
 ---
 
 ## 更新日志
 
+- 2026-09-14：飞书渠道补完——X-Lark-Signature 验签（新增 FEISHU_ENCRYPT_KEY 配置）、
+  tenant_access_token 内存缓存自动刷新、回复消息 API 接通、message_id 去重（10 分钟窗口）、
+  notify() 主动推送（chat_id 映射从收到的消息学习，内存态）；index.ts 的 express.json
+  增加 verify 回调保留 rawBody；下一任务建议从待办第 1 条（会话持久化 + SQLite）开始。
 - 2026-09-14：get_stock_financials 技能上线（新浪财务摘要，按报告期倒序，默认 4 期）；
   data-service 新增 `/financials/{code}` 端点；下一任务建议从待办第 1 条（飞书渠道补完）开始。
 - 2026-09-14：get_stock_announcements 技能上线（巨潮资讯个股公告，近 30 天）；
