@@ -15,11 +15,11 @@
 
 | 功能 | 入口 | 状态 | 备注 |
 |---|---|---|---|
-| 对话主循环（LLM + function calling） | `src/agent/loop.ts` | ✅ 可用 | 会话历史在内存，重启丢失（见问题 P1） |
+| 对话主循环（LLM + function calling） | `src/agent/loop.ts` | ✅ 可用 | 会话历史 SQLite 持久化（2026-09-14 起，重启不丢） |
 | 技能框架（SKILL.md + 注册表） | `src/skills/` | ✅ 可用 | 新增技能四步见 CLAUDE.md |
 | 实时行情查询 `get_stock_quote` | `src/skills/bundled/quote/` | ✅ 可用 | 东财公开接口，免 key |
 | 新闻查询 `get_stock_news` | `src/skills/bundled/news/` | ✅ 可用 | 依赖 Python data-service 运行 |
-| 自选股管理 `manage_watchlist` | `src/skills/bundled/watchlist/` | ✅ 可用 | JSON 文件持久化，按 userId 隔离 |
+| 自选股管理 `manage_watchlist` | `src/skills/bundled/watchlist/` | ✅ 可用 | SQLite 持久化（node:sqlite），按 userId 隔离 |
 | 股票搜索 `search_stock` | `src/skills/bundled/search/` | ✅ 可用 | Python 全量表优先，东财 suggest 降级；2026-09 新增 |
 | 公告查询 `get_stock_announcements` | `src/skills/bundled/announcement/` | ✅ 可用 | 巨潮资讯个股公告，依赖 Python data-service 运行；2026-09-14 新增 |
 | 财报查询 `get_stock_financials` | `src/skills/bundled/financials/` | ✅ 可用 | 新浪财务摘要（按报告期），依赖 Python data-service 运行；2026-09-14 新增 |
@@ -31,19 +31,13 @@
 
 ## 二、待实现功能（按优先级）
 
-1. **会话历史持久化** + Store 换 SQLite（用 `node:sqlite` 内置模块，免原生编译）
-2. **异动提醒**：自选股涨跌幅超阈值主动推送（scheduler 增加盘中轮询任务）
-3. **大盘指数行情**：上证指数等（注意指数与个股 secid 规则不同，见 PITFALLS.md 东财条目）
+1. **异动提醒**：自选股涨跌幅超阈值主动推送（scheduler 增加盘中轮询任务）
+2. **大盘指数行情**：上证指数等（注意指数与个股 secid 规则不同，见 PITFALLS.md 东财条目）
 
 ## 三、已知问题（按痛感排序）
 
 > 每条给出：影响、根因、建议修法。解决后从本节移除并记入更新日志。
-
-### P1 会话历史进程重启即丢失
-- **影响**：用户重启服务后，机器人"失忆"，多轮对话上下文断裂。
-- **根因**：`Agent.histories` 是内存 Map（`src/agent/loop.ts:24`）。
-- **建议修法**：落到 Store（连带做待办第 1 条的 SQLite 化）；注意存取格式与现有
-  `ChatMessage[]` 对齐，写入时机在 `handleMessage` 末尾。
+> **P 编号是稳定 ID，解决后不重排**（其他文档按编号引用本节）。
 
 ### P2 收盘日报不跳法定节假日
 - **影响**：春节/国庆等休市日照常推送，内容是昨日（或停牌前）行情，误导用户。
@@ -76,15 +70,13 @@
 - **建议修法**：优先给纯函数补单测（`toSecid`、调度器时间换算、搜索排序），
   用 vitest；外部接口层用录制好的响应做 fixture。
 
-### P7 多进程/多实例部署会互相覆盖数据
-- **影响**：水平扩展或误开两个实例时，自选股数据互相覆盖丢失。
-- **根因**：JSON 单文件存储，整文件读改写（`src/storage/store.ts`）。
-- **建议修法**：随待办第 1 条换 SQLite 自然解决（单文件锁）；或干脆声明"单实例部署"。
-
 ---
 
 ## 更新日志
 
+- 2026-09-14：存储换 SQLite（node:sqlite 内置模块，`data/store.db`）+ 会话历史持久化，
+  解决问题 P1 与 P7；旧 store.json 启动时自动迁移并改名 .migrated；
+  `engines` 提升为 Node >= 22.13；下一任务建议从待办第 1 条（异动提醒）开始。
 - 2026-09-14：飞书渠道补完——X-Lark-Signature 验签（新增 FEISHU_ENCRYPT_KEY 配置）、
   tenant_access_token 内存缓存自动刷新、回复消息 API 接通、message_id 去重（10 分钟窗口）、
   notify() 主动推送（chat_id 映射从收到的消息学习，内存态）；index.ts 的 express.json

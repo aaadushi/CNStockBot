@@ -31,6 +31,16 @@
 
 ## 1. TypeScript / Node.js / 工具链
 
+### [2026-09-14] Git Bash 下测试脚本的 /tmp 路径与环境变量不一致
+- **现象**：测试脚本往 `/tmp/x/data/store.json` 写了文件，程序却从
+  `C:/Users/.../Temp/x/data/` 读，迁移逻辑"没触发"，排查半天以为代码有 bug。
+- **根因**：Git Bash 会把**命令行环境变量**里的 `/tmp` 转成 Windows 真实临时目录，
+  但 Node 代码里硬编码的字符串 `/tmp/...` 不做转换，被当成当前盘符下的 `D:\tmp\...`。
+  另外 `process.env.X = ...` 写在模块顶层对静态 import 无效（import 提升，先执行）。
+- **解法**：Windows 上写跨进程路径测试时，全流程用同一个 Windows 风格绝对路径；
+  环境变量在 shell 里随命令设置（`X=... npx tsx test.mts`），别在脚本里赋值。
+- **预防**：测试存储/文件类逻辑时，先 `console.log` 实际解析出的路径再往下排查。
+
 ### [2026-09] ESM 项目相对 import 漏写 `.js` 后缀
 - **现象**：`npm run dev` 报 `ERR_MODULE_NOT_FOUND`，提示找不到 `./xxx` 模块；但文件明明存在。
 - **根因**：本项目 `"type": "module"` + `module: NodeNext`，Node 原生 ESM 不做扩展名补全，

@@ -22,7 +22,7 @@
 - **改动入口**：
   - 调机器人行为/口吻/规则 → 改 `SYSTEM_PROMPT`
   - 调记忆长度 → `MAX_HISTORY`（当前 20 条/人）
-  - 做历史持久化（STATUS P1）→ `histories` Map 的读写处
+  - 改历史存取 → `handleMessage` 首尾对 `store.getHistory/saveHistory` 的调用
 - **注意事项**：会话历史只保留 user/assistant 问答对，tool 消息被有意丢弃（STATUS P3）；
   `tool_calls.function.arguments` 是 JSON 字符串必须 parse（PITFALLS.md LLM 条目）。
 
@@ -189,14 +189,17 @@
 - **注意事项**：不跳法定节假日（STATUS P2）；新定时任务必须复用北京时间换算，
   别直接用本地时区（PITFALLS.md 调度条目）。
 
-## 15. 存储（JSON 文件）
+## 15. 存储（SQLite）
 
-- **实现方式**：单文件 `data/store.json`（已 gitignore），启动时整读、每次写操作整文件落盘。
-  接口已按"可换 SQLite"设计——方法签名不变即可替换实现。
+- **实现方式**：`node:sqlite` 内置模块（DatabaseSync，免原生编译；需 Node >= 22.13），
+  单文件 `data/store.db`（已 gitignore）。表：`watchlists(user_id, code)` 自选股、
+  `histories(user_id, messages, updated_at)` 会话历史（JSON 数组，只存问答对）。
+  启动时若发现旧版 `data/store.json` 自动迁移自选股并改名为 `.migrated`。
 - **代码位置**：[src/storage/store.ts](../src/storage/store.ts)
-- **改动入口**：换 SQLite → 保持 `Store` 类公开方法签名，内部改 `node:sqlite`；
-  存新数据（如会话历史）→ `StoreData` 接口加字段 + 对应读写方法
-- **注意事项**：多实例部署会互相覆盖（STATUS P7）。
+- **改动入口**：存新数据 → 建新表 + 对应读写方法（保持同步方法风格，node:sqlite 全同步 API）
+- **注意事项**：node:sqlite 在 Node 24 仍打印 ExperimentalWarning（功能可用，忽略即可）；
+  `prepare().run()` 返回的 `changes` 可能是 bigint，比较前用 `Number()` 包一层；
+  单文件锁解决了多实例互踩（原 STATUS P7），但仍不建议多实例同时写。
 
 ## 16. 配置与启动装配
 

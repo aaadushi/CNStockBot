@@ -25,14 +25,14 @@
 
 | 决策 | 选择 | 原因 |
 |---|---|---|
-| 主服务 | TypeScript + Node.js 22 + Express | 与 CloddsBot 一致，团队熟悉 |
+| 主服务 | TypeScript + Node.js 22.13+ + Express | 与 CloddsBot 一致；22.13 起 `node:sqlite` 免 flag |
 | LLM | OpenAI 兼容协议，纯 fetch 实现（`src/llm/client.ts`） | DeepSeek/通义/Kimi/智谱都兼容，国内可直连，免 SDK 依赖 |
 | 默认模型 | DeepSeek（`deepseek-chat`） | 国内直连、便宜、function calling 稳定 |
 | 行情数据 | 东方财富公开接口直连（`src/data/eastmoney.ts`） | 免 key、实时、够用 |
 | 新闻/公告数据 | Python 微服务 + AKShare（`data-service/`） | A 股免费数据生态在 Python 侧，包 HTTP 比 Node 逆向更稳 |
-| 存储 | JSON 文件（`src/storage/store.ts`） | MVP 零依赖；接口已抽象，可换 SQLite |
+| 存储 | SQLite（`node:sqlite` 内置模块，`src/storage/store.ts`） | 免原生编译、零依赖；旧 JSON 自动迁移 |
 | 调度 | 手写 setTimeout 调度器（`src/alerts/scheduler.ts`） | 目前只有一个定时任务；任务多了换 node-cron |
-| 会话历史 | 内存 Map（`src/agent/loop.ts`） | MVP；进程重启丢失，需要持久化时落到 Store |
+| 会话历史 | SQLite 持久化（`src/agent/loop.ts` 读写 Store） | 只存 user/assistant 问答对，tool 消息丢弃 |
 
 ## 目录地图
 
@@ -51,7 +51,7 @@ src/
     eastmoney.ts      东财公开接口（行情）；secid 规则：6/9 开头→"1."，其余→"0."
     pythonService.ts  AKShare 微服务客户端
     index.ts          createProvider()：默认组合（行情东财 + 新闻微服务）
-  storage/store.ts    JSON 存储：自选股按 userId 隔离
+  storage/store.ts    SQLite 存储（node:sqlite）：自选股 + 会话历史，按 userId 隔离
   channels/
     types.ts          Channel 接口：mount(app, agent) + notify(userId, text)
     webchat.ts        网页聊天 + 离线通知收件箱（GET /api/inbox 轮询）
@@ -118,18 +118,18 @@ uvicorn main:app --host 127.0.0.1 --port 8000
   （`src/skills/bundled/search/`）：SYSTEM_PROMPT 已引导先 search 再 query。搜索优先走
   Python 微服务（AKShare 全量代码表缓存），未启动时自动降级到东财 suggest 接口。
 - AKShare 升级能修复大部分数据失效问题：`pip install -U akshare`。
-- `data/store.json` 是运行时数据，已 gitignore。
+- `data/store.db`（SQLite）与旧的 `data/store.json` 都是运行时数据，已 gitignore。
 
 ## 下一步路线（按优先级）
 
-1. **会话历史持久化** + Store 换 SQLite（`node:sqlite` 内置模块即可，免原生编译）
-2. **异动提醒**：用户自选股涨跌幅超阈值时主动推送（scheduler 增加盘中轮询任务）
-3. 大盘指数行情（上证指数 000001 等，注意指数与个股 secid 规则不同，东财指数前缀也是 1./0.）
+1. **异动提醒**：用户自选股涨跌幅超阈值时主动推送（scheduler 增加盘中轮询任务）
+2. 大盘指数行情（上证指数 000001 等，注意指数与个股 secid 规则不同，东财指数前缀也是 1./0.）
 
 已完成：search 技能（2026-09，名称→代码，AKShare 缓存 + 东财 suggest 降级）；
 公告技能（2026-09-14，`get_stock_announcements`，巨潮资讯个股公告）；
 财报技能（2026-09-14，`get_stock_financials`，新浪财务摘要 + LLM 解读）；
-飞书渠道（2026-09-14，验签/token 缓存/回复/去重/主动推送补完）。
+飞书渠道（2026-09-14，验签/token 缓存/回复/去重/主动推送补完）；
+存储 SQLite 化 + 会话历史持久化（2026-09-14，`node:sqlite`，旧 JSON 自动迁移）。
 
 ## 文档维护义务（每次改动代码后对照执行）
 

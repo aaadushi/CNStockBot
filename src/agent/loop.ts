@@ -1,6 +1,6 @@
 /**
  * Agent 对话循环：接收用户消息 → LLM 决定是否调用技能 → 执行技能 → 回传结果 → 生成最终回复。
- * 会话历史目前保存在内存（进程重启即清空），后续可落到 Store。
+ * 会话历史持久化在 Store（SQLite），进程重启不丢；只存 user/assistant 问答对。
  */
 import { chat, type ChatMessage } from '../llm/client.js';
 import { getSkill, toToolSpecs } from '../skills/registry.js';
@@ -25,15 +25,13 @@ const MAX_TOOL_ROUNDS = 8;
 const MAX_HISTORY = 20; // 每个用户保留的最近消息条数
 
 export class Agent {
-  private histories = new Map<string, ChatMessage[]>();
-
   constructor(
     private store: Store,
     private data: DataProvider,
   ) {}
 
   async handleMessage(userId: string, text: string): Promise<string> {
-    const history = this.histories.get(userId) ?? [];
+    const history = this.store.getHistory(userId);
     const messages: ChatMessage[] = [
       { role: 'system', content: SYSTEM_PROMPT },
       ...history,
@@ -67,9 +65,9 @@ export class Agent {
     }
     if (!reply) reply = '（处理超时，请换个方式再问一次）';
 
-    // 更新会话历史（不含 system，不含中间工具消息，只保留问答对）
+    // 更新会话历史（不含 system，不含中间工具消息，只保留问答对），持久化到 Store
     history.push({ role: 'user', content: text }, { role: 'assistant', content: reply });
-    this.histories.set(userId, history.slice(-MAX_HISTORY));
+    this.store.saveHistory(userId, history.slice(-MAX_HISTORY));
     return reply;
   }
 }
