@@ -32,7 +32,7 @@
 | 新闻/公告数据 | Python 微服务 + AKShare（`data-service/`） | A 股免费数据生态在 Python 侧，包 HTTP 比 Node 逆向更稳 |
 | 存储 | SQLite（`node:sqlite` 内置模块，`src/storage/store.ts`） | 免原生编译、零依赖；旧 JSON 自动迁移 |
 | 调度 | 手写 setTimeout 调度器（`src/alerts/scheduler.ts`） | 收盘日报 + 异动提醒两个任务；任务再多换 node-cron |
-| 会话历史 | SQLite 持久化（`src/agent/loop.ts` 读写 Store） | 只存 user/assistant 问答对，tool 消息丢弃 |
+| 会话历史 | SQLite 持久化，含工具调用上下文（`src/agent/loop.ts` 的 trimHistory 裁剪） | 同用户消息经 per-user 串行队列防并发覆盖 |
 
 ## 目录地图
 
@@ -44,21 +44,24 @@ src/
   agent/loop.ts       Agent 循环：消息 -> LLM -> 技能调用 -> 回复；含 SYSTEM_PROMPT
   skills/
     types.ts          Skill 接口 + SkillContext（userId/store/data）
-    registry.ts       技能注册表：新技能必须在此 import 并加入数组
+    registry.ts       技能注册表：新技能必须在此 import 并加入数组（启动时检测重名）
+    args.ts           技能参数校验助手：invalidCodeMessage / normalizeLimit
     bundled/<name>/   每个技能一个目录：SKILL.md（说明）+ index.ts（default export Skill）
   data/
     provider.ts       DataProvider 接口：getQuote / getNews / search
-    eastmoney.ts      东财公开接口（行情）；secid 规则：6/9 开头→"1."，其余→"0."
-    pythonService.ts  AKShare 微服务客户端
+    eastmoney.ts      东财公开接口（行情）；secid 规则：沪市 6/900→"1."，深市 0/3 与北交所 4/8/920→"0."
+    pythonService.ts  AKShare 微服务客户端 + TradeCalendar（交易日历，按年缓存+格式校验）
     index.ts          createProvider()：默认组合（行情东财 + 新闻微服务）
-  storage/store.ts    SQLite 存储（node:sqlite）：自选股 + 会话历史，按 userId 隔离
+  storage/store.ts    SQLite 存储（node:sqlite）：自选股 + 会话历史（含工具上下文）+ 收件箱 + kv，按 userId 隔离
   channels/
     types.ts          Channel 接口：mount(app, agent) + notify(userId, text)
-    webchat.ts        网页聊天 + 离线通知收件箱（GET /api/inbox 轮询）
-    feishu.ts         飞书渠道：验签/回复/主动推送已实现，默认不启用（ENABLE_FEISHU=true 开启）
+    webchat.ts        网页聊天 + 离线通知收件箱（GET /api/inbox 轮询，SQLite 持久化）
+    feishu.ts         飞书渠道：验签(含防重放)/回复/主动推送，chat_id 映射 kv 持久化；默认不启用
   alerts/scheduler.ts 定时任务：收盘日报（15:30 北京时间）+ 盘中异动提醒（超阈值推送）
-data-service/         Python FastAPI + AKShare 微服务（新闻等）
+  alerts/healthProbe.ts 行情健康探针：定时探测常青股票，连续失败告警（P4）
+data-service/         Python FastAPI + AKShare 微服务（新闻等；AKShare 调用统一 30s 超时）
 public/webchat/       内置聊天网页
+tests/                vitest 单测（npm test）；fixtures/eastmoney/ 为真实接口响应回放
 docs/                 文档库：STATUS（功能与问题）/ FEATURES（实现手册）/ PITFALLS（踩坑病例）/ AUDIT（代码审计）/ 架构与数据源
 ```
 
@@ -127,15 +130,19 @@ uvicorn main:app --host 127.0.0.1 --port 8000
 
 ## 下一步路线
 
-**原路线图已全部完成**（截至 2026-09-14）：search 技能、公告技能、财报技能、
-飞书渠道补完、存储 SQLite 化 + 会话历史持久化、异动提醒、大盘指数行情。
-已知问题 P5（WebChat 鉴权）、P2（法定节假日）、P6（测试基座）同日完成。
+**原路线图与 P2/P3/P4/P5/P6 已全部完成**（截至 2026-09-14），首轮全模块代码审计
+同日完成（46 条发现全部处理，见 [docs/AUDIT.md](docs/AUDIT.md)）。
 
-> ⚠️ **接手第一件事**：当前机器上 `.env` 不存在、data-service 依赖未安装，
-> 系统跑不起来。先按 [docs/STATUS.md](docs/STATUS.md) 第二节"S0 环境前置"逐项就位。
+剩余事项：
+1. **S0-1/S0-2（需人工）**：创建 `.env` 并填 LLM_API_KEY、固定 ACCESS_TOKEN，否则对话功能不可用。
+2. S3-3 多用户体系（仅公网部署前必须做，落地时一并解决 A-601 同口令无身份隔离）；
+   A-508 微服务 token（仅非回环部署时需要）。
+
+> ⚠️ **接手第一件事**：当前机器上 `.env` 不存在（data-service 依赖已装好），
+> 对话功能跑不起来。先按 [docs/STATUS.md](docs/STATUS.md) 第二节"S0 环境前置"逐项就位。
 
 后续迭代按 [docs/STATUS.md](docs/STATUS.md) 第二节**待办优先级总表**执行
-（S0 环境 → S1 P3 工具上下文 / P4 健康探针 → S2 审计与测试补齐 → S3 体验项）。
+（当前仅剩：S0-1/S0-2 环境配置（需人工）、AUDIT 复核闭环、S3-3 多用户体系）。
 
 ## 文档维护义务（每次改动代码后对照执行）
 

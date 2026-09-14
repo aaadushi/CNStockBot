@@ -1,4 +1,5 @@
 import type { Skill } from '../../types.js';
+import { invalidCodeMessage, normalizeLimit } from '../../args.js';
 
 const skill: Skill = {
   name: 'get_stock_news',
@@ -13,9 +14,13 @@ const skill: Skill = {
   },
   async execute(args, ctx) {
     const code = String(args.code ?? '');
-    const limit = Math.min(Number(args.limit ?? 5), 20);
+    const bad = invalidCodeMessage(code);
+    if (bad) return bad;
+    const limit = normalizeLimit(args.limit, 5, 20);
     const items = await ctx.data.getNews(code, limit);
-    if (items.length === 0) return `未找到 ${code} 的近期新闻。`;
+    if (items.length === 0) {
+      return `未找到 ${code} 的近期新闻。请如实告知用户未找到，不要凭记忆编造新闻。`;
+    }
     return items
       .map(
         (n, i) =>

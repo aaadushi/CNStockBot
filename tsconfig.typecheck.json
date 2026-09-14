@@ -1,0 +1,9 @@
+{
+  "//": "类型检查专用：覆盖 src + tests。构建仍用 tsconfig.json（只含 src）。",
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "noEmit": true,
+    "rootDir": "."
+  },
+  "include": ["src/**/*", "tests/**/*"]
+}

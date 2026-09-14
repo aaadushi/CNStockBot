@@ -13,6 +13,13 @@ const skills: Skill[] = [quote, news, watchlist, search, announcement, financial
 
 const byName = new Map(skills.map((s) => [s.name, s]));
 
+// 同名技能会静默互相覆盖、且重复 tool 定义可能让 LLM 接口报错——启动即暴露（审计 A-206）
+if (byName.size !== skills.length) {
+  const seen = new Set<string>();
+  const dup = skills.filter((s) => (seen.has(s.name) ? true : (seen.add(s.name), false)));
+  throw new Error(`技能重名：${dup.map((s) => s.name).join(', ')}，请检查 registry.ts 注册表`);
+}
+
 export function listSkills(): Skill[] {
   return skills;
 }

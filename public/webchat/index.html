@@ -38,21 +38,30 @@
     const userId = localStorage.getItem('cnstockbot_uid') ||
       (() => { const id = 'web_' + Math.random().toString(36).slice(2, 10); localStorage.setItem('cnstockbot_uid', id); return id; })();
 
-    // 访问口令：首次打开提示输入，存入 localStorage；401 时清除并提示重新输入
+    // 访问口令：首次打开提示输入，存入 localStorage；401 时清除并提示重新输入。
+    // 点"取消"不做阻塞死循环，改为页面内提示 + 发消息/轮询时重新询问（审计 A-606）
     let accessToken = localStorage.getItem('cnstockbot_token') || '';
-    function ensureToken() {
-      while (!accessToken) {
-        const t = prompt('请输入访问口令（ACCESS_TOKEN，见服务端启动日志或 .env）：');
-        if (t === null) continue; // 用户点取消则继续询问，没有口令无法使用
+    function askToken() {
+      const t = prompt('请输入访问口令（ACCESS_TOKEN，见服务端启动日志或 .env）：');
+      if (t && t.trim()) {
         accessToken = t.trim();
+        localStorage.setItem('cnstockbot_token', accessToken);
+        return true;
       }
-      localStorage.setItem('cnstockbot_token', accessToken);
+      return false;
+    }
+    function ensureToken() {
+      if (accessToken) return true;
+      if (askToken()) return true;
+      const hint = addMsg('需要访问口令才能使用。点击本消息重新输入。', 'bot error');
+      hint.style.cursor = 'pointer';
+      hint.onclick = () => { if (askToken()) hint.remove(); };
+      return false;
     }
     function clearToken() {
       accessToken = '';
       localStorage.removeItem('cnstockbot_token');
     }
-    ensureToken();
 
     const chat = document.getElementById('chat');
     const input = document.getElementById('input');
@@ -81,9 +90,12 @@
       return res;
     }
 
+    ensureToken();
+
     async function send() {
       const text = input.value.trim();
       if (!text) return;
+      if (!ensureToken()) return; // 没有口令不发请求，避免必失败的往返
       input.value = '';
       addMsg(text, 'user');
       sendBtn.disabled = true;
@@ -109,8 +121,9 @@
     sendBtn.onclick = send;
     input.onkeydown = (e) => { if (e.key === 'Enter') send(); };
 
-    // 轮询离线通知（收盘日报等推送）
+    // 轮询离线通知（收盘日报等推送）；无口令时暂停轮询，不在后台反复弹窗
     setInterval(async () => {
+      if (!accessToken) return;
       try {
         const res = await apiFetch('/api/inbox?userId=' + encodeURIComponent(userId));
         const { messages } = await res.json();

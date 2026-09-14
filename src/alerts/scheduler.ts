@@ -15,14 +15,16 @@ import { TradeCalendar } from '../data/pythonService.js';
 /** 交易日历单例：判断当日是否 A 股交易日（跳法定节假日），服务不可用时降级为只跳周末 */
 const tradeCalendar = new TradeCalendar();
 
-/** 当前北京时间（服务器在任何时区都对） */
-function beijingNow(): Date {
+/** 当前北京时间（服务器在任何时区都对）。导出供单测使用（配合 vi.setSystemTime）。
+ *  已知边界：用"当前时刻"的本地时区偏移做平移，部署在有夏令时的海外服务器且调度窗口
+ *  横跨 DST 切换时可能偏 ±1 小时（一年约两次，触发后自愈；国内服务器无 DST 不受影响）（审计 A-406）。 */
+export function beijingNow(): Date {
   const now = new Date();
   return new Date(now.getTime() + (8 * 60 + now.getTimezoneOffset()) * 60_000);
 }
 
-/** 计算到下一个"工作日 HH:MM（北京时间）"的毫秒数 */
-function msUntilNextRun(hour: number, minute: number): number {
+/** 计算到下一个"工作日 HH:MM（北京时间）"的毫秒数。导出供单测使用。 */
+export function msUntilNextRun(hour: number, minute: number): number {
   const bj = beijingNow();
   const target = new Date(bj);
   target.setHours(hour, minute, 0, 0);
@@ -32,8 +34,8 @@ function msUntilNextRun(hour: number, minute: number): number {
   return target.getTime() - bj.getTime();
 }
 
-/** 是否处于 A 股盘中连续竞价时段（北京时间，仅判断工作日 + 时段；法定节假日由 tradeCalendar 另行判断） */
-function isTradingTime(bj: Date): boolean {
+/** 是否处于 A 股盘中连续竞价时段（北京时间，仅判断工作日 + 时段；法定节假日由 tradeCalendar 另行判断）。导出供单测使用。 */
+export function isTradingTime(bj: Date): boolean {
   const day = bj.getDay();
   if (day === 0 || day === 6) return false;
   const mins = bj.getHours() * 60 + bj.getMinutes();
@@ -45,8 +47,24 @@ function dateKey(bj: Date): string {
 }
 
 function formatQuoteLine(q: Quote): string {
+  // 涨跌幅可能缺失（如新股首日无昨收），NaN 显示 —（审计 A-310）
+  if (!Number.isFinite(q.changePct)) return `➖ ${q.name}（${q.code}） ${q.price.toFixed(2)} 元  涨跌幅 —`;
   const arrow = q.changePct > 0 ? '📈' : q.changePct < 0 ? '📉' : '➖';
   return `${arrow} ${q.name}（${q.code}） ${q.price.toFixed(2)} 元  ${q.changePct >= 0 ? '+' : ''}${q.changePct.toFixed(2)}%`;
+}
+
+/** 尽力推送：单用户单渠道失败只记日志，不中断当轮其余用户（审计 A-403/A-602） */
+async function notifyUser(channels: Channel[], userId: string, text: string): Promise<boolean> {
+  let allOk = true;
+  for (const ch of channels) {
+    try {
+      await ch.notify(userId, text);
+    } catch (err) {
+      allOk = false;
+      console.error(`[scheduler] 推送失败（${ch.name} -> ${userId}）:`, err);
+    }
+  }
+  return allOk;
 }
 
 async function buildDailyReport(store: Store, data: DataProvider, userId: string): Promise<string> {
@@ -94,15 +112,17 @@ function startPriceAlerts(store: Store, data: DataProvider, channels: Channel[])
           const hits = store
             .getWatchlist(userId)
             .map((c) => quotes.get(c))
-            .filter((q): q is Quote => !!q && Math.abs(q.changePct) >= threshold)
+            .filter((q): q is Quote => !!q && Number.isFinite(q.changePct) && Math.abs(q.changePct) >= threshold)
             .filter((q) => !alerted.has(`${today}:${q.code}`));
           if (hits.length === 0) continue;
-          for (const q of hits) alerted.add(`${today}:${q.code}`);
           const text =
             `【异动提醒】以下自选股涨跌幅超过 ±${threshold}%：\n` +
             hits.map(formatQuoteLine).join('\n') +
             '\n\n以上仅供参考，不构成投资建议。';
-          for (const ch of channels) await ch.notify(userId, text);
+          // 推送成功才标记"已报"，失败下轮补报（审计 A-404：先标记后推送会丢当日提醒）
+          if (await notifyUser(channels, userId, text)) {
+            for (const q of hits) alerted.add(`${today}:${q.code}`);
+          }
         }
       }
     } catch (err) {
@@ -129,8 +149,13 @@ export function startScheduler(store: Store, data: DataProvider, channels: Chann
           return;
         }
         for (const userId of store.allUsers()) {
-          const report = await buildDailyReport(store, data, userId);
-          for (const ch of channels) await ch.notify(userId, report);
+          try {
+            const report = await buildDailyReport(store, data, userId);
+            await notifyUser(channels, userId, report);
+          } catch (err) {
+            // 单用户失败不中断其余用户的当日日报（审计 A-403）
+            console.error(`[scheduler] ${userId} 日报推送失败:`, err);
+          }
         }
       } catch (err) {
         console.error('[scheduler] 日报推送失败:', err);

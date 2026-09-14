@@ -43,13 +43,15 @@ const skill: Skill = {
     const name = String(args.name ?? '').trim();
 
     if (name) {
-      const kw = name.toLowerCase();
-      const idx = INDICES.find(
-        (i) =>
-          i.code === name ||
-          i.name === name ||
-          i.aliases.some((a) => a.toLowerCase() === kw),
-      );
+      // 归一化：去空白、去"指数"后缀、转小写——LLM 常传"创业板指数""沪深300指数"这类说法，
+      // 纯全等匹配会把明明支持的指数误报为"暂不支持"（审计 A-205）
+      const kw = name.replace(/\s+/g, '').replace(/指数$/, '').toLowerCase();
+      const idx = INDICES.find((i) => {
+        const candidates = [i.code, i.name, ...i.aliases].map((c) =>
+          c.replace(/指数$/, '').toLowerCase(),
+        );
+        return candidates.some((c) => c === kw || c.includes(kw) || kw.includes(c));
+      });
       if (!idx) {
         return [
           `暂不支持查询"${name}"。目前支持的指数：`,

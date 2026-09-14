@@ -1,4 +1,5 @@
 import type { Skill } from '../../types.js';
+import { invalidCodeMessage, normalizeLimit } from '../../args.js';
 
 const skill: Skill = {
   name: 'get_stock_financials',
@@ -14,7 +15,9 @@ const skill: Skill = {
   },
   async execute(args, ctx) {
     const code = String(args.code ?? '');
-    const limit = Math.min(Number(args.limit ?? 4), 8);
+    const bad = invalidCodeMessage(code);
+    if (bad) return bad;
+    const limit = normalizeLimit(args.limit, 4, 8);
     if (!ctx.data.getFinancials) return '当前数据源不支持财报查询（需要启动 data-service）';
 
     const items = await ctx.data.getFinancials(code, limit);
@@ -31,7 +34,8 @@ const skill: Skill = {
         f.cashFlowPerShare && `每股现金流 ${f.cashFlowPerShare}`,
         f.financeCost && `财务费用 ${f.financeCost}`,
       ].filter(Boolean);
-      return `${i + 1}. 报告期 ${f.period}：${parts.join('，')}`;
+      // 某期所有字段为空时显式标注，避免"报告期 X："空尾行诱导 LLM 脑补数据（审计 A-208）
+      return `${i + 1}. 报告期 ${f.period}：${parts.length > 0 ? parts.join('，') : '（本期无数据）'}`;
     });
     return [
       ...lines,

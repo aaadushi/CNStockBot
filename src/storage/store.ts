@@ -5,17 +5,32 @@
  *
  * 表结构：
  *   watchlists(user_id, code)         自选股，按用户隔离
- *   histories(user_id, messages, updated_at)  会话历史（只存 user/assistant 问答对，JSON 数组）
+ *   histories(user_id, messages, updated_at)  会话历史（含工具调用上下文，JSON 数组）
+ *   inbox(id, user_id, text, created_at)      离线通知收件箱（WebChat 轮询拉取）
+ *   kv(key, value)                            渠道杂项状态（如飞书 openId→chatId 映射）
  */
 import { mkdirSync, existsSync, readFileSync, renameSync } from 'node:fs';
 import path from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
 import { config } from '../config.js';
 
-/** 持久化的一条会话消息（只存问答对，不含 system/tool） */
+/** 持久化的一条工具调用（与 OpenAI 兼容协议同构） */
+export interface HistoryToolCall {
+  id: string;
+  type: 'function';
+  function: { name: string; arguments: string };
+}
+
+/**
+ * 持久化的一条会话消息。2026-09-14 起保留工具调用上下文（P3）：
+ * assistant 消息可带 tool_calls，其后紧跟对应 tool 消息（tool_call_id 关联）。
+ * 裁剪规则（截断/丢弃孤儿 tool 消息）由 agent/loop.ts 的 trimHistory 负责，本层只存取。
+ */
 export interface HistoryMessage {
-  role: 'user' | 'assistant';
-  content: string;
+  role: 'user' | 'assistant' | 'tool';
+  content: string | null;
+  tool_calls?: HistoryToolCall[];
+  tool_call_id?: string;
 }
 
 export class Store {
@@ -34,6 +49,16 @@ export class Store {
         user_id TEXT PRIMARY KEY,
         messages TEXT NOT NULL,
         updated_at INTEGER NOT NULL
+      );
+      CREATE TABLE IF NOT EXISTS inbox (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        user_id TEXT NOT NULL,
+        text TEXT NOT NULL,
+        created_at INTEGER NOT NULL
+      );
+      CREATE TABLE IF NOT EXISTS kv (
+        key TEXT PRIMARY KEY,
+        value TEXT NOT NULL
       );
     `);
     this.migrateLegacyJson();
@@ -108,5 +133,52 @@ export class Store {
          ON CONFLICT(user_id) DO UPDATE SET messages = excluded.messages, updated_at = excluded.updated_at`,
       )
       .run(userId, JSON.stringify(messages), Date.now());
+  }
+
+  /** 写入一条离线通知（WebChat 收件箱）。每用户只保留最近 100 条，防不再轮询的用户无限累积（审计 A-408） */
+  pushInbox(userId: string, text: string): void {
+    this.db
+      .prepare('INSERT INTO inbox (user_id, text, created_at) VALUES (?, ?, ?)')
+      .run(userId, text, Date.now());
+    this.db
+      .prepare(
+        `DELETE FROM inbox WHERE user_id = ? AND id NOT IN
+         (SELECT id FROM inbox WHERE user_id = ? ORDER BY id DESC LIMIT 100)`,
+      )
+      .run(userId, userId);
+  }
+
+  /** 取出并清空某用户的全部离线通知（轮询语义：读后即删），按写入顺序返回 */
+  drainInbox(userId: string): string[] {
+    const rows = this.db
+      .prepare('SELECT id, text FROM inbox WHERE user_id = ? ORDER BY id')
+      .all(userId) as { id: number; text: string }[];
+    if (rows.length > 0) this.db.prepare('DELETE FROM inbox WHERE user_id = ?').run(userId);
+    return rows.map((r) => r.text);
+  }
+
+  /** 渠道杂项状态读写（如飞书 openId→chatId 映射，key 形如 "feishu:chat:<openId>"） */
+  getKv(key: string): string | null {
+    const row = this.db.prepare('SELECT value FROM kv WHERE key = ?').get(key) as
+      | { value: string }
+      | undefined;
+    return row?.value ?? null;
+  }
+
+  setKv(key: string, value: string): void {
+    this.db
+      .prepare(
+        `INSERT INTO kv (key, value) VALUES (?, ?)
+         ON CONFLICT(key) DO UPDATE SET value = excluded.value`,
+      )
+      .run(key, value);
+  }
+
+  /**
+   * 关闭底层数据库连接。生产进程随退出自动释放，主要给测试用：
+   * Windows 上被进程持有的数据库文件句柄不允许删除，不关连接清理临时目录会 EPERM。
+   */
+  close(): void {
+    this.db.close();
   }
 }

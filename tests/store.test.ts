@@ -11,7 +11,7 @@ import path from 'node:path';
 let Store: (typeof import('../src/storage/store.js'))['Store'];
 let dataDir: string;
 
-/** 已打开的 Store 实例：afterAll 里统一关闭底层 DatabaseSync，否则 Windows 下删不掉临时目录 */
+/** 已打开的 Store 实例：afterAll 里统一 close()，否则 Windows 下删不掉临时目录 */
 const opened: InstanceType<typeof Store>[] = [];
 
 function makeStore(): InstanceType<typeof Store> {
@@ -28,10 +28,7 @@ beforeAll(async () => {
 });
 
 afterAll(() => {
-  for (const s of opened) {
-    // Store 未暴露 close()，TS private 仅是编译期约束，测试里直接关底层连接
-    (s as unknown as { db: { close(): void } }).db.close();
-  }
+  for (const s of opened) s.close(); // Store 已提供公开 close()（2026-09-14 起）
   delete process.env.DATA_DIR;
   rmSync(dataDir, { recursive: true, force: true });
 });
@@ -92,5 +89,55 @@ describe('Store 会话历史', () => {
     ]);
     s.saveHistory('u3', [{ role: 'user', content: '第二轮' }]);
     expect(s.getHistory('u3')).toEqual([{ role: 'user', content: '第二轮' }]);
+  });
+
+  it('会话历史支持工具调用上下文（tool 消息与 tool_calls 字段往返）', () => {
+    const s = makeStore();
+    s.saveHistory('u4', [
+      { role: 'user', content: '茅台咋样' },
+      {
+        role: 'assistant',
+        content: null,
+        tool_calls: [
+          { id: 'c1', type: 'function', function: { name: 'get_stock_quote', arguments: '{"code":"600519"}' } },
+        ],
+      },
+      { role: 'tool', tool_call_id: 'c1', content: '贵州茅台 1277.96 元 +0.22%' },
+      { role: 'assistant', content: '涨了 0.22%' },
+    ]);
+    const back = makeStore().getHistory('u4');
+    expect(back).toHaveLength(4);
+    expect(back[1].tool_calls?.[0].function.name).toBe('get_stock_quote');
+    expect(back[2].tool_call_id).toBe('c1');
+  });
+});
+
+describe('Store 离线通知收件箱', () => {
+  it('push / drain 往返，读后即删，按写入顺序', () => {
+    const s = makeStore();
+    expect(s.drainInbox('u5')).toEqual([]); // 空收件箱
+    s.pushInbox('u5', '第一条');
+    s.pushInbox('u5', '第二条');
+    expect(makeStore().drainInbox('u5')).toEqual(['第一条', '第二条']);
+    expect(s.drainInbox('u5')).toEqual([]); // 已清空
+  });
+
+  it('按 userId 隔离', () => {
+    const s = makeStore();
+    s.pushInbox('alice', '给 alice');
+    s.pushInbox('bob', '给 bob');
+    expect(s.drainInbox('alice')).toEqual(['给 alice']);
+    expect(s.drainInbox('bob')).toEqual(['给 bob']);
+  });
+});
+
+describe('Store KV（渠道杂项状态）', () => {
+  it('set / get 往返，覆盖更新，缺失返回 null', () => {
+    const s = makeStore();
+    expect(s.getKv('feishu:chat:nobody')).toBeNull();
+    s.setKv('feishu:chat:ou_1', 'oc_aaa');
+    expect(makeStore().getKv('feishu:chat:ou_1')).toBe('oc_aaa');
+    s.setKv('feishu:chat:ou_1', 'oc_bbb');
+    expect(s.getKv('feishu:chat:ou_1')).toBe('oc_bbb');
   });
 });

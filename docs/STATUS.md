@@ -15,21 +15,22 @@
 
 | 功能 | 入口 | 状态 | 备注 |
 |---|---|---|---|
-| 对话主循环（LLM + function calling） | `src/agent/loop.ts` | ✅ 可用 | 会话历史 SQLite 持久化（2026-09-14 起，重启不丢） |
-| 技能框架（SKILL.md + 注册表） | `src/skills/` | ✅ 可用 | 新增技能四步见 CLAUDE.md |
-| 实时行情查询 `get_stock_quote` | `src/skills/bundled/quote/` | ✅ 可用 | 东财公开接口，免 key |
+| 对话主循环（LLM + function calling） | `src/agent/loop.ts` | ✅ 可用 | 会话历史 SQLite 持久化，**含工具调用上下文**（P3 已解决）；同用户消息串行队列防并发覆盖 |
+| 技能框架（SKILL.md + 注册表） | `src/skills/` | ✅ 可用 | 新增技能四步见 CLAUDE.md；启动检测技能重名；参数校验助手 `args.ts` |
+| 实时行情查询 `get_stock_quote` | `src/skills/bundled/quote/` | ✅ 可用 | 东财公开接口，免 key；涨跌幅缺失显示 — 而非静默 0 |
 | 新闻查询 `get_stock_news` | `src/skills/bundled/news/` | ✅ 可用 | 依赖 Python data-service 运行 |
-| 自选股管理 `manage_watchlist` | `src/skills/bundled/watchlist/` | ✅ 可用 | SQLite 持久化（node:sqlite），按 userId 隔离 |
-| 股票搜索 `search_stock` | `src/skills/bundled/search/` | ✅ 可用 | Python 全量表优先，东财 suggest 降级；2026-09 新增 |
+| 自选股管理 `manage_watchlist` | `src/skills/bundled/watchlist/` | ✅ 可用 | SQLite 持久化，按 userId 隔离；停牌股可入自选（搜索降级验证）；action 白名单防误删 |
+| 股票搜索 `search_stock` | `src/skills/bundled/search/` | ✅ 可用 | Python 全量表优先，东财 suggest 降级（降级有日志）；覆盖北交所 4/8/920 |
 | 公告查询 `get_stock_announcements` | `src/skills/bundled/announcement/` | ✅ 可用 | 巨潮资讯个股公告，依赖 Python data-service 运行；2026-09-14 新增 |
 | 财报查询 `get_stock_financials` | `src/skills/bundled/financials/` | ✅ 可用 | 新浪财务摘要（按报告期），依赖 Python data-service 运行；2026-09-14 新增 |
-| WebChat 网页聊天 | `src/channels/webchat.ts` + `public/webchat/` | ✅ 可用 | API 需访问口令（Bearer），静态页面不鉴权；2026-09-14 解决 P5 |
-| 离线通知收件箱（/api/inbox 轮询） | `src/channels/webchat.ts` | ✅ 可用 | 内存存储，重启丢失；同在口令保护内 |
+| WebChat 网页聊天 | `src/channels/webchat.ts` + `public/webchat/` | ✅ 可用 | API 需访问口令（Bearer，恒定时间比较），静态页面不鉴权；2026-09-14 解决 P5 |
+| 离线通知收件箱（/api/inbox 轮询） | `src/channels/webchat.ts` | ✅ 可用 | **SQLite 持久化**（每用户上限 100 条），重启不丢；同在口令保护内 |
 | 收盘日报定时推送（交易日 15:30） | `src/alerts/scheduler.ts` | ✅ 可用 | 已跳法定节假日（交易日历降级只跳周末）；2026-09-14 解决 P2 |
-| 异动提醒（盘中轮询，超阈值推送） | `src/alerts/scheduler.ts` | ✅ 可用 | 默认 ±5%、每 5 分钟，每股每日只报一次；非交易日不轮询 |
-| 大盘指数查询 `get_market_index` | `src/skills/bundled/index/` | ✅ 可用 | 8 个常用指数显式 secid 映射，不传参返回核心指数概览；2026-09-14 新增 |
-| Python 数据微服务（行情/新闻/搜索） | `data-service/main.py` | ✅ 可用 | FastAPI + AKShare |
-| 飞书渠道 | `src/channels/feishu.ts` | ✅ 可用 | 验签/token 缓存/回复/去重/主动推送均已实现（2026-09-14 补完）；chat_id 映射在内存，重启后需用户先发一条消息才能收到推送 |
+| 异动提醒（盘中轮询，超阈值推送） | `src/alerts/scheduler.ts` | ✅ 可用 | 默认 ±5%、每 5 分钟，每股每日只报一次；推送失败下轮补报；单用户失败不中断他人 |
+| 行情健康探针 | `src/alerts/healthProbe.ts` | ✅ 可用 | 默认每 30 分钟探测 600519，连续失败 2 次告警、恢复通知；状态见 /health 的 quoteProbe；2026-09-14 解决 P4 |
+| 大盘指数查询 `get_market_index` | `src/skills/bundled/index/` | ✅ 可用 | 8 个常用指数显式 secid 映射，不传参返回核心指数概览；名称匹配归一化（"创业板指数"等说法可识别）；2026-09-14 新增 |
+| Python 数据微服务（行情/新闻/搜索） | `data-service/main.py` | ✅ 可用 | FastAPI + AKShare；AKShare 调用统一 30s 超时（504），财报 NaN/交易日历格式已加固 |
+| 飞书渠道 | `src/channels/feishu.ts` | ✅ 可用 | 验签（含 ±5 分钟防重放）/token 缓存/回复/去重/主动推送；chat_id 映射 **kv 表持久化**（只学单聊，防持仓日报进群）；双凭据缺失时 fail-closed |
 
 ## 二、待办优先级总表（下一个 agent 从这里开始）
 
@@ -37,41 +38,39 @@
 > S2 = 工程质量，防回归；S3 = 体验与健壮性，有余力再做。
 > 代码类问题的详细描述在第三节（P 编号稳定，不重排）。
 
-### S0 环境前置（当前状态：❌ 全部未就绪，系统现在跑不起来）
+### S0 环境前置（当前状态：S0-3 已就绪；S0-1/S0-2 仍需人工）
 
 | # | 事项 | 现状 | 做法 |
 |---|---|---|---|
 | S0-1 | **配置 LLM_API_KEY** | 根目录**连 `.env` 文件都没有**，所有对话功能不可用 | `cp .env.example .env`，填入 DeepSeek 等平台的 key |
 | S0-2 | **固定 ACCESS_TOKEN** | 无 .env，启动时每次随机生成口令，重启即变 | 在 .env 里设一个强口令 |
-| S0-3 | **安装 data-service 依赖** | 无 venv、akshare 未安装 → 新闻/公告/财报/搜索/交易日历**全部不可用**（行情不受影响） | `cd data-service && python -m venv .venv && .venv\Scripts\activate && pip install -r requirements.txt` |
-| S0-4 | （可选）飞书凭据 | 未启用 | 需要飞书渠道时配 `FEISHU_*` 系列变量 |
+| S0-3 | ~~安装 data-service 依赖~~ | ✅ 2026-09-14 已建 venv 并装好（akshare 1.18.94），实测 /health、/trade-calendar 通过 | 以后依赖变更：`cd data-service && .venv\Scripts\activate && pip install -r requirements.txt` |
+| S0-4 | （可选）飞书凭据 | 未启用 | 需要飞书渠道时配 `FEISHU_*` 系列变量（ENCRYPT_KEY 与 VERIFICATION_TOKEN 至少配其一，否则事件接口 fail-closed） |
 
-### S1 高优先级（代码问题，按此顺序做）
+### S1 高优先级（代码问题）
 
-| # | 事项 | 对应 |
-|---|---|---|
-| S1-1 | **P3 会话历史保留工具调用上下文**——用户追问细节时 LLM 只能靠记忆 | 见第三节 P3 |
-| S1-2 | **P4 东财健康探针**——非官方接口静默失效时目前无人察觉 | 见第三节 P4 |
+~~P3、P4 均已于 2026-09-14 解决（见更新日志）。当前无 S1 事项。~~
 
 ### S2 中优先级（工程质量）
 
-| # | 事项 |
-|---|---|
-| S2-1 | **AUDIT.md 全模块代码审计**：14 个模块全部未审查，适合拆给多个并行 agent |
-| S2-2 | scheduler 时间函数（`msUntilNextRun`/`beijingNow`/`isTradingTime`）加 export 并补单测（配合 `vi.setSystemTime`） |
-| S2-3 | 给 `Store` 加公开 `close()` 方法，删掉 tests/store.test.ts 里绕过 private 的写法（PITFALLS 工具链条目） |
-| S2-4 | 外部接口层录制 fixture 补测试；tsconfig 纳入 tests/ 类型检查 |
+| # | 事项 | 现状 |
+|---|---|---|
+| S2-1 | ~~AUDIT.md 全模块代码审计~~ | ✅ 2026-09-14 首轮完成：6 个并行审查 agent 全覆盖 14 模块，发现 46 条问题（🔴2 🟡25 🔵19），全部修复并经原审查 agent 复核**全部闭环**（含 A-101 复核打回后二次修复；A-508/A-601 争议裁定接受，分别留待非回环部署与 S3-3） |
+| S2-2 | ~~scheduler 时间函数 export + 单测~~ | ✅ 已完成（tests/scheduler.test.ts，vi.setSystemTime） |
+| S2-3 | ~~Store 公开 close()~~ | ✅ 已完成，测试改用公开方法 |
+| S2-4 | ~~fixture + tsconfig 纳入 tests/~~ | ✅ 已完成（tests/fixtures/eastmoney/ 真实响应回放；tsconfig.typecheck.json） |
 
 ### S3 低优先级（体验与健壮性）
 
-| # | 事项 |
-|---|---|
-| S3-1 | 离线通知收件箱（inbox）内存态 → 落 SQLite，重启不丢通知 |
-| S3-2 | 飞书 chat_id 映射内存态 → 持久化，重启后免用户先发消息 |
-| S3-3 | WebChat 共享口令 → 多用户体系（仅公网部署前才必须做） |
+| # | 事项 | 现状 |
+|---|---|---|
+| S3-1 | ~~inbox 落 SQLite~~ | ✅ 已完成（每用户上限 100 条） |
+| S3-2 | ~~飞书 chat_id 映射持久化~~ | ✅ 已完成（kv 表；只学单聊映射，防持仓日报进群） |
+| S3-3 | WebChat 共享口令 → 多用户体系（仅公网部署前才必须做） | 未做。**注意审计 A-601 标注：同口令持有者之间无身份隔离**（userId 客户端自报） |
 
 **原路线图（公告/财报/飞书/持久化/异动提醒/大盘指数）已于 2026-09-14 全部完成；**
-**P5 鉴权、P2 法定节假日、P6 测试基座同日完成（三 agent 并行，见更新日志）。**
+**P5 鉴权、P2 法定节假日、P6 测试基座、P3 工具上下文、P4 健康探针同日完成。**
+**同日完成首轮全模块代码审计（46 条发现，修复后经原审查 agent 复核全部闭环）。**
 
 ## 三、已知问题（按痛感排序）
 
@@ -80,18 +79,9 @@
 
 ### P2 ~~收盘日报不跳法定节假日~~（已解决，见更新日志 2026-09-14）
 
-### P3 会话历史丢失工具调用上下文
-- **影响**：用户追问"它为什么涨"时，LLM 看不到上一轮工具返回的原始数据，只能凭
-  上一轮自己的文字总结回答，细节（具体数字、新闻标题）可能记不全。
-- **根因**：历史只保留 user/assistant 问答对，tool 消息被丢弃（`src/agent/loop.ts:67`）。
-- **建议修法**：可接受的 MVP 取舍。若要做，把完整 messages（含 tool）持久化，注意
-  裁剪 token 量（tool 结果往往很长）。
+### P3 ~~会话历史丢失工具调用上下文~~（已解决，见更新日志 2026-09-14）
 
-### P4 东财接口是非官方公开接口，随时可能变
-- **影响**：字段编码变化会导致行情/搜索静默出错或解析出错值。
-- **根因**：见 PITFALLS.md 东财条目（含 Referer、×100、`"-"` 等已知行为）。
-- **建议修法**：出错时先按 PITFALLS.md 排查；长期可考虑给关键路径加健康探针
-  （定时查一只常青股票如 600519，失败即告警）。
+### P4 ~~东财接口静默失效无人察觉~~（已解决，见更新日志 2026-09-14；接口本身仍是非官方接口，字段可能变，排查先看 PITFALLS.md）
 
 ### P5 ~~无任何鉴权，userId 由前端自报~~（已解决，见更新日志 2026-09-14）
 
@@ -101,6 +91,22 @@
 
 ## 更新日志
 
+- 2026-09-14（傍晚批次）：**首轮全模块代码审计**——6 个并行审查 agent 覆盖全部 14 模块，
+  发现 46 条问题（🔴2：A-401 探针告警路径可致进程崩溃、A-501 数值误配可致热循环；
+  🟡25 🔵19），主会话作为修复 agent 全部修复，原审查 agent 复核后**46 条全部闭环**
+  （A-101 首轮复核打回——finally 派生 Promise 未接 catch，二次修复后通过；
+  A-508/A-601 争议理由被裁定接受，分别留待非回环部署与 S3-3 落地时处理）。
+  同批顺带完成：S2-2/S2-3/S2-4（scheduler 导出+单测、Store.close()、fixture+typecheck 纳 tests/）。
+  验证：typecheck（含 tests/）+ 56 测试全绿 + data-service/main.py py_compile 通过。
+- 2026-09-14（傍晚批次）：解决问题 P3——会话历史保留工具调用上下文。完整消息链
+  （含 tool 消息）经 `trimHistory()` 裁剪入库：tool 结果超 1200 字符截断、总量 40 条预算、
+  链首孤儿 tool 消息丢弃（OpenAI 协议要求）；用户追问细节不再只靠 LLM 记忆。
+- 2026-09-14（傍晚批次）：解决问题 P4——行情健康探针上线（`src/alerts/healthProbe.ts`）：
+  默认每 30 分钟探测 600519，连续失败 2 次推送告警、恢复推送通知；状态暴露在
+  /health 的 quoteProbe 字段；新增 HEALTH_PROBE_ENABLED/INTERVAL_MINUTES/CODE 配置。
+- 2026-09-14（傍晚批次）：S3-1/S3-2 完成——离线通知收件箱落 SQLite（每用户上限 100 条）；
+  飞书 chat_id 映射持久化到 kv 表（重启后免用户先发消息），且只在单聊学习映射
+  （防持仓日报误推群聊）。S0-3 完成——data-service venv 建好，akshare 1.18.94。
 - 2026-09-14：解决问题 P5——WebChat 增加访问口令鉴权。`config.ts` 新增 `accessToken`
   （读 `.env` 的 `ACCESS_TOKEN`，未配置时启动随机生成并打印到控制台）；`webchat.ts`
   用中间件保护所有 `/api/*`（Bearer 校验，失败 401），静态页面与 `/health`、

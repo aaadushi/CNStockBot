@@ -3,35 +3,56 @@
  * 适合新闻、公告、财报等东财公开接口不便覆盖的数据。
  */
 import { config } from '../config.js';
+import { EastmoneyProvider } from './eastmoney.js';
 import type { Announcement, DataProvider, FinancialReport, NewsItem, Quote } from './provider.js';
+
+/** 微服务显式超时：AKShare 爬网页较慢，放宽到 60s；防上游挂起拖死调度链（审计 A-301/A-506） */
+const FETCH_TIMEOUT_MS = 60_000;
 
 export class PythonServiceProvider implements DataProvider {
   readonly name = 'python-akshare';
   private base = config.pythonServiceUrl;
+  /** 指数行情始终走东财直连（免 key，与微服务可用性无关；审计 A-305） */
+  private indexQuote = new EastmoneyProvider();
 
   private async get<T>(path: string): Promise<T> {
-    const res = await fetch(`${this.base}${path}`);
+    let res: Response;
+    try {
+      res = await fetch(`${this.base}${path}`, { signal: AbortSignal.timeout(FETCH_TIMEOUT_MS) });
+    } catch (err) {
+      // 连接层失败（服务没启动/网络不通/超时）才提示启动（审计 A-309）
+      throw new Error(
+        `数据服务连接失败：${err instanceof Error ? err.message : String(err)}（请确认 data-service 已启动）`,
+      );
+    }
     if (!res.ok) {
       const body = await res.text();
-      throw new Error(`数据服务请求失败 ${res.status}: ${body.slice(0, 200)}（请确认 data-service 已启动）`);
+      throw new Error(
+        `数据服务请求失败 ${res.status}: ${body.slice(0, 200)}` +
+          (res.status >= 500 ? '（服务已响应但上游数据源失败，按 PITFALLS.md AKShare 条目排查）' : ''),
+      );
     }
     return (await res.json()) as T;
   }
 
   async getQuote(code: string): Promise<Quote> {
-    return this.get<Quote>(`/quote/${code}`);
+    return this.get<Quote>(`/quote/${encodeURIComponent(code)}`);
   }
 
   async getNews(code: string, limit = 10): Promise<NewsItem[]> {
-    return this.get<NewsItem[]>(`/news/${code}?limit=${limit}`);
+    return this.get<NewsItem[]>(`/news/${encodeURIComponent(code)}?limit=${limit}`);
   }
 
   async getAnnouncements(code: string, limit = 10): Promise<Announcement[]> {
-    return this.get<Announcement[]>(`/announcements/${code}?limit=${limit}`);
+    return this.get<Announcement[]>(`/announcements/${encodeURIComponent(code)}?limit=${limit}`);
   }
 
   async getFinancials(code: string, limit = 4): Promise<FinancialReport[]> {
-    return this.get<FinancialReport[]>(`/financials/${code}?limit=${limit}`);
+    return this.get<FinancialReport[]>(`/financials/${encodeURIComponent(code)}?limit=${limit}`);
+  }
+
+  async getIndexQuote(secid: string): Promise<Quote> {
+    return this.indexQuote.getIndexQuote(secid);
   }
 
   async search(keyword: string): Promise<{ code: string; name: string }[]> {
@@ -79,9 +100,20 @@ export class TradeCalendar {
     const failTs = this.failedAt.get(year);
     if (failTs !== undefined && Date.now() - failTs < TradeCalendar.FAIL_RETRY_MS) return null;
     try {
-      const res = await fetch(`${this.base}/trade-calendar?year=${year}`);
+      const res = await fetch(`${this.base}/trade-calendar?year=${year}`, {
+        signal: AbortSignal.timeout(FETCH_TIMEOUT_MS),
+      });
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
       const list = (await res.json()) as string[];
+      // 入缓存前校验：空数组或格式漂移（如 "YYYY-MM-DD 00:00:00"）按失败处理走重试/降级，
+      // 否则会把全年工作日误判为非交易日，推送静默全停（审计 A-302/A-505）
+      if (
+        !Array.isArray(list) ||
+        list.length === 0 ||
+        !list.slice(0, 5).every((d) => /^\d{4}-\d{2}-\d{2}$/.test(String(d)))
+      ) {
+        throw new Error(`交易日历响应格式异常（条数=${Array.isArray(list) ? list.length : '非数组'}）`);
+      }
       const set = new Set(list);
       this.cache.set(year, set);
       this.failedAt.delete(year);

@@ -14,8 +14,23 @@ function resolveAccessToken(): string {
   return generated;
 }
 
+/**
+ * 数值型环境变量解析：非有限数字（NaN/Infinity）或低于 min 时回退默认值并打警告。
+ * 防误配导致 setTimeout(0) 热循环、比较恒 false 静默失效等（审计 A-501/A-405）。
+ */
+function numEnv(name: string, def: number, min = 0): number {
+  const raw = process.env[name];
+  if (raw === undefined || raw === '') return def;
+  const n = Number(raw);
+  if (!Number.isFinite(n) || n < min) {
+    console.warn(`[config] ${name}="${raw}" 不是有效数值（要求 >= ${min}），回退默认值 ${def}`);
+    return def;
+  }
+  return n;
+}
+
 export const config = {
-  port: Number(process.env.PORT ?? 18790),
+  port: numEnv('PORT', 18790, 1),
 
   /** WebChat API 鉴权口令（请求头 Authorization: Bearer <token>），静态页面不鉴权 */
   accessToken: resolveAccessToken(),
@@ -25,6 +40,8 @@ export const config = {
     baseUrl: process.env.LLM_BASE_URL ?? 'https://api.deepseek.com/v1',
     apiKey: process.env.LLM_API_KEY ?? '',
     model: process.env.LLM_MODEL ?? 'deepseek-chat',
+    /** 单次 LLM 请求超时（毫秒），防对端半挂导致对话永久卡死 */
+    timeoutMs: numEnv('LLM_TIMEOUT_MS', 60_000, 1000),
   },
 
   /** 行情数据源：eastmoney = 内置直连东方财富公开接口；python = 本地 AKShare 微服务 */
@@ -39,8 +56,15 @@ export const config = {
   /** 异动提醒：盘中轮询自选股，涨跌幅超阈值主动推送 */
   alerts: {
     enabled: process.env.ALERT_ENABLED !== 'false',
-    thresholdPct: Number(process.env.ALERT_THRESHOLD_PCT ?? 5),
-    intervalMinutes: Number(process.env.ALERT_INTERVAL_MINUTES ?? 5),
+    thresholdPct: numEnv('ALERT_THRESHOLD_PCT', 5, 0.1),
+    intervalMinutes: numEnv('ALERT_INTERVAL_MINUTES', 5, 1),
+  },
+
+  /** 行情健康探针：定时探测常青股票，连续失败即判定行情链路故障并告警 */
+  healthProbe: {
+    enabled: process.env.HEALTH_PROBE_ENABLED !== 'false',
+    intervalMinutes: numEnv('HEALTH_PROBE_INTERVAL_MINUTES', 30, 1),
+    code: process.env.HEALTH_PROBE_CODE ?? '600519',
   },
 
   feishu: {

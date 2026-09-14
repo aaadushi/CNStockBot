@@ -27,6 +27,10 @@ describe('toSecid', () => {
     expect(toSecid('830799')).toBe('0.830799');
   });
 
+  it('北交所 920 新代码段 → 前缀 0（不能按"9 开头=沪市"处理，A-303）', () => {
+    expect(toSecid('920002')).toBe('0.920002');
+  });
+
   it('容忍首尾空白', () => {
     expect(toSecid(' 600519 ')).toBe('1.600519');
   });
@@ -85,11 +89,17 @@ describe('EastmoneyProvider.getQuote 行情解析', () => {
     await expect(new EastmoneyProvider().getQuote('999999')).rejects.toThrow('999999');
   });
 
-  it('f170 为 "-" 时涨跌幅按 0 处理', async () => {
+  it('f170/f60 均为 "-" 时（如新股首日无昨收）涨跌幅/昨收为 NaN，由展示层显示 —（A-310）', async () => {
     mockFetchWith({ data: { f43: 1000, f57: '600519', f58: '贵州茅台', f60: '-', f170: '-' } });
     const q = await new EastmoneyProvider().getQuote('600519');
-    expect(q.changePct).toBe(0);
-    expect(q.prevClose).toBe(0);
+    expect(q.changePct).toBeNaN();
+    expect(q.prevClose).toBeNaN();
+  });
+
+  it('f170 为 "-" 但有昨收时，涨跌幅由 f43/f60 自行换算', async () => {
+    mockFetchWith({ data: { f43: 1010, f57: '600519', f58: '贵州茅台', f60: 1000, f170: '-' } });
+    const q = await new EastmoneyProvider().getQuote('600519');
+    expect(q.changePct).toBeCloseTo(1.0);
   });
 
   it('HTTP 非 2xx 抛错并带状态码', async () => {

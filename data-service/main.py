@@ -8,12 +8,40 @@ Node 主服务（src/data/pythonService.ts）通过 HTTP 调用本服务。
 
 为什么用 Python：A 股免费数据生态（AKShare/Tushare）几乎都在 Python 侧，
 包一层 HTTP 比用 Node 逐个逆向东财/新浪接口更稳、更好维护。
+
+安全约定：本服务无鉴权，**必须绑定回环地址**（--host 127.0.0.1）；
+需要非回环绑定时应先加 token 校验（审计 A-508）。
 """
 from fastapi import FastAPI, HTTPException, Query
 from datetime import datetime, timedelta
+import asyncio
+import logging
 import akshare as ak
+import pandas as pd
+
+logger = logging.getLogger("cnstockbot-data")
 
 app = FastAPI(title="CNStockBot Data Service", version="0.1.0")
+
+# AKShare 底层用 requests 且默认无超时；上游挂起会占满 uvicorn 线程池导致全服务无响应。
+# 统一在线程池里执行并加整体超时，超时返回 504 而非悬挂（审计 A-506）。
+AKSHARE_TIMEOUT = 30  # 秒
+
+
+async def run_ak(fn, *args, **kwargs):
+    """线程池执行 AKShare 同步调用（带超时）。上游异常原样抛出，由端点各自包装。"""
+    try:
+        return await asyncio.wait_for(asyncio.to_thread(fn, *args, **kwargs), timeout=AKSHARE_TIMEOUT)
+    except asyncio.TimeoutError:
+        raise HTTPException(status_code=504, detail=f"上游数据源超时（{AKSHARE_TIMEOUT}s 无响应）")
+
+
+def _cell(row, col: str) -> str:
+    """安全取单元格字符串：NaN -> ""；真值 0 保留为 "0"（审计 A-504）。"""
+    v = row.get(col, None)
+    if v is None or (not isinstance(v, str) and pd.isna(v)):
+        return ""
+    return str(v)
 
 
 @app.get("/health")
@@ -22,10 +50,10 @@ def health():
 
 
 @app.get("/quote/{code}")
-def quote(code: str):
+async def quote(code: str):
     """个股实时行情快照。字段与 src/data/provider.ts 的 Quote 接口对齐。"""
     try:
-        df = ak.stock_bid_ask_em(symbol=code)
+        df = await run_ak(ak.stock_bid_ask_em, symbol=code)
         # 返回的是 key-value 两列，转成字典
         kv = dict(zip(df["item"], df["value"]))
         return {
@@ -35,15 +63,17 @@ def quote(code: str):
             "changePct": float(kv.get("涨跌幅", 0) or 0),
             "prevClose": float(kv.get("昨收", 0) or 0),
         }
+    except HTTPException:
+        raise
     except Exception as e:
         raise HTTPException(status_code=502, detail=f"AKShare 行情获取失败: {e}")
 
 
 @app.get("/news/{code}")
-def news(code: str, limit: int = Query(default=10, le=50)):
+async def news(code: str, limit: int = Query(default=10, ge=1, le=50)):
     """个股新闻（东财数据源）。返回 NewsItem[]。"""
     try:
-        df = ak.stock_news_em(symbol=code)
+        df = await run_ak(ak.stock_news_em, symbol=code)
         items = []
         for _, row in df.head(limit).iterrows():
             items.append({
@@ -54,6 +84,8 @@ def news(code: str, limit: int = Query(default=10, le=50)):
                 "publishedAt": str(row.get("发布时间", "")),
             })
         return items
+    except HTTPException:
+        raise
     except Exception as e:
         raise HTTPException(status_code=502, detail=f"AKShare 新闻获取失败: {e}")
 
@@ -76,11 +108,13 @@ def _load_code_name_table():
 
 
 @app.get("/search")
-def search(keyword: str = Query(min_length=1), limit: int = Query(default=10, le=50)):
+async def search(keyword: str = Query(min_length=1), limit: int = Query(default=10, ge=1, le=50)):
     """按名称/代码模糊搜索 A 股，返回 [{code, name}]，按匹配程度排序。"""
     kw = keyword.strip()
     try:
-        df = _load_code_name_table()
+        df = await run_ak(_load_code_name_table)
+    except HTTPException:
+        raise
     except Exception as e:
         raise HTTPException(status_code=502, detail=f"AKShare 代码表获取失败: {e}")
 
@@ -104,9 +138,9 @@ def search(keyword: str = Query(min_length=1), limit: int = Query(default=10, le
 
 
 @app.get("/announcements/{code}")
-def announcements(
+async def announcements(
     code: str,
-    limit: int = Query(default=10, le=50),
+    limit: int = Query(default=10, ge=1, le=50),
     days: int = Query(default=30, le=365),
     category: str = Query(default=""),
 ):
@@ -118,16 +152,21 @@ def announcements(
     end = datetime.now().strftime("%Y%m%d")
     start = (datetime.now() - timedelta(days=days)).strftime("%Y%m%d")
     try:
-        df = ak.stock_zh_a_disclosure_report_cninfo(
+        df = await run_ak(
+            ak.stock_zh_a_disclosure_report_cninfo,
             symbol=code,
             market="沪深京",
             category=category,
             start_date=start,
             end_date=end,
         )
-    except KeyError:
-        # 巨潮接口在"查询结果为空"时部分 AKShare 版本会抛 KeyError，视作空结果
+    except KeyError as e:
+        # 巨潮接口在"查询结果为空"时部分 AKShare 版本会抛 KeyError，视作空结果。
+        # 但 KeyError 也可能是列结构变化/代码无效，必须留日志可观测（审计 A-507）
+        logger.warning("announcements KeyError（按空结果处理，若非空查询请排查列结构）: code=%s err=%s", code, e)
         return []
+    except HTTPException:
+        raise
     except Exception as e:
         raise HTTPException(status_code=502, detail=f"AKShare 公告获取失败: {e}")
     items = []
@@ -156,14 +195,17 @@ def _load_trade_dates():
 
 
 @app.get("/trade-calendar")
-def trade_calendar(year: int = Query(default=0, ge=0)):
+async def trade_calendar(year: int = Query(default=0, ge=0)):
     """A 股交易日历（新浪财经）。返回指定年份的交易日列表 ["YYYY-MM-DD", ...]。
     year 为 0 时返回全部历史。法定节假日等休市日不在列表中。"""
     try:
-        df = _load_trade_dates()
+        df = await run_ak(_load_trade_dates)
+    except HTTPException:
+        raise
     except Exception as e:
         raise HTTPException(status_code=502, detail=f"AKShare 交易日历获取失败: {e}")
-    dates = [str(d) for d in df["trade_date"]]
+    # 与列类型解耦：AKShare 若改返回 Timestamp，str() 会带 " 00:00:00" 后缀导致主服务全判休市（审计 A-505）
+    dates = pd.to_datetime(df["trade_date"]).dt.strftime("%Y-%m-%d").tolist()
     if year:
         prefix = f"{year}-"
         dates = [d for d in dates if d.startswith(prefix)]
@@ -171,14 +213,16 @@ def trade_calendar(year: int = Query(default=0, ge=0)):
 
 
 @app.get("/financials/{code}")
-def financials(code: str, limit: int = Query(default=4, le=20)):
+async def financials(code: str, limit: int = Query(default=4, ge=1, le=20)):
     """个股财务报表摘要（新浪财经），按报告期倒序返回最近 limit 期。
 
     注意：该接口参数名是 stock 而非 symbol；数值是带"元"后缀和千分位逗号的
     字符串（如 "999,862,000.00元"），原样返回给主服务由 LLM 阅读，不做数值清洗。
     """
     try:
-        df = ak.stock_financial_abstract(stock=code)
+        df = await run_ak(ak.stock_financial_abstract, stock=code)
+    except HTTPException:
+        raise
     except Exception as e:
         raise HTTPException(status_code=502, detail=f"AKShare 财报获取失败: {e}")
     if df is None or df.empty:
@@ -196,5 +240,5 @@ def financials(code: str, limit: int = Query(default=4, le=20)):
     }
     items = []
     for _, row in df.head(limit).iterrows():
-        items.append({k: str(row.get(col, "") or "") for k, col in col_map.items()})
+        items.append({k: _cell(row, col) for k, col in col_map.items()})
     return items

@@ -1,4 +1,5 @@
 import type { Skill } from '../../types.js';
+import { invalidCodeMessage, normalizeLimit } from '../../args.js';
 
 const skill: Skill = {
   name: 'get_stock_announcements',
@@ -14,7 +15,9 @@ const skill: Skill = {
   },
   async execute(args, ctx) {
     const code = String(args.code ?? '');
-    const limit = Math.min(Number(args.limit ?? 5), 20);
+    const bad = invalidCodeMessage(code);
+    if (bad) return bad;
+    const limit = normalizeLimit(args.limit, 5, 20);
     if (!ctx.data.getAnnouncements) return '当前数据源不支持公告查询（需要启动 data-service）';
 
     const items = await ctx.data.getAnnouncements(code, limit);

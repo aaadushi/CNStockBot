@@ -61,7 +61,9 @@ class CompositeProvider implements DataProvider {
   async search(keyword: string): Promise<{ code: string; name: string }[]> {
     try {
       return await this.python.search(keyword);
-    } catch {
+    } catch (err) {
+      // 降级必须留痕，否则微服务挂掉后故障不可观测（审计 A-308）
+      console.warn('[data] python 搜索失败，降级东财 suggest:', err instanceof Error ? err.message : err);
       return this.quote.search(keyword);
     }
   }
