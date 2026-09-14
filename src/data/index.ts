@@ -6,7 +6,7 @@
 import { config } from '../config.js';
 import { EastmoneyProvider } from './eastmoney.js';
 import { PythonServiceProvider } from './pythonService.js';
-import type { DataProvider, NewsItem, Quote } from './provider.js';
+import type { Announcement, DataProvider, NewsItem, Quote } from './provider.js';
 
 class CompositeProvider implements DataProvider {
   readonly name = 'composite(eastmoney+python)';
@@ -23,6 +23,18 @@ class CompositeProvider implements DataProvider {
     } catch (err) {
       throw new Error(
         `新闻数据不可用：${err instanceof Error ? err.message : String(err)}\n` +
+          '提示：进入 data-service 目录运行 `pip install -r requirements.txt && uvicorn main:app` 启动数据微服务。',
+      );
+    }
+  }
+
+  /** 公告只能走微服务（巨潮资讯），未启动时给出带启动提示的错误 */
+  async getAnnouncements(code: string, limit = 10): Promise<Announcement[]> {
+    try {
+      return await this.python.getAnnouncements(code, limit);
+    } catch (err) {
+      throw new Error(
+        `公告数据不可用：${err instanceof Error ? err.message : String(err)}\n` +
           '提示：进入 data-service 目录运行 `pip install -r requirements.txt && uvicorn main:app` 启动数据微服务。',
       );
     }

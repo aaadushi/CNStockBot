@@ -2,7 +2,7 @@ import type { Skill } from '../../types.js';
 
 const skill: Skill = {
   name: 'get_stock_news',
-  description: '查询某只 A 股股票的最新新闻/公告列表。用户问"最近有什么消息/新闻/公告"时使用。',
+  description: '查询某只 A 股股票的最新新闻/媒体报道/资讯。用户问"最近有什么消息/新闻"时使用；交易所正式公告用 get_stock_announcements。',
   parameters: {
     type: 'object',
     properties: {

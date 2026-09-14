@@ -10,6 +10,7 @@ Node 主服务（src/data/pythonService.ts）通过 HTTP 调用本服务。
 包一层 HTTP 比用 Node 逐个逆向东财/新浪接口更稳、更好维护。
 """
 from fastapi import FastAPI, HTTPException, Query
+from datetime import datetime, timedelta
 import akshare as ak
 
 app = FastAPI(title="CNStockBot Data Service", version="0.1.0")
@@ -102,6 +103,42 @@ def search(keyword: str = Query(min_length=1), limit: int = Query(default=10, le
     return [{"code": c, "name": n} for _, c, n in matches[:limit]]
 
 
+@app.get("/announcements/{code}")
+def announcements(
+    code: str,
+    limit: int = Query(default=10, le=50),
+    days: int = Query(default=30, le=365),
+    category: str = Query(default=""),
+):
+    """个股公告（巨潮资讯网，交易所正式披露）。返回 Announcement[]。
+
+    category 可选值：年报/半年报/一季报/三季报/业绩预告/权益分派/董事会/股东大会/
+    风险提示 等（见 ak.stock_zh_a_disclosure_report_cninfo 文档），空串为全部。
+    """
+    end = datetime.now().strftime("%Y%m%d")
+    start = (datetime.now() - timedelta(days=days)).strftime("%Y%m%d")
+    try:
+        df = ak.stock_zh_a_disclosure_report_cninfo(
+            symbol=code,
+            market="沪深京",
+            category=category,
+            start_date=start,
+            end_date=end,
+        )
+    except KeyError:
+        # 巨潮接口在"查询结果为空"时部分 AKShare 版本会抛 KeyError，视作空结果
+        return []
+    except Exception as e:
+        raise HTTPException(status_code=502, detail=f"AKShare 公告获取失败: {e}")
+    items = []
+    for _, row in df.head(limit).iterrows():
+        items.append({
+            "title": str(row.get("公告标题", "")),
+            "publishedAt": str(row.get("公告时间", "")),
+            "url": str(row.get("公告链接", "")),
+        })
+    return items
+
+
 # TODO（下一版）：
-# - /announcements/{code}  公告（ak.stock_notice_report）
 # - /financials/{code}     财报摘要（ak.stock_financial_abstract）

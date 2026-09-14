@@ -21,10 +21,18 @@ export interface NewsItem {
   summary?: string;
 }
 
+export interface Announcement {
+  title: string;
+  url?: string;
+  publishedAt?: string;
+}
+
 export interface DataProvider {
   readonly name: string;
   getQuote(code: string): Promise<Quote>;
   getNews(code: string, limit?: number): Promise<NewsItem[]>;
+  /** 个股公告（交易所正式披露）；东财直连无此能力，仅微服务模式提供 */
+  getAnnouncements?(code: string, limit?: number): Promise<Announcement[]>;
   /** 按关键词搜索股票（名称/代码），返回候选代码列表 */
   search?(keyword: string): Promise<{ code: string; name: string }[]>;
 }

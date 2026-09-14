@@ -21,6 +21,7 @@
 | 新闻查询 `get_stock_news` | `src/skills/bundled/news/` | ✅ 可用 | 依赖 Python data-service 运行 |
 | 自选股管理 `manage_watchlist` | `src/skills/bundled/watchlist/` | ✅ 可用 | JSON 文件持久化，按 userId 隔离 |
 | 股票搜索 `search_stock` | `src/skills/bundled/search/` | ✅ 可用 | Python 全量表优先，东财 suggest 降级；2026-09 新增 |
+| 公告查询 `get_stock_announcements` | `src/skills/bundled/announcement/` | ✅ 可用 | 巨潮资讯个股公告，依赖 Python data-service 运行；2026-09-14 新增 |
 | WebChat 网页聊天 | `src/channels/webchat.ts` + `public/webchat/` | ✅ 可用 | 无鉴权（见问题 P5） |
 | 离线通知收件箱（/api/inbox 轮询） | `src/channels/webchat.ts` | ✅ 可用 | 内存存储，重启丢失 |
 | 收盘日报定时推送（交易日 15:30） | `src/alerts/scheduler.ts` | ✅ 可用 | 不跳法定节假日（见问题 P2） |
@@ -29,12 +30,11 @@
 
 ## 二、待实现功能（按优先级）
 
-1. **公告技能**：`ak.stock_notice_report` 个股公告（data-service 加端点 + 新技能）
-2. **财报技能**：`ak.stock_financial_abstract` 财报摘要 + LLM 解读
-3. **飞书渠道补完**：验签、tenant_access_token 缓存、notify 主动推送、消息去重（`feishu.ts` 头部 TODO）
-4. **会话历史持久化** + Store 换 SQLite（用 `node:sqlite` 内置模块，免原生编译）
-5. **异动提醒**：自选股涨跌幅超阈值主动推送（scheduler 增加盘中轮询任务）
-6. **大盘指数行情**：上证指数等（注意指数与个股 secid 规则不同，见 PITFALLS.md 东财条目）
+1. **财报技能**：`ak.stock_financial_abstract` 财报摘要 + LLM 解读
+2. **飞书渠道补完**：验签、tenant_access_token 缓存、notify 主动推送、消息去重（`feishu.ts` 头部 TODO）
+3. **会话历史持久化** + Store 换 SQLite（用 `node:sqlite` 内置模块，免原生编译）
+4. **异动提醒**：自选股涨跌幅超阈值主动推送（scheduler 增加盘中轮询任务）
+5. **大盘指数行情**：上证指数等（注意指数与个股 secid 规则不同，见 PITFALLS.md 东财条目）
 
 ## 三、已知问题（按痛感排序）
 
@@ -43,7 +43,7 @@
 ### P1 会话历史进程重启即丢失
 - **影响**：用户重启服务后，机器人"失忆"，多轮对话上下文断裂。
 - **根因**：`Agent.histories` 是内存 Map（`src/agent/loop.ts:24`）。
-- **建议修法**：落到 Store（连带做待办第 4 条的 SQLite 化）；注意存取格式与现有
+- **建议修法**：落到 Store（连带做待办第 3 条的 SQLite 化）；注意存取格式与现有
   `ChatMessage[]` 对齐，写入时机在 `handleMessage` 末尾。
 
 ### P2 收盘日报不跳法定节假日
@@ -80,12 +80,15 @@
 ### P7 多进程/多实例部署会互相覆盖数据
 - **影响**：水平扩展或误开两个实例时，自选股数据互相覆盖丢失。
 - **根因**：JSON 单文件存储，整文件读改写（`src/storage/store.ts`）。
-- **建议修法**：随待办第 4 条换 SQLite 自然解决（单文件锁）；或干脆声明"单实例部署"。
+- **建议修法**：随待办第 3 条换 SQLite 自然解决（单文件锁）；或干脆声明"单实例部署"。
 
 ---
 
 ## 更新日志
 
+- 2026-09-14：get_stock_announcements 技能上线（巨潮资讯个股公告，近 30 天）；
+  data-service 新增 `/announcements/{code}` 端点；get_stock_news 职责收窄为新闻/资讯，
+  与公告技能分工；下一任务建议从待办第 1 条（财报技能）开始。
 - 2026-09-14：search_stock 技能上线（名称→代码）；SYSTEM_PROMPT 增加先搜后查与
   搜不到禁止凭记忆作答的约束；建立 STATUS/FEATURES/PITFALLS/AUDIT 文档体系。
   **本日起项目开发交接给新 agent**，下一任务建议从待办第 1 条（公告技能）开始。

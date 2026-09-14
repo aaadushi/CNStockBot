@@ -77,6 +77,23 @@
 
 ## 3. Python / AKShare（data-service）
 
+### [2026-09-14] 巨潮公告接口查询结果为空时抛 KeyError 而非返回空表
+- **现象**：`ak.stock_zh_a_disclosure_report_cninfo` 对无公告的代码/时间范围抛 `KeyError`，
+  端点 502，主服务把它当"服务故障"报给用户。
+- **根因**：部分 AKShare 版本对空结果 DataFrame 直接做列索引（AKShare Issue #7251）。
+- **解法**：端点单独 `except KeyError: return []`，空结果与接口故障区分开；
+  其他异常仍包成 502。
+- **涉及文件**：`data-service/main.py` 的 `/announcements` 端点
+- **预防**：给 AKShare 新端点写空结果用例（如查一只新上市/冷门股的远期公告）再上线。
+
+### [2026-09-14] `ak.stock_notice_report` 名字像个股公告接口，实际按日期查全市场
+- **现象**：按 CLAUDE.md 旧版提示用它做"个股公告"，发现 symbol 参数是公告类型筛选
+  （"全部"/"沪市"/"深市"等），必填 `date`，返回当天全市场公告。
+- **根因**：该接口对应东财"公告大全"页面（按日浏览），不是个股维度。
+- **解法**：个股公告用 `ak.stock_zh_a_disclosure_report_cninfo`（巨潮资讯，
+  symbol=股票代码 + start_date/end_date 日期范围，**没有 period 参数**）。
+- **涉及文件**：`data-service/main.py`、`docs/DATA_SOURCES.md`
+
 ### [2026-09] AKShare 接口突然返回空 / 报解析错误
 - **现象**：之前好用的 `ak.stock_news_em` 突然抛 KeyError 或返回空 DataFrame。
 - **根因**：AKShare 大量接口是爬网页解析的，目标网站改版就失效。
