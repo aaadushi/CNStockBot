@@ -88,7 +88,10 @@ uvicorn main:app --host 127.0.0.1 --port 8000
 1. `npm run typecheck` 与 `npm test` 通过；改了 Python 则 `python -m py_compile data-service/main.py` 通过
 2. `GET http://localhost:18790/health` 返回数据源与技能清单符合预期
 3. 打开 `http://localhost:18790/webchat` 发一条覆盖你改动的消息，确认链路通
-   （改技能就触发该技能；改数据层就分别在有/无 data-service 两种状态下验证）
+   （改技能就触发该技能；改数据层就分别在有/无 data-service 两种状态下验证）。
+   无法执行时（无 LLM_API_KEY / data-service 未运行 / 改动不涉及对话链路），
+   以 typecheck + npm test 为准，并在汇报中明确写明"端到端验证未做及原因"，
+   不要停下来等待人工验证
 4. 按下方的文档维护义务更新该更新的文档
 
 ## 如何新增一个技能（示例：龙虎榜）
@@ -107,8 +110,9 @@ uvicorn main:app --host 127.0.0.1 --port 8000
 
 ## 已知坑与注意事项
 
-> 详细的排错病例库在 [docs/PITFALLS.md](docs/PITFALLS.md)：**动手前先扫一遍，
-> 新踩的坑（排查 >15 分钟、报错有迷惑性、外部接口非直觉行为）必须按模板回填。**
+> 详细的排错病例库在 [docs/PITFALLS.md](docs/PITFALLS.md)：**改动 `src/data/`、
+> `src/channels/`、`src/alerts/`、`data-service/` 之前先扫一遍对应章节**；
+> 新踩的坑（排查 >15 分钟、报错有迷惑性、外部接口非直觉行为）必须按模板回填。
 
 - **东财接口是非官方公开接口**，字段编码（f43 等）和可用性可能变化。挂了先看
   `src/data/eastmoney.ts` 顶部注释，用浏览器打开东财行情页抓包对比。
@@ -143,6 +147,7 @@ uvicorn main:app --host 127.0.0.1 --port 8000
 | 做代码审查 / 修复了审计问题 | [docs/AUDIT.md](docs/AUDIT.md)（严格遵守其中的角色权限规则） |
 | 改了目录结构、开发流程、关键决策 | 本文件（CLAUDE.md） |
 
+对照上表逐行判断，**仅更新适用的行；均不适用则无需动文档**，不必为此请示。
 原则：文档和代码不同步，比没有文档更糟——下一个 agent 会被误导。
 
 ## 环境变量

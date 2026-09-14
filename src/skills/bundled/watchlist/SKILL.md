@@ -9,4 +9,4 @@
 
 ## 注意
 - add 时会先调用行情接口验证代码有效性。
-- 数据存在 `data/store.json`，按 userId 隔离。
+- 数据存在 SQLite `data/store.db`，按 userId 隔离。
