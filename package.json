@@ -1,0 +1,27 @@
+{
+  "name": "cnstockbot",
+  "version": "0.1.0",
+  "description": "A 股信息助手：通过聊天机器人查询自选股行情、新闻与公告。参考 CloddsBot 架构，仅做信息聚合，不涉及交易。",
+  "type": "module",
+  "main": "dist/index.js",
+  "engines": {
+    "node": ">=22.0.0"
+  },
+  "scripts": {
+    "dev": "tsx watch src/index.ts",
+    "build": "tsc",
+    "start": "node dist/index.js",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "dotenv": "^16.4.5",
+    "express": "^4.21.2"
+  },
+  "devDependencies": {
+    "@types/express": "^4.17.21",
+    "@types/node": "^22.10.0",
+    "tsx": "^4.19.2",
+    "typescript": "^5.7.2"
+  },
+  "license": "MIT"
+}

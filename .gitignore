@@ -1,0 +1,8 @@
+node_modules/
+dist/
+data/*.json
+!.gitkeep
+.env
+*.log
+__pycache__/
+.venv/

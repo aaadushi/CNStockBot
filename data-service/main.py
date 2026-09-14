@@ -1,0 +1,107 @@
+"""
+CNStockBot 数据微服务：基于 AKShare 的 A 股数据 HTTP 接口。
+Node 主服务（src/data/pythonService.ts）通过 HTTP 调用本服务。
+
+启动：
+    pip install -r requirements.txt
+    uvicorn main:app --host 127.0.0.1 --port 8000
+
+为什么用 Python：A 股免费数据生态（AKShare/Tushare）几乎都在 Python 侧，
+包一层 HTTP 比用 Node 逐个逆向东财/新浪接口更稳、更好维护。
+"""
+from fastapi import FastAPI, HTTPException, Query
+import akshare as ak
+
+app = FastAPI(title="CNStockBot Data Service", version="0.1.0")
+
+
+@app.get("/health")
+def health():
+    return {"ok": True}
+
+
+@app.get("/quote/{code}")
+def quote(code: str):
+    """个股实时行情快照。字段与 src/data/provider.ts 的 Quote 接口对齐。"""
+    try:
+        df = ak.stock_bid_ask_em(symbol=code)
+        # 返回的是 key-value 两列，转成字典
+        kv = dict(zip(df["item"], df["value"]))
+        return {
+            "code": code,
+            "name": str(kv.get("名称", code)),
+            "price": float(kv.get("最新", 0) or 0),
+            "changePct": float(kv.get("涨跌幅", 0) or 0),
+            "prevClose": float(kv.get("昨收", 0) or 0),
+        }
+    except Exception as e:
+        raise HTTPException(status_code=502, detail=f"AKShare 行情获取失败: {e}")
+
+
+@app.get("/news/{code}")
+def news(code: str, limit: int = Query(default=10, le=50)):
+    """个股新闻（东财数据源）。返回 NewsItem[]。"""
+    try:
+        df = ak.stock_news_em(symbol=code)
+        items = []
+        for _, row in df.head(limit).iterrows():
+            items.append({
+                "title": str(row.get("新闻标题", "")),
+                "summary": str(row.get("新闻内容", ""))[:120],
+                "source": str(row.get("文章来源", "")),
+                "url": str(row.get("新闻链接", "")),
+                "publishedAt": str(row.get("发布时间", "")),
+            })
+        return items
+    except Exception as e:
+        raise HTTPException(status_code=502, detail=f"AKShare 新闻获取失败: {e}")
+
+
+# --- 名称 -> 代码搜索 ---
+# ak.stock_info_a_code_name() 拉全量 A 股代码表（约 5000 行），进程内缓存 24 小时，
+# 避免每次搜索都请求一次数据源。
+import time
+
+_code_name_cache: dict = {"df": None, "ts": 0.0}
+_CODE_NAME_TTL = 24 * 3600
+
+
+def _load_code_name_table():
+    now = time.time()
+    if _code_name_cache["df"] is None or now - _code_name_cache["ts"] > _CODE_NAME_TTL:
+        _code_name_cache["df"] = ak.stock_info_a_code_name()
+        _code_name_cache["ts"] = now
+    return _code_name_cache["df"]
+
+
+@app.get("/search")
+def search(keyword: str = Query(min_length=1), limit: int = Query(default=10, le=50)):
+    """按名称/代码模糊搜索 A 股，返回 [{code, name}]，按匹配程度排序。"""
+    kw = keyword.strip()
+    try:
+        df = _load_code_name_table()
+    except Exception as e:
+        raise HTTPException(status_code=502, detail=f"AKShare 代码表获取失败: {e}")
+
+    def score(code: str, name: str) -> int:
+        if name == kw or code == kw:
+            return 0  # 完全匹配
+        if name.startswith(kw) or code.startswith(kw):
+            return 1  # 前缀匹配
+        if kw in name:
+            return 2  # 包含匹配
+        return -1
+
+    matches = []
+    for _, row in df.iterrows():
+        code, name = str(row["code"]).zfill(6), str(row["name"])
+        s = score(code, name)
+        if s >= 0:
+            matches.append((s, code, name))
+    matches.sort(key=lambda m: (m[0], m[1]))
+    return [{"code": c, "name": n} for _, c, n in matches[:limit]]
+
+
+# TODO（下一版）：
+# - /announcements/{code}  公告（ak.stock_notice_report）
+# - /financials/{code}     财报摘要（ak.stock_financial_abstract）
