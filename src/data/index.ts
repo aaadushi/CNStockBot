@@ -17,6 +17,11 @@ class CompositeProvider implements DataProvider {
     return this.quote.getQuote(code);
   }
 
+  /** 指数行情走东财直连（secid 由技能层显式给出） */
+  getIndexQuote(secid: string): Promise<Quote> {
+    return this.quote.getIndexQuote(secid);
+  }
+
   async getNews(code: string, limit = 10): Promise<NewsItem[]> {
     try {
       return await this.python.getNews(code, limit);

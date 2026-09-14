@@ -43,6 +43,8 @@ export interface DataProvider {
   readonly name: string;
   getQuote(code: string): Promise<Quote>;
   getNews(code: string, limit?: number): Promise<NewsItem[]>;
+  /** 大盘指数行情；secid 需调用方显式给出（指数与个股 secid 规则不同，见 PITFALLS 东财条目） */
+  getIndexQuote?(secid: string): Promise<Quote>;
   /** 个股公告（交易所正式披露）；东财直连无此能力，仅微服务模式提供 */
   getAnnouncements?(code: string, limit?: number): Promise<Announcement[]>;
   /** 财报摘要（按报告期倒序）；东财直连无此能力，仅微服务模式提供 */

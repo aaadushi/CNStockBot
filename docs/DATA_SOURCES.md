@@ -18,6 +18,11 @@ GET https://searchapi.eastmoney.com/api/suggest/get?input=茅台&type=14&count=1
 - 返回 `QuotationCodeTable.Data[]`，含 Code/Name 等字段
 - type=14 覆盖全市场证券，需自行过滤出 0/3/6 开头的 A 股个股（见 `src/data/eastmoney.ts` 的 `search()`）
 
+**指数行情（已接入：get_market_index 技能）**
+- 与个股行情同一个 push2 接口，只是 secid 规则不同：上证指数 `1.000001`、深证成指 `0.399001`、
+  创业板指 `0.399006`、沪深300 `1.000300`、北证50 `0.899050`
+- **不能复用个股 `toSecid()` 规则**；技能内置显式映射表，新增指数先查东财行情页确认 secid
+
 ## AKShare（Python，经 data-service 暴露）
 
 | 函数 | 用途 |

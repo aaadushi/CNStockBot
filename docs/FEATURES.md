@@ -121,7 +121,21 @@
 - **注意事项**：SYSTEM_PROMPT 已引导"先搜后查、有歧义让用户选、搜不到禁止凭记忆作答"，
   改 prompt 时别删掉这条；suggest 接口字段是非官方的（PITFALLS.md 东财条目）。
 
-## 10. 行情数据源（东财直连）
+## 10. 大盘指数查询（get_market_index，2026-09-14 新增）
+
+- **实现方式**：技能内置"常用指数 → 东财 secid"显式映射表（8 个：上证/深成/创业板/
+  沪深300/上证50/中证500/科创50/北证50），调 `DataProvider.getIndexQuote(secid)`
+  走东财 push2 直连（与个股行情同一个接口，`fetchQuote` 共用）。支持名称/别名/代码匹配；
+  不传 `name` 时并发拉 4 个核心指数返回大盘概览。
+- **代码位置**：[src/skills/bundled/index/](../src/skills/bundled/index/)、
+  [src/data/eastmoney.ts](../src/data/eastmoney.ts) `getIndexQuote()`
+- **改动入口**：加指数 → 技能里的 `INDICES` 表（**必须到东财行情页确认 secid 再填**）；
+  调概览名单 → `CORE_CODES`
+- **注意事项**：指数 secid 规则与个股不同，**禁止复用 `toSecid()` 推导**——000001
+  个股=平安银行（0.000001）、指数=上证指数（1.000001）（PITFALLS.md 东财条目）；
+  指数点位同样放大 100 倍返回（fetchQuote 已统一除 100）。
+
+## 11. 行情数据源（东财直连）
 
 - **实现方式**：`fetch` 调 `push2.eastmoney.com/api/qt/stock/get`，带
   `Referer: https://quote.eastmoney.com/` 头；`toSecid()` 做代码→secid 转换
@@ -130,9 +144,9 @@
 - **改动入口**：加行情字段 → `FIELDS` 常量 + 接口类型 + 解析；接口失效排查 →
   PITFALLS.md 东财条目（浏览器抓包对比）
 - **注意事项**：secid 规则对指数不通用（000001 股票=平安银行 vs 指数=上证指数），
-  做指数功能时需单独映射。
+  指数查询走 `getIndexQuote(secid)` + 技能层显式映射表（见上一节），不要改 `toSecid()`。
 
-## 11. Python 数据微服务（data-service）
+## 12. Python 数据微服务（data-service）
 
 - **实现方式**：FastAPI + AKShare，包一层 HTTP 给 Node 主服务调用。端点：
   `/health`、`/quote/{code}`（盘口快照）、`/news/{code}`、`/search?keyword=`、
@@ -147,7 +161,7 @@
 - **注意事项**：AKShare 接口失效先 `pip install -U akshare`（PITFALLS.md）；
   端点统一用 try/except 包成 502 结构化错误，别让堆栈传到主服务。
 
-## 12. WebChat 渠道与离线收件箱
+## 13. WebChat 渠道与离线收件箱
 
 - **实现方式**：Express 静态托管 `public/webchat/` 聊天页；`POST /api/chat`
   同步等 Agent 回复；`notify()` 的消息存内存 Map，前端轮询 `GET /api/inbox` 取走（取后即删）。
@@ -157,7 +171,7 @@
   通知改 WebSocket/SSE → `notify()` 与前端轮询逻辑
 - **注意事项**：inbox 是内存存储，重启丢通知；无鉴权，公网部署前先解决 P5。
 
-## 13. 飞书渠道（2026-09-14 补完）
+## 14. 飞书渠道（2026-09-14 补完）
 
 - **实现方式**：`/feishu/events` 接收事件——url_verification 挑战应答、
   X-Lark-Signature 验签（HMAC-SHA256，key 为 `FEISHU_ENCRYPT_KEY`，对
@@ -176,7 +190,7 @@
   chat_id 映射重启即丢，重启后用户需先发一条消息才能收到收盘推送；
   验签依赖原始请求体，**改全局 JSON 中间件时不能删掉 verify 回调**（PITFALLS.md 渠道条目）。
 
-## 14. 定时任务（收盘日报 + 异动提醒）
+## 15. 定时任务（收盘日报 + 异动提醒）
 
 - **实现方式**：手写 `setTimeout` 调度器（北京时间显式换算），现有两个任务：
   1. **收盘日报**：每工作日 15:30 对自选股并发拉行情，格式化成带 emoji 的报告，
@@ -193,7 +207,7 @@
   会拿到收盘后的静态行情，不会触发误报但白白请求；新任务必须复用 `beijingNow()` 换算，
   别直接用本地时区（PITFALLS.md 调度条目）。
 
-## 15. 存储（SQLite）
+## 16. 存储（SQLite）
 
 - **实现方式**：`node:sqlite` 内置模块（DatabaseSync，免原生编译；需 Node >= 22.13），
   单文件 `data/store.db`（已 gitignore）。表：`watchlists(user_id, code)` 自选股、
@@ -205,7 +219,7 @@
   `prepare().run()` 返回的 `changes` 可能是 bigint，比较前用 `Number()` 包一层；
   单文件锁解决了多实例互踩（原 STATUS P7），但仍不建议多实例同时写。
 
-## 16. 配置与启动装配
+## 17. 配置与启动装配
 
 - **实现方式**：全部配置来自 `.env`（dotenv），集中在 `config.ts` 一个对象里导出，
   代码里禁止直接读 `process.env`。`src/index.ts` 是装配层：Store → DataProvider →

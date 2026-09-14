@@ -31,23 +31,34 @@ interface EastmoneyQuotePayload {
 export class EastmoneyProvider implements DataProvider {
   readonly name = 'eastmoney';
 
-  async getQuote(code: string): Promise<Quote> {
-    const url = `${PUSH2}?secid=${toSecid(code)}&fields=${FIELDS}`;
+  private async fetchQuote(secid: string, label: string): Promise<Quote> {
+    const url = `${PUSH2}?secid=${secid}&fields=${FIELDS}`;
     const res = await fetch(url, { headers: { Referer: 'https://quote.eastmoney.com/' } });
     if (!res.ok) throw new Error(`东财行情接口请求失败: HTTP ${res.status}`);
     const json = (await res.json()) as EastmoneyQuotePayload;
     const d = json.data;
     if (!d || d.f43 === undefined || d.f43 === '-') {
-      throw new Error(`未找到 ${code} 的行情（代码错误或已退市/停牌）`);
+      throw new Error(`未找到 ${label} 的行情（代码错误或已退市/停牌）`);
     }
     return {
-      code: d.f57 ?? code,
-      name: d.f58 ?? code,
+      code: d.f57 ?? label,
+      name: d.f58 ?? label,
       price: Number(d.f43) / 100,
       changePct: d.f170 === '-' || d.f170 === undefined ? 0 : Number(d.f170) / 100,
       prevClose: d.f60 === '-' || d.f60 === undefined ? 0 : Number(d.f60) / 100,
       time: d.f86 ? new Date(Number(d.f86) * 1000).toLocaleString('zh-CN', { timeZone: 'Asia/Shanghai' }) : undefined,
     };
+  }
+
+  async getQuote(code: string): Promise<Quote> {
+    return this.fetchQuote(toSecid(code), code);
+  }
+
+  /** 指数行情。secid 必须显式给出（如 1.000001 上证指数 / 0.399006 创业板指），
+   *  不能复用个股 toSecid 规则——000001 个股=平安银行(0.000001)、指数=上证(1.000001)。 */
+  async getIndexQuote(secid: string): Promise<Quote> {
+    if (!/^[01]\.\d{6}$/.test(secid)) throw new Error(`无效的指数 secid: ${secid}（应形如 1.000001）`);
+    return this.fetchQuote(secid, secid);
   }
 
   async getNews(_code: string, _limit = 10): Promise<NewsItem[]> {
