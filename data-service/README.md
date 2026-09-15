@@ -28,6 +28,7 @@ uvicorn main:app --host 127.0.0.1 --port 8000
 | `GET /search?keyword=` | 股票名称→代码搜索（全量表缓存 + 模糊匹配） |
 | `GET /announcements/{code}` | 个股公告（巨潮资讯，近 30 天） |
 | `GET /financials/{code}` | 财报摘要（新浪，按报告期倒序） |
+| `GET /history/{code}?days=120` | 历史日 K 线（前复权；东财失败自动降级新浪） |
 | `GET /trade-calendar?year=` | 交易日历（新浪，用于跳过法定节假日） |
 
 ## 注意

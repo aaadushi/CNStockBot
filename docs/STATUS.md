@@ -31,6 +31,9 @@
 | 大盘指数查询 `get_market_index` | `src/skills/bundled/index/` | ✅ 可用 | 8 个常用指数显式 secid 映射，不传参返回核心指数概览；名称匹配归一化（"创业板指数"等说法可识别）；2026-09-14 新增 |
 | Python 数据微服务（行情/新闻/搜索） | `data-service/main.py` | ✅ 可用 | FastAPI + AKShare；AKShare 调用统一 30s 超时（504），财报 NaN/交易日历格式已加固 |
 | 飞书渠道 | `src/channels/feishu.ts` | ✅ 可用 | 验签（含 ±5 分钟防重放）/token 缓存/回复/去重/主动推送；chat_id 映射 **kv 表持久化**（只学单聊，防持仓日报进群）；双凭据缺失时 fail-closed |
+| 股票浏览页 + 个股详情页（/stocks） | `public/stocks/` + `src/channels/webchat.ts` | ✅ 可用 | F1/F2 完成：自选股圆角卡片列表、页内搜索（同款卡片结果）、详情页行情/走势图/新闻/公告/财报；API 全部在口令鉴权后；2026-09-15 |
+| 历史 K 线数据（走势图数据源） | `data-service/main.py` `/history` + `DataProvider.getHistory` | ✅ 可用 | 前复权日 K；东财 `stock_zh_a_hist` 失败自动降级新浪 `stock_zh_a_daily`（push2his 限流托底，见 PITFALLS） |
+| 前端共享设计系统 | `public/shared/theme.css` | ✅ 可用 | ShadcnUI 风格（黑白灰 + indigo CTA、圆角卡片、微阴影）；webchat 与 stocks 两页共用；2026-09-15 UI 重设计 |
 
 ## 二、待办优先级总表（下一个 agent 从这里开始）
 
@@ -99,42 +102,30 @@
 
 ## 四、功能路线图（待做，交给下一个 agent）
 
-> 以下两项是用户 2026-09-15 提出的新需求，按 F1 → F2 顺序做。
-
-### F1 股票浏览页 + 个股详情页
-
-**需求（用户原话要点）**：
-- 新增一个浏览页面：自选股每只对应一个**圆角矩形**，从上到下排列，一行一只
-- 点进某个圆角矩形 → 进入该股的**详情页**，显示完整信息
-- 股价上涨/下跌的**具体情况用折线图**展示，**可查看往期数据**
-
-**实现建议**：
-- 页面：`public/stocks/`（新静态页，列表 + `?code=` 详情视图，风格参照 public/webchat/）
-- 列表数据：`GET /api/watchlist?userId=`（需新增端点，走 `store.getWatchlist` + 批量行情；
-  **必须挂在 /api 口令鉴权后面**，与 webchat 一致）
-- 详情页完整信息：行情（现有 getQuote）+ 新闻/公告/财报（微服务端点已有）
-- 折线图需要**历史 K 线数据**——目前数据层没有这个能力，需新增：
-  - data-service 加端点：`ak.stock_zh_a_hist(symbol=code, period="daily", start_date, end_date, adjust="qfq")`（东财历史行情）
-  - `DataProvider` 加 `getHistory(code, days)`，CompositeProvider 接线
-  - 前端画图：轻量起见用 Canvas/SVG 手写或 Chart.js CDN（注意内网/离线可用性）
-- 注意 PITFALLS：东财/腾讯接口限流、停牌股抛错（详情页要优雅降级显示）
-
-### F2 浏览页内搜索
-
-**需求（用户原话要点）**：
-- 在 F1 的浏览页里做搜索功能
-- 用户只输入几个数字、有多个匹配结果时，搜索结果以**浏览页同款圆角矩形列表**展示
-- 点进结果 → 进入同一个个股详情页
-
-**实现建议**：
-- 复用现有搜索链路：`DataProvider.search()`（Python 全量表优先，东财 suggest 降级），
-  新增 `GET /api/search?keyword=`（口令鉴权）薄封装即可，不要另起炉灶
-- 搜索结果行点击行为与 F1 列表一致（进详情页）；可加"加入自选"按钮（调 manage_watchlist 对应的存储方法，或新增 POST /api/watchlist 端点）
+> ~~F1 股票浏览页+个股详情页、F2 浏览页内搜索~~ 均已于 2026-09-15 完成（见更新日志）。
+> 当前无已排期的新功能。后续候选方向（按建议优先级）：
+> 1. **S3-3 多用户体系**（公网部署前必做）：WebChat 共享口令 → 独立账号，解决 A-601 身份隔离
+> 2. 详情页增强：分时图、K 线蜡烛图（现有数据已含 OHLC）、成交量副图
+> 3. 浏览页与聊天联动：详情页"问机器人这只股票"按钮（跳转 /webchat 预填问题）
+> 4. 自选股分组 / 成本价录入与持仓盈亏展示
 
 ---
 
 ## 更新日志
 
+- 2026-09-15（下午批次）：**F1/F2 完成——股票浏览页 + 个股详情页 + 页内搜索，同步 UI 重设计**。
+  后端：data-service 新增 `/history/{code}` 历史 K 线端点（前复权日 K，东财失败自动降级新浪）；
+  `DataProvider` 新增 `getHistory` 与 `Quote.open/high/low` 可选字段（东财 f44/45/46、腾讯
+  下标 5/33/34 均已接线）；webchat.ts 新增浏览页 API（GET/POST/DELETE /api/watchlist 批量行情、
+  /api/stocks/:code 四块独立降级聚合、/api/stocks/:code/history、/api/search），全部在口令鉴权后。
+  前端：新增 `public/shared/theme.css` ShadcnUI 风格设计系统（黑白灰 + indigo CTA）、
+  `public/stocks/` 浏览页 SPA（自选股圆角卡片、防抖搜索同款卡片结果、详情页手写 SVG 折线图
+  带 hover tooltip 与 1月/3月/6月/1年 区间切换、新闻/公告/财报 Tab）；webchat 聊天页重设计
+  （卡片式布局、建议 chip、卡片式口令输入替代 window.prompt）。
+  顺带修复：akshare 1.18.94 `stock_financial_abstract` 参数名 stock→symbol 兼容
+  （symbol 优先、TypeError 回退 stock）。验证：typecheck + 66 测试全绿 + 全链路冒烟
+  （自选增删/批量行情/搜索/详情聚合/历史 K 线/401 均实测通过；公告块因巨潮上游限流返回
+  非 JSON，按设计降级为 announcementsError 展示）。
 - 2026-09-15：新增 [docs/WORKFLOW.md](WORKFLOW.md) 提交规范与版本管理——此后改动一律走
   分支 + PR 合入 main（禁止直接推 main），含分支命名、提交信息格式、revert 回退方法与
   里程碑 tag 规则。CLAUDE.md 开发工作流节同步。

@@ -8,7 +8,7 @@
 > 功能现状（能用/待做/有问题）看 [STATUS.md](STATUS.md)，原理性架构看
 > [ARCHITECTURE.md](ARCHITECTURE.md)，报错排查看 [PITFALLS.md](PITFALLS.md)。
 
-最后更新：2026-09-14
+最后更新：2026-09-15
 
 ---
 
@@ -105,7 +105,8 @@
 - **改动入口**：增删指标字段 → main.py 端点的 `col_map` + provider.ts 的
   `FinancialReport` 接口 + 技能格式化；要数值计算（如同比）→ 先在端点里清洗掉
   "元"后缀和千分位逗号（目前原样返回字符串，只适合 LLM 阅读）
-- **注意事项**：该接口参数名是 `stock` 而非 `symbol`；返回值全是带单位的中文字符串；
+- **注意事项**：该接口参数名随 AKShare 版本变动（旧版 `stock`，1.18.94 起 `symbol`，
+  端点已做双兼容）；返回值全是带单位的中文字符串；
   部分股票历史数据被新浪截断到 100 条（PITFALLS.md Python 条目）。
 
 ## 8. 自选股管理（manage_watchlist）
@@ -309,3 +310,50 @@
 - **注意事项**：typecheck 走 `tsconfig.typecheck.json`（含 tests/），构建仍走
   `tsconfig.json`（只含 src/）；Windows 下 Store 不关连接会导致临时目录删不掉，
   用公开 `close()` 清理（PITFALLS.md 工具链条目）。
+
+## 20. 股票浏览页 + 个股详情页（F1/F2，2026-09-15 新增）
+
+- **实现方式**：`/stocks` 单文件 SPA（无框架、无 CDN，原生 HTML/CSS/JS），
+  URL query 区分视图（`?code=` 为详情页，pushState/popstate 路由）。
+  列表视图：自选股圆角卡片（一行一只）+ 顶部防抖搜索（结果同款卡片，可一键加自选）；
+  详情视图：行情卡（开/高/低/昨收四格）+ 手写 SVG 收盘折线图（渐变填充、网格线、
+  hover 十字线 + tooltip、近1月/3月/6月/1年 区间切换）+ 新闻/公告/财报 Tab。
+  设计系统抽在 `public/shared/theme.css`（CSS 变量 + 通用组件类），webchat 与 stocks 共用；
+  口令鉴权为卡片式浮层（localStorage `cnstockbot_token`/`cnstockbot_uid`，与 webchat 互通）。
+- **代码位置**：页面 [public/stocks/index.html](../public/stocks/index.html)、
+  设计系统 [public/shared/theme.css](../public/shared/theme.css)、
+  API [src/channels/webchat.ts](../src/channels/webchat.ts)（`GET/POST/DELETE /api/watchlist`、
+  `GET /api/stocks/:code`、`:code/history`、`/api/search`，全部在 `/api` 口令中间件后）
+- **改动入口**：改卡片/图表样式 → stocks/index.html 的 `<style>` 与 drawChart()；
+  改配色/圆角/阴影全局风格 → theme.css 变量；改 API 契约 → webchat.ts + 前端同步改
+- **注意事项**：前端所有接口文本一律 `textContent` 渲染（防 XSS）；
+  详情聚合四块（行情/新闻/公告/财报）`Promise.allSettled` 独立降级，单块失败不影响其他块；
+  停牌股在列表中显示 `{code, error}` 而非消失（getQuote 抛错是设计行为，PITFALLS）。
+
+## 21. 历史 K 线数据（getHistory，2026-09-15 新增）
+
+- **实现方式**：`DataProvider.getHistory(code, days)`（可选方法，返回 `HistoryBar[]`
+  日期升序：date/open/close/high/low/volume/changePct）→ 微服务 `/history/{code}?days=`
+  → `ak.stock_zh_a_hist(period="daily", adjust="qfq")`（东财前复权日 K）；
+  **东财失败（含超时）自动降级新浪 `ak.stock_zh_a_daily`**（sh/sz 前缀），新浪无涨跌幅列
+  时用收盘价环比补算。start_date 按日历日 2×days 前推后取尾部，保证凑满交易日条数。
+- **代码位置**：[data-service/main.py](../data-service/main.py) 的 `/history` 端点与
+  `_hist_items()` 归一化、[src/data/pythonService.ts](../src/data/pythonService.ts)、
+  接口定义 [src/data/provider.ts](../src/data/provider.ts)（`HistoryBar`）
+- **改动入口**：加字段（如成交额/换手率）→ main.py `_hist_items` 映射 + provider.ts
+  `HistoryBar` + 前端 chart；换复权方式 → 端点 `adjust` 参数（hfq/qfq/空）
+- **注意事项**：东财 push2his 与 push2 限流独立，可能实时行情正常而历史接口被掐
+  （降级链即为此设计，PITFALLS.md Python 条目）；新浪源不覆盖北交所；
+  东财直连模式（无微服务）下 `getHistory` 不存在，API 返回 503 提示。
+
+## 22. 前端共享设计系统（theme.css，2026-09-15 新增）
+
+- **实现方式**：ShadcnUI 风格单一 CSS 文件（无构建）：CSS 变量定义黑白灰色板 +
+  indigo CTA 强调色 + A 股红涨绿跌语义色，通用组件类（.card/.btn/.input/.badge/
+  .skeleton/.auth-overlay）。经 `express.static('/shared')` 提供，webchat 与 stocks
+  两页 `<link>` 引入后只写页内少量特有样式。
+- **代码位置**：[public/shared/theme.css](../public/shared/theme.css)
+- **改动入口**：全局风格（色板/圆角/阴影/字号层级）→ 改 `:root` 变量与组件类；
+  新页面 → 引入 theme.css 并复用组件类，不要另起色板
+- **注意事项**：离线约束——禁止 CDN/外链资源（图表手写 SVG、无框架）；
+  `--up`/`--down` 是 A 股红涨绿跌语义色，只用於行情数据，不要当 UI 强调色用。

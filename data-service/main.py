@@ -36,6 +36,16 @@ async def run_ak(fn, *args, **kwargs):
         raise HTTPException(status_code=504, detail=f"上游数据源超时（{AKSHARE_TIMEOUT}s 无响应）")
 
 
+def _num(v) -> float:
+    """安全转 float：None/NaN/非法值 -> 0.0（防 AKShare 列值漂移）。"""
+    try:
+        if v is None or pd.isna(v):
+            return 0.0
+        return float(v)
+    except (TypeError, ValueError):
+        return 0.0
+
+
 def _cell(row, col: str) -> str:
     """安全取单元格字符串：NaN -> ""；真值 0 保留为 "0"（审计 A-504）。"""
     v = row.get(col, None)
@@ -216,11 +226,16 @@ async def trade_calendar(year: int = Query(default=0, ge=0)):
 async def financials(code: str, limit: int = Query(default=4, ge=1, le=20)):
     """个股财务报表摘要（新浪财经），按报告期倒序返回最近 limit 期。
 
-    注意：该接口参数名是 stock 而非 symbol；数值是带"元"后缀和千分位逗号的
-    字符串（如 "999,862,000.00元"），原样返回给主服务由 LLM 阅读，不做数值清洗。
+    注意：数值是带"元"后缀和千分位逗号的字符串（如 "999,862,000.00元"），
+    原样返回给主服务由 LLM 阅读，不做数值清洗。
+    参数名随 AKShare 版本变动：旧版是 stock，1.18.94 起改为 symbol，两种都尝试。
     """
     try:
-        df = await run_ak(ak.stock_financial_abstract, stock=code)
+        try:
+            df = await run_ak(ak.stock_financial_abstract, symbol=code)
+        except TypeError:
+            # 旧版 AKShare 参数名为 stock
+            df = await run_ak(ak.stock_financial_abstract, stock=code)
     except HTTPException:
         raise
     except Exception as e:
@@ -242,3 +257,80 @@ async def financials(code: str, limit: int = Query(default=4, ge=1, le=20)):
     for _, row in df.head(limit).iterrows():
         items.append({k: _cell(row, col) for k, col in col_map.items()})
     return items
+
+
+def _hist_items(df, days: int, cols: dict):
+    """历史 K 线归一化输出（日期升序，尾部 days 条）。
+
+    cols 为输出字段 → 数据源列名映射；无 changePct 列（新浪源）时用收盘价环比计算
+    （窗口首条无昨收，置 0.0——只影响图表 tooltip 的首条，不影响折线本身）。
+    """
+    if df is None or df.empty:
+        return []
+    rows = []
+    for _, row in df.tail(days).iterrows():
+        rows.append({
+            # pd.to_datetime 转换，防范列类型漂移（同 trade-calendar，审计 A-505）
+            "date": pd.to_datetime(row[cols["date"]]).strftime("%Y-%m-%d"),
+            "open": _num(row.get(cols["open"])),
+            "close": _num(row.get(cols["close"])),
+            "high": _num(row.get(cols["high"])),
+            "low": _num(row.get(cols["low"])),
+            "volume": _num(row.get(cols["volume"])),
+            "changePct": _num(row.get(cols["changePct"])) if "changePct" in cols else 0.0,
+        })
+    if "changePct" not in cols:
+        prev = None
+        for r in rows:
+            if prev:
+                r["changePct"] = round((r["close"] - prev) / prev * 100, 2)
+            prev = r["close"]
+    return rows
+
+
+@app.get("/history/{code}")
+async def history(code: str, days: int = Query(default=120, ge=1, le=1500)):
+    """个股历史日 K 线（前复权）。按日期升序返回最近 days 个交易日。
+
+    数据源降级链：东财 stock_zh_a_hist → 新浪 stock_zh_a_daily。
+    东财 push2his 接口被 IP 限流时（见 PITFALLS 东财条目）新浪可托底（2026-09-15 实测）。
+    start_date 按日历日约 2*days 往前推（覆盖周末/节假日），拿到后取尾部
+    days 个交易日，保证非交易日不挤占条数。
+    """
+    end = datetime.now().strftime("%Y%m%d")
+    start = (datetime.now() - timedelta(days=days * 2)).strftime("%Y%m%d")
+    em_cols = {"date": "日期", "open": "开盘", "close": "收盘",
+               "high": "最高", "low": "最低", "volume": "成交量", "changePct": "涨跌幅"}
+    sina_cols = {"date": "date", "open": "open", "close": "close",
+                 "high": "high", "low": "low", "volume": "volume"}
+    em_err = None
+    try:
+        df = await run_ak(
+            ak.stock_zh_a_hist,
+            symbol=code,
+            period="daily",
+            start_date=start,
+            end_date=end,
+            adjust="qfq",
+        )
+        return _hist_items(df, days, em_cols)
+    except Exception as e:
+        # 含 HTTPException（超时 504）：上游源失败都应尝试降级而非直接失败
+        em_err = e
+        logger.warning("history 东财源失败，降级新浪: code=%s err=%s", code, e)
+    try:
+        # 新浪代码带市场前缀；北交所（4/8/920）新浪不覆盖，此时降级会失败并连同东财错误一起报出
+        sina_symbol = f"sh{code}" if code.startswith(("6", "9")) else f"sz{code}"
+        df = await run_ak(
+            ak.stock_zh_a_daily,
+            symbol=sina_symbol,
+            start_date=start,
+            end_date=end,
+            adjust="qfq",
+        )
+        return _hist_items(df, days, sina_cols)
+    except Exception as e:
+        raise HTTPException(
+            status_code=502,
+            detail=f"AKShare 历史行情获取失败（东财: {em_err}；新浪降级: {e}）",
+        )

@@ -4,64 +4,121 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>股助手 - A 股信息助手</title>
+  <link rel="stylesheet" href="/shared/theme.css" />
   <style>
-    * { box-sizing: border-box; margin: 0; padding: 0; }
-    body { font-family: -apple-system, "PingFang SC", "Microsoft YaHei", sans-serif; background: #f0f2f5; height: 100vh; display: flex; flex-direction: column; }
-    header { background: #1a1a2e; color: #fff; padding: 14px 20px; font-size: 17px; }
-    header small { opacity: .6; font-size: 12px; margin-left: 8px; }
-    #chat { flex: 1; overflow-y: auto; padding: 16px; display: flex; flex-direction: column; gap: 10px; }
-    .msg { max-width: 75%; padding: 10px 14px; border-radius: 12px; white-space: pre-wrap; line-height: 1.6; font-size: 14px; }
-    .user { align-self: flex-end; background: #3b82f6; color: #fff; }
-    .bot { align-self: flex-start; background: #fff; box-shadow: 0 1px 3px rgba(0,0,0,.08); }
-    .bot.error { background: #fef2f2; color: #b91c1c; }
-    #bar { display: flex; gap: 8px; padding: 12px; background: #fff; border-top: 1px solid #e5e7eb; }
-    #input { flex: 1; border: 1px solid #d1d5db; border-radius: 8px; padding: 10px 12px; font-size: 14px; outline: none; }
-    #send { background: #3b82f6; color: #fff; border: none; border-radius: 8px; padding: 0 20px; cursor: pointer; font-size: 14px; }
-    #send:disabled { opacity: .5; }
-    .hint { align-self: center; color: #9ca3af; font-size: 12px; }
+    body { height: 100vh; display: flex; flex-direction: column; }
+    .chat-wrap {
+      flex: 1; max-width: 720px; width: 100%; margin: 0 auto;
+      display: flex; flex-direction: column; min-height: 0; padding: 20px;
+      gap: 12px;
+    }
+    #chat {
+      flex: 1; overflow-y: auto; display: flex; flex-direction: column; gap: 12px;
+      padding: 4px 2px;
+    }
+    .msg {
+      max-width: 78%; padding: 12px 16px; font-size: 14px; line-height: 1.7;
+      white-space: pre-wrap; word-break: break-word;
+    }
+    .user {
+      align-self: flex-end; background: var(--accent); color: #fff;
+      border-radius: 16px 16px 4px 16px;
+    }
+    .bot {
+      align-self: flex-start; background: var(--card);
+      border: 1px solid var(--border); border-radius: 16px 16px 16px 4px;
+      box-shadow: var(--shadow-sm);
+    }
+    .bot.error { background: var(--up-soft); color: var(--up); border-color: #fecaca; }
+
+    /* 欢迎建议 chip */
+    .suggestions { display: flex; flex-wrap: wrap; gap: 8px; align-self: flex-start; }
+    .chip {
+      font-size: 13px; color: var(--text-2); background: var(--card);
+      border: 1px solid var(--border); border-radius: 999px; padding: 6px 14px;
+      cursor: pointer; transition: all 150ms ease;
+    }
+    .chip:hover { border-color: var(--accent); color: var(--accent); background: var(--accent-soft); }
+
+    /* 思考中三点动画 */
+    .thinking::after {
+      content: ''; display: inline-block; width: 1.2em; text-align: left;
+      animation: dots 1.2s steps(4) infinite;
+    }
+    @keyframes dots { 0% { content: ''; } 25% { content: '.'; } 50% { content: '..'; } 75% { content: '...'; } }
+
+    /* 输入区 */
+    #bar {
+      display: flex; gap: 10px; background: var(--card);
+      border: 1px solid var(--border); border-radius: 16px;
+      box-shadow: var(--shadow-sm); padding: 10px;
+    }
+    #input { border: none; box-shadow: none !important; background: transparent; }
+    #send { border-radius: 10px; }
   </style>
 </head>
 <body>
-  <header>📊 股助手<small>A 股信息助手 · 仅供参考，不构成投资建议</small></header>
-  <div id="chat">
-    <div class="msg bot">你好！我是股助手。试试这些：
-• 600519 现在多少钱？
-• 我买了 300750，帮我加自选
-• 我的自选股今天怎么样？</div>
+  <header class="page-header">
+    <div class="inner">
+      <span class="brand">📊 股助手</span>
+      <span class="sub">仅供参考，不构成投资建议</span>
+      <span class="spacer"></span>
+      <a class="nav" href="/stocks">📈 自选股</a>
+    </div>
+  </header>
+
+  <div class="chat-wrap">
+    <div id="chat">
+      <div class="msg bot">你好！我是股助手。试试这些：</div>
+      <div class="suggestions" id="suggestions">
+        <button class="chip">600519 现在多少钱？</button>
+        <button class="chip">我买了 300750，帮我加自选</button>
+        <button class="chip">我的自选股今天怎么样？</button>
+      </div>
+    </div>
+    <div id="bar">
+      <input id="input" class="input" placeholder="输入消息，回车发送…" autofocus />
+      <button id="send" class="btn btn-primary">发送</button>
+    </div>
   </div>
-  <div id="bar">
-    <input id="input" placeholder="输入消息，回车发送…" autofocus />
-    <button id="send">发送</button>
+
+  <!-- 口令鉴权浮层 -->
+  <div class="auth-overlay" id="auth-overlay" hidden>
+    <div class="auth-card">
+      <h2>输入访问口令</h2>
+      <p>口令见服务端启动日志或 .env 的 ACCESS_TOKEN</p>
+      <input id="auth-input" class="input" type="password" placeholder="ACCESS_TOKEN" />
+      <div class="error" id="auth-error"></div>
+      <button class="btn btn-primary" id="auth-confirm">确认</button>
+    </div>
   </div>
+
   <script>
     // MVP 阶段用本地生成的 userId 标识会话，后续接入真实账号体系
     const userId = localStorage.getItem('cnstockbot_uid') ||
       (() => { const id = 'web_' + Math.random().toString(36).slice(2, 10); localStorage.setItem('cnstockbot_uid', id); return id; })();
 
-    // 访问口令：首次打开提示输入，存入 localStorage；401 时清除并提示重新输入。
-    // 点"取消"不做阻塞死循环，改为页面内提示 + 发消息/轮询时重新询问（审计 A-606）
+    // 访问口令：首次打开显示口令卡片，存入 localStorage；401 时清除并要求重输。
     let accessToken = localStorage.getItem('cnstockbot_token') || '';
-    function askToken() {
-      const t = prompt('请输入访问口令（ACCESS_TOKEN，见服务端启动日志或 .env）：');
-      if (t && t.trim()) {
-        accessToken = t.trim();
-        localStorage.setItem('cnstockbot_token', accessToken);
-        return true;
-      }
-      return false;
+    const authOverlay = document.getElementById('auth-overlay');
+    let authResolve = null;
+    function showAuth(hasError) {
+      document.getElementById('auth-error').textContent = hasError ? '口令错误，请重新输入' : '';
+      authOverlay.hidden = false;
+      document.getElementById('auth-input').focus();
+      return new Promise((resolve) => { authResolve = resolve; });
     }
-    function ensureToken() {
-      if (accessToken) return true;
-      if (askToken()) return true;
-      const hint = addMsg('需要访问口令才能使用。点击本消息重新输入。', 'bot error');
-      hint.style.cursor = 'pointer';
-      hint.onclick = () => { if (askToken()) hint.remove(); };
-      return false;
+    function submitAuth() {
+      const t = document.getElementById('auth-input').value.trim();
+      if (!t) return;
+      accessToken = t;
+      localStorage.setItem('cnstockbot_token', t);
+      document.getElementById('auth-input').value = '';
+      authOverlay.hidden = true;
+      if (authResolve) { authResolve(); authResolve = null; }
     }
-    function clearToken() {
-      accessToken = '';
-      localStorage.removeItem('cnstockbot_token');
-    }
+    document.getElementById('auth-confirm').onclick = submitAuth;
+    document.getElementById('auth-input').onkeydown = (e) => { if (e.key === 'Enter') submitAuth(); };
 
     const chat = document.getElementById('chat');
     const input = document.getElementById('input');
@@ -71,35 +128,38 @@
       const div = document.createElement('div');
       div.className = 'msg ' + cls;
       div.textContent = text;
+      // 建议 chip 只留欢迎位，首条真实对话后移除
+      const sg = document.getElementById('suggestions');
+      if (sg && (cls === 'user')) sg.remove();
       chat.appendChild(div);
       chat.scrollTop = chat.scrollHeight;
       return div;
     }
 
-    // 统一带鉴权头的 fetch；遇 401 清口令并提示重输
+    // 统一带鉴权头的 fetch；遇 401 清口令并重问
     async function apiFetch(url, options = {}) {
+      if (!accessToken) await showAuth(false);
       options.headers = Object.assign({}, options.headers, {
         'Authorization': 'Bearer ' + accessToken,
       });
       const res = await fetch(url, options);
       if (res.status === 401) {
-        clearToken();
-        ensureToken();
-        throw new Error('口令错误，已请重新输入，请重试操作');
+        accessToken = '';
+        localStorage.removeItem('cnstockbot_token');
+        await showAuth(true);
+        return apiFetch(url, options);
       }
       return res;
     }
 
-    ensureToken();
-
     async function send() {
       const text = input.value.trim();
       if (!text) return;
-      if (!ensureToken()) return; // 没有口令不发请求，避免必失败的往返
       input.value = '';
       addMsg(text, 'user');
       sendBtn.disabled = true;
-      const pending = addMsg('思考中…', 'bot');
+      const pending = addMsg('思考中', 'bot');
+      pending.classList.add('thinking');
       try {
         const res = await apiFetch('/api/chat', {
           method: 'POST',
@@ -107,9 +167,11 @@
           body: JSON.stringify({ userId, message: text }),
         });
         const data = await res.json();
+        pending.classList.remove('thinking');
         pending.textContent = data.reply || data.error || '（无回复）';
         if (data.error) pending.classList.add('error');
       } catch (e) {
+        pending.classList.remove('thinking');
         pending.textContent = '请求失败：' + e.message;
         pending.classList.add('error');
       } finally {
@@ -120,8 +182,15 @@
 
     sendBtn.onclick = send;
     input.onkeydown = (e) => { if (e.key === 'Enter') send(); };
+    // 建议 chip 点击直接发送
+    document.getElementById('suggestions').addEventListener('click', (e) => {
+      const chip = e.target.closest('.chip');
+      if (!chip) return;
+      input.value = chip.textContent;
+      send();
+    });
 
-    // 轮询离线通知（收盘日报等推送）；无口令时暂停轮询，不在后台反复弹窗
+    // 轮询离线通知（收盘日报等推送）；无口令时暂停轮询
     setInterval(async () => {
       if (!accessToken) return;
       try {
