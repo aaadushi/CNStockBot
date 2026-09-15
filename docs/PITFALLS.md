@@ -188,6 +188,24 @@
 
 ## 3. Python / AKShare（data-service）
 
+### [2026-09-15] 资金流接口选型：腾讯 ff_ 已下线；push2delay 镜像 fflow 只回 1 行；新浪比率是小数
+- **现象**：接入个股资金流（F3-4）时三路探源——① 腾讯 `qt.gtimg.cn/q=ff_sh600519`
+  返回 `v_pv_none_match="1"`（接口已下线，不是参数错误）；② `push2delay.eastmoney.com`
+  确实镜像了 push2his 的 `/api/qt/stock/fflow/daykline/get`，**但无视 lmt 参数只回当日
+  1 行**，不能作历史降级源（仍可用于核对字段口径：东财百分数字段已是 % 单位，实测
+  f63 涨跌幅 -0.41 = -0.41%）；③ 新浪 `MoneyFlow.ssl_qsfx_zjlrqs` 可用，但
+  changeratio/ratioamount/r0_ratio 是**小数**（-0.0738 = -7.38%），直接当百分数展示会小 100 倍。
+- **根因**：`ak.stock_individual_fund_flow` 走 push2his（与 /history 东财源同宿主，
+  限流状态联动——本机封禁中全 subdomain 都被掐）；腾讯旧资金流接口随行情协议迭代下线；
+  新浪 MoneyFlow 字段无文档，单位只能靠与行情/成交额交叉验算。
+- **解法**：主源 AKShare `stock_individual_fund_flow`（五档，market=sh/sz/bj，**920 段
+  属北交所须先于 "9" 判断**），降级新浪 MoneyFlow 直连（两档，小数 ×100，不覆盖北交所）；
+  两源**口径不同**（新浪"净流入"含全部资金 ≠ 东财"主力净流入"），响应带 source 字段标注，
+  前端按源切换标签，不可跨源对比数值。
+- **涉及文件**：`data-service/main.py`（/fund-flow、_fund_flow_via_sina）
+- **预防**：给"看似有多个免费源"的数据选型时，先用同一只票同日数据逐一实测再定降级链；
+  废弃接口的典型信号是 `v_pv_none_match`（腾讯）与只回 1 行（delay 镜像的翻页类接口）。
+
 ### [2026-09-15] `fund_etf_spot_em` 全量翻页 30s+，默认 run_ak 30s 超时刚好踩线
 - **现象**：接入场内 ETF 实时榜时，akshare 1.18.94 实测 `ak.fund_etf_spot_em()` 需翻页
   约 16 页、耗时 30s 以上，按统一 30s 超时直接 504
@@ -300,7 +318,7 @@
 - **现象**：quote 技能正常，news 技能全部失败。
 - **根因**：Python data-service 没启动（默认组合是行情东财直连 + 新闻走微服务，
   两者互相独立）。
-- **解法**：确认 data-service 已启动且 `DATA_SERVICE_URL` 配置正确；
+- **解法**：确认 data-service 已启动且 `PYTHON_SERVICE_URL` 配置正确；
   微服务启动较慢（AKShare import 重），health check 通过前主服务调用会失败。
 - **涉及文件**：`src/data/pythonService.ts`、`src/data/index.ts`、`data-service/main.py`
 

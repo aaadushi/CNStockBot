@@ -11,7 +11,7 @@
  * - GET  /api/watchlist?userId=   自选股列表 + 批量行情（单只失败降级为 {code, error}）
  * - POST /api/watchlist           { userId, code } -> { ok, added }
  * - DELETE /api/watchlist         { userId, code } -> { ok, removed }
- * - GET  /api/stocks/:code        个股详情聚合（行情/新闻/公告/财报，各板块独立降级）
+ * - GET  /api/stocks/:code        个股详情聚合（行情/新闻/公告/财报/公司资料/资金流，各板块独立降级）
  * - GET  /api/stocks/:code/news?sort=hot|time  单块新闻（浏览页排序切换用）
  * - GET  /api/stocks/:code/history?days=  历史 K 线（需 data-service 提供 getHistory）
  * - GET  /api/market/movers?limit=  全市场今日涨跌榜（上涨/下跌/平盘 + 家数统计）
@@ -203,7 +203,7 @@ export class WebChatChannel implements Channel {
       res.json({ ok: true, removed });
     });
 
-    // 个股详情聚合：行情/新闻/公告/财报/公司资料五块并发，任一失败只影响自己那块（xxxError + null）
+    // 个股详情聚合：行情/新闻/公告/财报/公司资料/资金流六块并发，任一失败只影响自己那块（xxxError + null）
     app.get('/api/stocks/:code', async (req, res) => {
       const code = req.params.code;
       if (!CODE_RE.test(code)) {
@@ -212,12 +212,13 @@ export class WebChatChannel implements Channel {
       }
       const unsupported = (what: string) =>
         Promise.reject(new Error(`数据源不支持${what}（东财直连无此能力，请启动 data-service）`));
-      const [quote, news, announcements, financials, profile] = await Promise.allSettled([
+      const [quote, news, announcements, financials, profile, fundFlow] = await Promise.allSettled([
         this.data.getQuote(code),
         this.data.getNews(code, 10),
         this.data.getAnnouncements ? this.data.getAnnouncements(code, 10) : unsupported('公告'),
         this.data.getFinancials ? this.data.getFinancials(code, 4) : unsupported('财报'),
         this.data.getProfile ? this.data.getProfile(code) : unsupported('公司资料'),
+        this.data.getFundFlow ? this.data.getFundFlow(code, 30) : unsupported('资金流'),
       ]);
       res.json({
         quote: quote.status === 'fulfilled' ? pickQuote(quote.value) : null,
@@ -231,6 +232,8 @@ export class WebChatChannel implements Channel {
         financialsError: financials.status === 'rejected' ? errText(financials.reason) : null,
         profile: profile.status === 'fulfilled' ? profile.value : null,
         profileError: profile.status === 'rejected' ? errText(profile.reason) : null,
+        fundFlow: fundFlow.status === 'fulfilled' ? fundFlow.value : null,
+        fundFlowError: fundFlow.status === 'rejected' ? errText(fundFlow.reason) : null,
       });
     });
 

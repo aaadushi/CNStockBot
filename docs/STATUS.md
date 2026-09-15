@@ -31,7 +31,7 @@
 | 大盘指数查询 `get_market_index` | `src/skills/bundled/index/` | ✅ 可用 | 8 个常用指数显式 secid 映射，不传参返回核心指数概览；名称匹配归一化（"创业板指数"等说法可识别）；2026-09-14 新增 |
 | Python 数据微服务（行情/新闻/搜索） | `data-service/main.py` | ✅ 可用 | FastAPI + AKShare；AKShare 调用统一 30s 超时（504），财报 NaN/交易日历格式已加固 |
 | 飞书渠道 | `src/channels/feishu.ts` | ✅ 可用 | 验签（含 ±5 分钟防重放）/token 缓存/回复/去重/主动推送；chat_id 映射 **kv 表持久化**（只学单聊，防持仓日报进群）；双凭据缺失时 fail-closed |
-| 股票浏览页 + 个股详情页（/stocks） | `public/stocks/` + `src/channels/webchat.ts` | ✅ 可用 | F1/F2 完成：自选股圆角卡片列表、页内搜索（同款卡片结果）、详情页行情/公司资料/走势图/新闻/公告/财报；API 全部在口令鉴权后；2026-09-15 |
+| 股票浏览页 + 个股详情页（/stocks） | `public/stocks/` + `src/channels/webchat.ts` | ✅ 可用 | F1/F2 完成：自选股圆角卡片列表、页内搜索（同款卡片结果）、详情页行情/公司资料/资金流/走势图/新闻/公告/财报；API 全部在口令鉴权后；2026-09-15 |
 | 历史 K 线数据（走势图数据源） | `data-service/main.py` `/history` + `DataProvider.getHistory` | ✅ 可用 | 前复权日 K；东财 `stock_zh_a_hist` 失败自动降级新浪 `stock_zh_a_daily`（push2his 限流托底，见 PITFALLS）；2026-09-15 起东财源透出成交额/换手率（F3-3），新浪降级源无此列、成交量已归一（股→手） |
 | 前端共享设计系统 | `public/shared/theme.css` | ✅ 可用 | ShadcnUI 风格（黑白灰 + indigo CTA、圆角卡片、微阴影）；webchat 与 stocks 两页共用；2026-09-15 UI 重设计 |
 | 全市场涨跌榜（/market） | `public/market/` + `src/channels/webchat.ts` `/api/market/movers` | ✅ 可用 | 今日涨幅榜/跌幅榜/平盘三 Tab + 涨跌平家数总览（沪深京）；东财 clist/ulist 接口，push2 限流自动降级 push2delay（延时 15 分钟，页面标注）；不依赖 data-service；2026-09-15 新增 |
@@ -117,8 +117,7 @@
 | ~~F3-1~~ | ~~**估值与规模**~~ | ✅ 2026-09-15 完成（见更新日志） | — |
 | ~~F3-2~~ | ~~**公司资料**：所属行业、板块、上市日期、总股本~~ | ✅ 2026-09-15 完成（见更新日志） | — |
 | ~~F3-3~~ | ~~**成交活跃度**：成交额、换手率、量比~~ | ✅ 2026-09-15 完成（见更新日志） | — |
-| F3-4 | **资金流**：主力/超大单净流入 | `ak.stock_individual_fund_flow(stock=code, market=...)`（东财个股资金流，market 参数 sh/sz/bj 按代码前缀映射）→ data-service `/fund-flow/{code}` | 详情页新 Tab 或独立卡片 |
-| F3-5 | **分时数据**（今日分时走势） | `ak.stock_zh_a_hist_min_em(symbol=code, period="1")` 或东财 trends2 接口；注意数据量大，前端图可复用现有 SVG 折线组件 | 详情页走势图加"分时/日K"切换 |
+| ~~F3-4~~ | ~~**资金流**：主力/超大单净流入~~ | ✅ 2026-09-15 完成（见更新日志） | — || F3-5 | **分时数据**（今日分时走势） | `ak.stock_zh_a_hist_min_em(symbol=code, period="1")` 或东财 trends2 接口；注意数据量大，前端图可复用现有 SVG 折线组件 | 详情页走势图加"分时/日K"切换 |
 | F3-6 | **其他**（低优先）：涨跌停价、52 周高低、分红送配 | 涨跌停：东财 push2 f51/f52（抓包核对）；分红：`ak.stock_history_dividend_detail` | 详情页补充展示 |
 
 **通用注意**：
@@ -230,6 +229,28 @@ pattern_analyzer（K 线形态识别 + 历史成绩单）、狙击手模块（�
 ---
 
 ## 更新日志
+
+- 2026-09-15（夜间批次 5）：**F3-4 资金流完成**——data-service 新增 `GET /fund-flow/{code}?days=`
+  （默认 30、上限 100，按代码缓存 60s）。降级链：主源 AKShare `stock_individual_fund_flow`
+  （东财 push2his fflow/daykline，主力/超大单/大单/中单/小单五档净流入，market=sh/sz/bj 按
+  代码前缀映射——**920 段属北交所须先于 "9" 判断**）；push2his 限流（本机仍在封禁）自动降级
+  **新浪 MoneyFlow**（`MoneyFlow.ssl_qsfx_zjlrqs` 直连，AKShare 未封装）：仅"净流入/超大单"
+  两档且口径不同（新浪"净流入"含全部资金 ≠ 东财"主力净流入"），响应带 `source` 字段
+  （eastmoney/sina）供前端标注；新浪不覆盖北交所，bj 代码双源失败合并报错。
+  **字段口径核对**：东财百分数字段已是 % 单位（push2delay 同构接口实测——该镜像只回当日 1 行，
+  不能作历史降级源）；新浪 changeratio/ratioamount/r0_ratio 是**小数需 ×100**。
+  腾讯 `ff_` 资金流接口已下线（返回 `v_pv_none_match`，PITFALLS 已记录）。
+  主服务：`DataProvider` 加 `FundFlowDay`/`FundFlow` 与 `getFundFlow`，CompositeProvider 接线；
+  `/api/stocks/:code` 聚合扩为六块（+fundFlow/fundFlowError 独立降级）。前端：详情页公司资料卡
+  下方新增"资金流向"卡（最新交易日主力/超大单/大/中/小单汇总格 + **近 15 日主力净流入柱状图**
+  零线上下红绿柱 + hover 分档 tooltip；新浪源标签改"净流入"并注明口径差异）。
+  验证：typecheck + 122 测试全绿（fundflow 5 条新用例）+ py_compile 通过；端到端实测
+  /fund-flow 沪深两码（sina 降级路径，数值与新浪网页口径一致）、bj 码 502 合并报错、
+  无效代码 502、days 上限 422、/api/stocks 聚合六块正确且 bj 码资金流块独立降级不拖垮其他块、
+  401 正常、详情页内联 JS node --check 通过（验证端口 8104/18804，验后已停）。
+  **未覆盖**：东财主源五档列名未实测（push2his 对本机限流中，列名为 AKShare 源码口径，
+  漂移时 _fnum 置 null 而非静默 0）。顺带修正 PITFALLS 里 data-service 地址环境变量的
+  过时名字（DATA_SERVICE_URL → 实际为 PYTHON_SERVICE_URL）。
 
 - 2026-09-15（夜间批次 4）：**F3-3 成交活跃度完成**——`Quote` 新增 volume/amount/turnover/
   volumeRatio 可选字段。东财 push2 加 f47（成交量，手）/f48（成交额，元，浮点）——**不缩放**，
