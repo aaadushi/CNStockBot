@@ -81,6 +81,18 @@ GET https://qt.gtimg.cn/q=sh600519
 | `ak.stock_info_global_cls()` | 财联社电报，约 20 条（已接入 /market-news 降级源；列：标题/内容/发布日期/发布时间，无 URL；短快讯"标题"常为空，端点取"内容"前 60 字充任） |
 | `ak.stock_zh_a_hist(symbol, period, start_date, end_date, adjust)` | 个股历史日 K，东财 push2his（已接入 /history 主源；列：日期/开盘/收盘/最高/最低/成交量（**手**）/成交额（元）/涨跌幅/换手率，成交额与换手率 F3-3 起透出） |
 | `ak.stock_zh_a_daily(symbol, start_date, end_date, adjust)` | 个股历史日 K，新浪（已接入 /history 降级源；**成交量单位是股**，端点 ÷100 归一到手；无成交额/换手率/涨跌幅列，涨跌幅由收盘价比算，不覆盖北交所） |
+| `ak.stock_individual_fund_flow(stock, market)` | 个股资金流向，东财 push2his fflow/daykline（已接入 /fund-flow 主源；market=sh/sz/bj 按代码前缀映射——920 段属北交所须先于 "9" 判断；列：日期/收盘价/涨跌幅/主力·超大单·大单·中单·小单净流入-净额与净占比，百分数字段已是 % 单位） |
+
+**新浪 MoneyFlow（直连 requests，非 AKShare，已接入 /fund-flow 降级源）**
+```
+GET https://vip.stock.finance.sina.com.cn/quotes_service/api/json_v2.php/MoneyFlow.ssl_qsfx_zjlrqs?page=1&num=100&sort=opendate&asc=0&daima=sh600519
+```
+- GBK 编码 JSON 数组，按日期倒序；字段：opendate 日期 / trade 收盘价 / changeratio 涨跌幅 /
+  netamount 净流入（元）/ ratioamount 净流入占比 / r0_net 超大单净流入 / r0_ratio 超大单占比
+  —— **changeratio/ratioamount/r0_ratio 是小数**（-0.0738 = -7.38%），端点 ×100 转百分数
+- 口径与东财不同：新浪"净流入"含全部资金 ≠ 东财"主力净流入"，r0 超大单口径也不同——
+  响应带 source 字段供前端标注，两源数值不可直接对比
+- 不覆盖北交所（4/8/920）
 
 AKShare 文档：https://akshare.akfamily.xyz/
 

@@ -104,6 +104,9 @@
     .fin-table td { padding: 8px; border-bottom: 1px solid var(--border); font-variant-numeric: tabular-nums; }
     .fin-table tbody tr:hover { background: var(--bg); }
     .block-error { color: var(--text-3); font-size: 13px; padding: 16px 4px; }
+    .flow-note { font-size: 12px; color: var(--text-3); margin-top: 10px; }
+    .flow-chart-box { position: relative; margin-top: 16px; }
+    .flow-chart-box svg { display: block; width: 100%; height: auto; }
     [hidden] { display: none !important; }
   </style>
 </head>
@@ -155,6 +158,11 @@
       <div class="card" id="profile-card" hidden>
         <h3 style="margin-top: 0;">公司资料</h3>
         <div class="stat-grid" id="d-profile"></div>
+      </div>
+
+      <div class="card" id="fundflow-card" hidden>
+        <h3 style="margin-top: 0;">资金流向</h3>
+        <div id="d-fundflow"></div>
       </div>
 
       <div class="card">
@@ -267,6 +275,15 @@
       if (v >= 1e8) return (v / 1e8).toFixed(2) + ' 亿手';
       if (v >= 1e4) return (v / 1e4).toFixed(2) + ' 万手';
       return v + ' 手';
+    }
+    // 资金流（元）→ 带符号 亿/万 可读格式（净流入可正可负，0 是合法值）
+    function fmtFlow(v) {
+      if (typeof v !== 'number' || !isFinite(v)) return '—';
+      const sign = v > 0 ? '+' : v < 0 ? '-' : '';
+      const a = Math.abs(v);
+      if (a >= 1e8) return sign + (a / 1e8).toFixed(2) + ' 亿';
+      if (a >= 1e4) return sign + (a / 1e4).toFixed(2) + ' 万';
+      return sign + Math.round(a) + ' 元';
     }
     function fmtPct(v) {
       if (typeof v !== 'number' || !isFinite(v)) return null;
@@ -445,6 +462,7 @@
       $('d-time').textContent = '';
       $('d-stats').replaceChildren();
       $('profile-card').hidden = true;
+      $('fundflow-card').hidden = true;
       renderTab();
       try {
         const res = await apiFetch('/api/stocks/' + code);
@@ -452,6 +470,7 @@
         if (currentCode !== code) return; // 已切换
         renderQuote(detailData);
         renderProfile(detailData);
+        renderFundFlow(detailData);
         renderTab();
       } catch (e) {
         $('d-stats').replaceChildren(el('div', 'block-error', '详情加载失败：' + e.message));
@@ -519,6 +538,139 @@
         cell.appendChild(el('div', 'value', value));
         grid.appendChild(cell);
       }
+    }
+
+    // 资金流卡（F3-4）：最新交易日汇总格 + 近 15 日主力净流入柱状图。
+    // 数据缺失整块隐藏，失败时卡内降级提示（同公司资料卡模式）。
+    function renderFundFlow(d) {
+      const card = $('fundflow-card');
+      const box = $('d-fundflow');
+      box.replaceChildren();
+      if (!d.fundFlow && !d.fundFlowError) { card.hidden = true; return; }
+      card.hidden = false;
+      const ff = d.fundFlow;
+      if (!ff || !ff.items || ff.items.length === 0) {
+        box.appendChild(el('div', 'block-error', '资金流数据暂不可用：' + (d.fundFlowError || '未知原因')));
+        return;
+      }
+      const items = ff.items;
+      const sina = ff.source === 'sina'; // 新浪降级源：净流入口径含全部资金，无大/中/小单分档
+      const last = items[items.length - 1];
+      const cells = [
+        [sina ? '净流入' : '主力净流入', last.mainNetInflow],
+        ['超大单净流入', last.superLargeNetInflow],
+      ];
+      if (typeof last.largeNetInflow === 'number') cells.push(['大单净流入', last.largeNetInflow]);
+      if (typeof last.mediumNetInflow === 'number') cells.push(['中单净流入', last.mediumNetInflow]);
+      if (typeof last.smallNetInflow === 'number') cells.push(['小单净流入', last.smallNetInflow]);
+      const grid = el('div', 'stat-grid');
+      for (const [label, num] of cells) {
+        const cell = el('div');
+        cell.appendChild(el('div', 'label', label));
+        const v = el('div', 'value', fmtFlow(num));
+        if (typeof num === 'number') v.className = 'value ' + upDownClass(num);
+        cell.appendChild(v);
+        grid.appendChild(cell);
+      }
+      const dateCell = el('div');
+      dateCell.appendChild(el('div', 'label', '统计日期'));
+      dateCell.appendChild(el('div', 'value', last.date || '—'));
+      grid.appendChild(dateCell);
+      box.appendChild(grid);
+
+      drawFundFlowChart(box, items.slice(-15), sina);
+
+      const note = sina
+        ? '数据源：新浪财经（降级源）。"净流入"含全部资金、与东财"主力净流入"口径不同；超大单为新浪 r0 口径。'
+        : '数据源：东方财富。主力净流入 = 超大单 + 大单。';
+      box.appendChild(el('div', 'flow-note', note + ' 仅供参考，不构成投资建议。'));
+    }
+
+    // 近 N 日主力净流入柱状图（手写 SVG，无外链依赖）：零线上下，流入红、流出绿
+    function drawFundFlowChart(box, items, sina) {
+      const wrap = el('div', 'flow-chart-box');
+      const tip = el('div', 'chart-tip');
+      wrap.appendChild(tip);
+      const W = 680, H = 150, padL = 52, padR = 12, padT = 10, padB = 22;
+      const iw = W - padL - padR, ih = H - padT - padB;
+      const vals = items.map((it) => (typeof it.mainNetInflow === 'number' ? it.mainNetInflow : 0));
+      const maxAbs = Math.max(...vals.map(Math.abs), 1);
+      const x = (i) => padL + (items.length === 1 ? iw / 2 : (i / (items.length - 1)) * iw);
+      const y0 = padT + ih / 2;                       // 零线
+      const y = (v) => y0 - (v / maxAbs) * (ih / 2);
+
+      const ns = 'http://www.w3.org/2000/svg';
+      const svg = document.createElementNS(ns, 'svg');
+      svg.setAttribute('viewBox', `0 0 ${W} ${H}`);
+      svg.setAttribute('preserveAspectRatio', 'none');
+      svg.style.height = '150px';
+
+      // 零线 + 上下极值标签
+      const zero = document.createElementNS(ns, 'line');
+      zero.setAttribute('x1', padL); zero.setAttribute('x2', W - padR);
+      zero.setAttribute('y1', y0); zero.setAttribute('y2', y0);
+      zero.setAttribute('stroke', '#e4e4e7');
+      svg.appendChild(zero);
+      for (const [v, gy] of [[maxAbs, y(maxAbs)], [-maxAbs, y(-maxAbs)]]) {
+        const label = document.createElementNS(ns, 'text');
+        label.setAttribute('x', padL - 8); label.setAttribute('y', gy + 4);
+        label.setAttribute('text-anchor', 'end');
+        label.setAttribute('fill', '#a1a1aa'); label.setAttribute('font-size', '11');
+        label.textContent = fmtFlow(v);
+        svg.appendChild(label);
+      }
+      // X 轴首末日期
+      for (const [i, anchor] of [[0, 'start'], [items.length - 1, 'end']]) {
+        const t = document.createElementNS(ns, 'text');
+        t.setAttribute('x', x(i)); t.setAttribute('y', H - 6);
+        t.setAttribute('text-anchor', anchor);
+        t.setAttribute('fill', '#a1a1aa'); t.setAttribute('font-size', '11');
+        t.textContent = items[i].date;
+        svg.appendChild(t);
+      }
+
+      // 柱子：流入红、流出绿（与走势图红涨绿跌一致）
+      const bw = Math.max(2, iw / items.length - 3);
+      for (let i = 0; i < items.length; i++) {
+        const v = vals[i];
+        if (v === 0) continue;
+        const rect = document.createElementNS(ns, 'rect');
+        rect.setAttribute('x', x(i) - bw / 2);
+        rect.setAttribute('y', Math.min(y0, y(v)));
+        rect.setAttribute('width', bw);
+        rect.setAttribute('height', Math.abs(y(v) - y0));
+        rect.setAttribute('fill', v > 0 ? '#dc2626' : '#16a34a');
+        rect.setAttribute('fill-opacity', '0.7');
+        svg.appendChild(rect);
+      }
+
+      // hover：tooltip 显示当日各档数值
+      const overlay = document.createElementNS(ns, 'rect');
+      overlay.setAttribute('x', padL); overlay.setAttribute('y', padT);
+      overlay.setAttribute('width', iw); overlay.setAttribute('height', ih);
+      overlay.setAttribute('fill', 'transparent');
+      overlay.addEventListener('mousemove', (e) => {
+        const rect = svg.getBoundingClientRect();
+        const mx = ((e.clientX - rect.left) / rect.width) * W;
+        const i = Math.max(0, Math.min(items.length - 1, Math.round(((mx - padL) / iw) * (items.length - 1))));
+        const it = items[i];
+        tip.replaceChildren();
+        tip.appendChild(el('div', '', it.date));
+        tip.appendChild(el('div', '', (sina ? '净流入 ' : '主力净流入 ') + fmtFlow(it.mainNetInflow)));
+        tip.appendChild(el('div', '', '超大单 ' + fmtFlow(it.superLargeNetInflow)));
+        if (typeof it.largeNetInflow === 'number') tip.appendChild(el('div', '', '大单 ' + fmtFlow(it.largeNetInflow)));
+        if (typeof it.mediumNetInflow === 'number') tip.appendChild(el('div', '', '中单 ' + fmtFlow(it.mediumNetInflow)));
+        if (typeof it.smallNetInflow === 'number') tip.appendChild(el('div', '', '小单 ' + fmtFlow(it.smallNetInflow)));
+        tip.style.display = 'block';
+        const px = (x(i) / W) * rect.width;
+        tip.style.left = Math.max(70, Math.min(rect.width - 70, px)) + 'px';
+        tip.style.top = '0px';
+      });
+      overlay.addEventListener('mouseleave', () => { tip.style.display = 'none'; });
+      svg.appendChild(overlay);
+
+      wrap.appendChild(svg);
+      box.appendChild(wrap);
     }
 
     function renderWatchToggle() {

@@ -487,3 +487,35 @@
 - **注意事项**：AKShare 主源 secid 规则只看 `6` 开头（900 开头沪 B 会被分到深市导致
   无数据，此时自动落到 push2delay 降级，其 `_secid_for` 与主服务 toSecid 规则一致）；
   旧北交所代码（4/8 段）切换到 920 段后旧代码返回全 `"-"`，属上游行为不是 bug。
+
+## 27. 资金流向（F3-4，2026-09-15 新增）
+
+- **实现方式**：`DataProvider.getFundFlow(code, days?)`（可选方法，返回 `FundFlow`：
+  `{code, source, items: FundFlowDay[]}`，items 日期升序）→ 微服务 `/fund-flow/{code}?days=`
+  （默认 30、上限 100，按代码缓存 60s）。数据源降级链：AKShare
+  `stock_individual_fund_flow(stock, market)`（东财 push2his fflow/daykline，
+  主力/超大单/大单/中单/小单五档净流入 + 占比）→ **新浪 MoneyFlow 直连**
+  （`MoneyFlow.ssl_qsfx_zjlrqs`，AKShare 未封装）：仅"净流入 + 超大单"两档，
+  **口径与东财不同**（新浪"净流入"含全部资金 ≠ 东财"主力净流入"），响应 `source`
+  字段（eastmoney/sina）供前端/调用方标注口径；新浪不覆盖北交所，bj 代码双源失败合并报错。
+  字段口径：东财百分数字段已是 % 单位（push2delay 同构接口实测核对，该镜像只回当日 1 行、
+  不能作历史降级源）；新浪 changeratio/ratioamount/r0_ratio 是小数、端点 ×100 转百分数；
+  数值字段缺失（列名漂移）置 null 而非 0。`FundFlowDay` 的大/中/小单三字段仅东财源输出。
+  market 参数映射：4/8/920 → bj（**920 须先于 "9" 判断**）、6/9 → sh、其余 → sz。
+- **落点**：详情页公司资料卡下方"资金流向"卡（最新交易日各档净流入汇总格，带符号 亿/万
+  格式化、流入红/流出绿；近 15 日主力净流入柱状图：零线上下红绿柱 + hover 分档 tooltip；
+  新浪源时"主力净流入"标签改"净流入"并在卡底注明口径差异；数据与错误均无时整块隐藏）；
+  `/api/stocks/:code` 聚合加 fundFlow/fundFlowError 块（第六块，allSettled 独立降级，
+  30 天窗口）。
+- **代码位置**：端点 [data-service/main.py](../data-service/main.py)（"资金流（F3-4）"节，
+  `_fund_flow_market/_fund_flow_from_em/_fund_flow_via_sina`）、
+  接口 [src/data/provider.ts](../src/data/provider.ts)（`FundFlowDay`/`FundFlow`）、
+  客户端 [src/data/pythonService.ts](../src/data/pythonService.ts)、
+  页面 [public/stocks/index.html](../public/stocks/index.html)（`renderFundFlow`/
+  `drawFundFlowChart`/`fmtFlow`）、
+  测试 [tests/pythonService-fundflow.test.ts](../tests/pythonService-fundflow.test.ts)
+- **改动入口**：加分档字段 → AKShare 列名 + `_fund_flow_from_em` + `FundFlowDay` +
+  前端 cells/tooltip；调缓存 → `_FUND_FLOW_TTL`；F6-2 资金流验货复用本端点
+- **注意事项**：主源走 push2his，与 /history 东财源同宿主——限流状态联动（本机 2026-09-15
+  仍在封禁，五档列名为 AKShare 源码口径未实测，漂移时降级为 null）；腾讯 `ff_` 资金流接口
+  已下线（`v_pv_none_match`，勿再尝试，见 PITFALLS）。

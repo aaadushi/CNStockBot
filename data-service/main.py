@@ -615,6 +615,124 @@ async def profile(code: str):
     return data
 
 
+# ================= 资金流（F3-4，2026-09-15） =================
+# 主源 AKShare stock_individual_fund_flow（东财 push2his /qt/stock/fflow/daykline）：
+# 主力/超大单/大单/中单/小单五档净流入，百分数字段已是 % 单位（push2delay 同构接口实测核对，
+# 该镜像只回当日 1 行，仅可用于字段核对、不能作历史降级源）。
+# 降级源新浪 MoneyFlow（ssl_qsfx_zjlrqs，直连 requests）：仅"净流入/超大单净流入"两档，
+# 且口径与东财不同（新浪"净流入"含全部资金，≠ 东财"主力净流入"；其 r0 超大单口径也不同），
+# 响应里 source 字段供前端/调用方区分标注。新浪不覆盖北交所（4/8/920）。
+# 按代码缓存 60s（资金流盘中实时变动；与涨跌榜同级，防刷新打爆上游）。
+
+_fund_flow_cache: dict = {}  # code -> {"ts": float, "data": dict}
+_FUND_FLOW_TTL = 60
+
+
+def _fund_flow_market(code: str) -> str:
+    """AKShare market 参数映射。注意 920 段属北交所，必须先于 "9"（沪市 B 股 900）判断。"""
+    if code.startswith(("4", "8", "920")):
+        return "bj"
+    if code.startswith(("6", "9")):
+        return "sh"
+    return "sz"
+
+
+def _pct100(v):
+    """新浪比率字段是小数（-0.0738 = -7.38%），×100 转百分数；缺失 -> None。"""
+    f = _fnum(v)
+    return None if f is None else f * 100
+
+
+def _fund_flow_from_em(df, code: str) -> dict:
+    """东财源归一化：五档净流入 + 占比，日期升序。列名为 AKShare 公开文档口径，
+    列名漂移时 _fnum 取不到会置 None（不静默发 0，同 A-310 原则）。"""
+    items = []
+    for _, row in df.iterrows():
+        items.append({
+            "date": str(row.get("日期", "")),
+            "close": _fnum(row.get("收盘价")),
+            "changePct": _fnum(row.get("涨跌幅")),
+            "mainNetInflow": _fnum(row.get("主力净流入-净额")),
+            "mainNetInflowPct": _fnum(row.get("主力净流入-净占比")),
+            "superLargeNetInflow": _fnum(row.get("超大单净流入-净额")),
+            "superLargeNetInflowPct": _fnum(row.get("超大单净流入-净占比")),
+            "largeNetInflow": _fnum(row.get("大单净流入-净额")),
+            "mediumNetInflow": _fnum(row.get("中单净流入-净额")),
+            "smallNetInflow": _fnum(row.get("小单净流入-净额")),
+        })
+    return {"code": code, "source": "eastmoney", "items": items}
+
+
+def _fund_flow_via_sina(code: str) -> dict:
+    """新浪 MoneyFlow 降级源（直连 requests，AKShare 未封装）：仅沪深，两档净流入。
+    返回字段（2026-09-15 实测）：opendate/trade（收盘价）/changeratio（涨跌幅，小数）/
+    netamount（净流入，元）/ratioamount（净流入占比，小数）/r0_net（超大单净流入，元）/
+    r0_ratio（超大单占比，小数）。按日期倒序返回，翻转为升序与东财源一致。"""
+    symbol = f"sh{code}" if code.startswith(("6", "9")) else f"sz{code}"
+    r = requests.get(
+        "https://vip.stock.finance.sina.com.cn/quotes_service/api/json_v2.php/MoneyFlow.ssl_qsfx_zjlrqs",
+        params={"page": 1, "num": 100, "sort": "opendate", "asc": 0, "daima": symbol},
+        timeout=10,
+    )
+    r.raise_for_status()
+    r.encoding = "gbk"
+    rows = r.json()
+    if not isinstance(rows, list):
+        raise ValueError(f"新浪资金流响应格式异常: {str(rows)[:100]}")
+    items = []
+    for row in reversed(rows):
+        items.append({
+            "date": str(row.get("opendate", "")),
+            "close": _fnum(row.get("trade")),
+            "changePct": _pct100(row.get("changeratio")),
+            "mainNetInflow": _fnum(row.get("netamount")),
+            "mainNetInflowPct": _pct100(row.get("ratioamount")),
+            "superLargeNetInflow": _fnum(row.get("r0_net")),
+            "superLargeNetInflowPct": _pct100(row.get("r0_ratio")),
+        })
+    return {"code": code, "source": "sina", "items": items}
+
+
+@app.get("/fund-flow/{code}")
+async def fund_flow(code: str, days: int = Query(default=30, ge=1, le=100)):
+    """个股资金流向（主力/超大单净流入等）。返回 {code, source, items: FundFlowDay[]}，
+    items 日期升序、尾部 days 条。source 标注口径：eastmoney=东财五档（主力/超大单/大单/
+    中单/小单）；sina=新浪两档（净流入含全部资金 + 超大单），降级时返回。
+    降级链：东财 stock_individual_fund_flow → 新浪 MoneyFlow；按代码缓存 60s。"""
+    hit = _fund_flow_cache.get(code)
+    if hit is None or time.time() - hit["ts"] > _FUND_FLOW_TTL:
+        em_err = None
+        try:
+            df = await run_ak(
+                ak.stock_individual_fund_flow, stock=code, market=_fund_flow_market(code)
+            )
+            data = _fund_flow_from_em(df, code)
+        except Exception as e:
+            # 含 HTTPException（超时 504）：上游源失败都应尝试降级而非直接失败（同 /history）
+            em_err = e
+            logger.warning("fund-flow 东财源失败，降级新浪: code=%s err=%s", code, e)
+            if _fund_flow_market(code) == "bj":
+                raise HTTPException(
+                    status_code=502,
+                    detail=f"资金流获取失败（东财: {em_err}；北交所新浪降级源不覆盖）",
+                )
+            try:
+                data = await run_ak(_fund_flow_via_sina, code)
+            except Exception as e2:
+                raise HTTPException(
+                    status_code=502,
+                    detail=f"资金流获取失败（东财: {em_err}；新浪降级: {e2}）",
+                )
+        if not data["items"]:
+            raise HTTPException(
+                status_code=502, detail=f"资金流数据为空（代码错误或数据源不可用）: {code}"
+            )
+        hit = {"ts": time.time(), "data": data}
+        _fund_flow_cache[code] = hit
+    d = hit["data"]
+    return {"code": code, "source": d["source"], "items": d["items"][-days:]}
+
+
 # ================= 基金版块（F4-B，2026-09-15） =================
 # 开放式基金数据来自天天基金（东财系，与支付宝财富页同源）；场内 ETF 为东财全量实时快照。
 # 列结构均经 akshare 1.18.94 实测（见 docs/DATA_SOURCES.md）。

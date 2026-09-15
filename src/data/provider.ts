@@ -113,6 +113,29 @@ export interface MarketMovers {
   delayed?: boolean; // true = 数据来自延时宿主（push2delay，约延时 15 分钟）
 }
 
+// ---- 资金流向（F3-4，2026-09-15 新增；仅微服务模式提供） ----
+
+/** 单日资金流向。金额为元、占比为 %；字段缺失为 null 而非 0 */
+export interface FundFlowDay {
+  date: string;                      // YYYY-MM-DD
+  close: number | null;              // 收盘价
+  changePct: number | null;          // 涨跌幅 %
+  mainNetInflow: number | null;      // 主力净流入（元）；新浪降级源为"净流入"（含全部资金，口径不同）
+  mainNetInflowPct: number | null;   // 主力净流入占比（%）
+  superLargeNetInflow: number | null;    // 超大单净流入（元）
+  superLargeNetInflowPct: number | null; // 超大单净流入占比（%）
+  largeNetInflow?: number | null;    // 大单净流入（元），仅东财源提供
+  mediumNetInflow?: number | null;   // 中单净流入（元），仅东财源提供
+  smallNetInflow?: number | null;    // 小单净流入（元），仅东财源提供
+}
+
+/** 个股资金流向；source 标注口径：eastmoney=东财五档，sina=新浪两档（降级源，口径不同） */
+export interface FundFlow {
+  code: string;
+  source: 'eastmoney' | 'sina';
+  items: FundFlowDay[]; // 日期升序
+}
+
 // ---- 基金版块（F4-B，2026-09-15 新增；全部仅微服务模式提供） ----
 
 /** 开放式基金排行条目（天天基金数据源，按近1年收益率降序；新基金部分区间收益缺失为 null） */
@@ -185,6 +208,8 @@ export interface DataProvider {
   getHistory?(code: string, days?: number): Promise<HistoryBar[]>;
   /** 公司资料（行业/上市日期/股本，F3-2）；东财直连无此能力，仅微服务模式提供 */
   getProfile?(code: string): Promise<CompanyProfile>;
+  /** 个股资金流向（主力/超大单净流入，F3-4）；东财直连无此能力，仅微服务模式提供 */
+  getFundFlow?(code: string, days?: number): Promise<FundFlow>;
   /** 全市场今日涨跌榜（上涨/下跌/平盘 + 家数统计）；仅东财系接口提供 */
   getMovers?(limit?: number): Promise<MarketMovers>;
   /** 全市场财经快讯（区别于个股新闻）；东财直连无此能力，仅微服务模式提供 */
