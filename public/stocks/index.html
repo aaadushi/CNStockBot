@@ -152,6 +152,11 @@
         <div class="stat-grid" id="d-stats"></div>
       </div>
 
+      <div class="card" id="profile-card" hidden>
+        <h3 style="margin-top: 0;">公司资料</h3>
+        <div class="stat-grid" id="d-profile"></div>
+      </div>
+
       <div class="card">
         <div class="chart-head">
           <h3>历史走势</h3>
@@ -250,6 +255,12 @@
     }
     // PE/PB 等比率：缺失/非正值显示 —
     function fmtRatio(v) { return typeof v === 'number' && isFinite(v) && v > 0 ? v.toFixed(2) : '—'; }
+    // 股本（股）→ 亿/万股 可读格式
+    function fmtShares(v) {
+      if (typeof v !== 'number' || !isFinite(v) || v <= 0) return '—';
+      if (v >= 1e8) return (v / 1e8).toFixed(2) + ' 亿股';
+      return (v / 1e4).toFixed(2) + ' 万股';
+    }
     function fmtPct(v) {
       if (typeof v !== 'number' || !isFinite(v)) return null;
       return (v > 0 ? '+' : '') + v.toFixed(2) + '%';
@@ -426,12 +437,14 @@
       $('d-badge').replaceChildren();
       $('d-time').textContent = '';
       $('d-stats').replaceChildren();
+      $('profile-card').hidden = true;
       renderTab();
       try {
         const res = await apiFetch('/api/stocks/' + code);
         detailData = await res.json();
         if (currentCode !== code) return; // 已切换
         renderQuote(detailData);
+        renderProfile(detailData);
         renderTab();
       } catch (e) {
         $('d-stats').replaceChildren(el('div', 'block-error', '详情加载失败：' + e.message));
@@ -463,6 +476,32 @@
       ];
       const grid = $('d-stats');
       grid.replaceChildren();
+      for (const [label, value] of stats) {
+        const cell = el('div');
+        cell.appendChild(el('div', 'label', label));
+        cell.appendChild(el('div', 'value', value));
+        grid.appendChild(cell);
+      }
+    }
+
+    // 公司资料卡（F3-2）：数据缺失整块隐藏，字段缺失显示 —；失败时卡内降级提示
+    function renderProfile(d) {
+      const card = $('profile-card');
+      const grid = $('d-profile');
+      grid.replaceChildren();
+      if (!d.profile && !d.profileError) { card.hidden = true; return; }
+      card.hidden = false;
+      if (!d.profile) {
+        grid.appendChild(el('div', 'block-error', '公司资料暂不可用：' + (d.profileError || '未知原因')));
+        return;
+      }
+      const p = d.profile;
+      const stats = [
+        ['所属行业', p.industry || '—'],
+        ['上市日期', p.listingDate || '—'],
+        ['总股本', fmtShares(p.totalShares)],
+        ['流通股', fmtShares(p.floatShares)],
+      ];
       for (const [label, value] of stats) {
         const cell = el('div');
         cell.appendChild(el('div', 'label', label));

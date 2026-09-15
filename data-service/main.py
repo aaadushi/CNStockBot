@@ -16,8 +16,10 @@ from fastapi import FastAPI, HTTPException, Query
 from datetime import datetime, timedelta
 import asyncio
 import logging
+import re
 import akshare as ak
 import pandas as pd
+import requests
 
 logger = logging.getLogger("cnstockbot-data")
 
@@ -510,6 +512,98 @@ async def history(code: str, days: int = Query(default=120, ge=1, le=1500)):
             status_code=502,
             detail=f"AKShare 历史行情获取失败（东财: {em_err}；新浪降级: {e}）",
         )
+
+
+# ================= 公司资料（F3-2，2026-09-15） =================
+# 主源 AKShare stock_individual_info_em（东财 push2 /qt/stock/get，字段 f 编码）；
+# push2 被 IP 限流时降级 push2delay 同构接口（行情延时约 15 分钟，但行业/股本/
+# 上市时间是近静态信息，不受延时影响）。按代码缓存 24h。
+
+_profile_cache: dict = {}  # code -> {"ts": float, "data": dict}
+_PROFILE_TTL = 24 * 3600
+
+
+def _secid_for(code: str) -> str:
+    """与 src/data/eastmoney.ts 的 toSecid 规则一致：沪市 6/900 → "1."，其余（含北交所 4/8/920）→ "0."。"""
+    return ("1." if code.startswith(("6", "900")) else "0.") + code
+
+
+def _f_opt(v):
+    """东财数值字段：'-'（停牌/退市/已切换代码）与非法值 -> None，不用 0 顶替（伪 0 比缺失更糟）。"""
+    if v in (None, "-"):
+        return None
+    try:
+        return float(v)
+    except (TypeError, ValueError):
+        return None
+
+
+def _profile_from_fields(fields: dict, code: str) -> dict:
+    """东财 f 编码字典 -> CompanyProfile 结构（与 src/data/provider.ts 对齐）。"""
+    # f189 上市时间为 yyyymmdd（int 或 str），防御性只保留数字再切片
+    digits = re.sub(r"\D", "", str(fields.get("f189") or ""))
+    listing = f"{digits[:4]}-{digits[4:6]}-{digits[6:8]}" if len(digits) == 8 else None
+    name = fields.get("f58")
+    industry = fields.get("f127")
+    return {
+        "code": code,
+        "name": None if name in (None, "-") else str(name),
+        "industry": None if industry in (None, "-") else str(industry),
+        "listingDate": listing,
+        "totalShares": _f_opt(fields.get("f84")),  # 总股本，单位：股
+        "floatShares": _f_opt(fields.get("f85")),  # 流通股，单位：股
+    }
+
+
+def _profile_via_delay_host(code: str) -> dict:
+    """push2delay 同构降级：与 ak.stock_individual_info_em 同接口不同宿主（2026-09-15 实测字段一致）。"""
+    r = requests.get(
+        "https://push2delay.eastmoney.com/api/qt/stock/get",
+        params={
+            "fltt": "2",
+            "invt": "2",
+            "fields": "f57,f58,f84,f85,f127,f189",
+            "secid": _secid_for(code),
+        },
+        timeout=10,
+    )
+    r.raise_for_status()
+    fields = r.json().get("data")
+    if not isinstance(fields, dict):
+        raise ValueError(f"push2delay 无此代码数据（代码错误或已退市）: {code}")
+    return _profile_from_fields(fields, code)
+
+
+@app.get("/profile/{code}")
+async def profile(code: str):
+    """公司资料：所属行业/上市日期/总股本/流通股。返回 CompanyProfile。
+
+    降级链：AKShare stock_individual_info_em（push2）→ push2delay 同构直连；
+    结果按代码缓存 24h（公司资料近静态，缓存同时防限流期反复打上游）。
+    """
+    hit = _profile_cache.get(code)
+    if hit and time.time() - hit["ts"] < _PROFILE_TTL:
+        return hit["data"]
+    em_err = None
+    try:
+        df = await run_ak(ak.stock_individual_info_em, symbol=code)
+        kv = dict(zip(df["item"], df["value"]))
+        # AKShare 已把 f 编码映射为中文 key，反查回 f 编码后复用同一套归一化
+        zh_to_f = {"股票简称": "f58", "总股本": "f84", "流通股": "f85",
+                   "行业": "f127", "上市时间": "f189"}
+        data = _profile_from_fields({fk: kv.get(ck) for ck, fk in zh_to_f.items()}, code)
+    except Exception as e:
+        em_err = e
+        logger.warning("profile push2 源失败，降级 push2delay: code=%s err=%s", code, e)
+        try:
+            data = await run_ak(_profile_via_delay_host, code)
+        except Exception as e2:
+            raise HTTPException(
+                status_code=502,
+                detail=f"公司资料获取失败（push2: {em_err}；push2delay 降级: {e2}）",
+            )
+    _profile_cache[code] = {"ts": time.time(), "data": data}
+    return data
 
 
 # ================= 基金版块（F4-B，2026-09-15） =================

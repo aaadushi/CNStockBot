@@ -11,6 +11,9 @@ GET https://push2.eastmoney.com/api/qt/stock/get?secid=1.600519&fields=f43,f57,f
   f60 昨收 / f169 涨跌额 / f170 涨跌幅 / f86 时间戳（秒）
 - 估值与规模（2026-09-15 实测核对，F3-1）：f162 PE(动) / f163 PE(静) / f164 PE(TTM) /
   f167 PB —— 放大 100 倍；f116 总市值 / f117 流通市值 —— 单位元，**不放大**
+- 公司资料（2026-09-15 实测核对，F3-2，`stock_individual_info_em` / `/profile` 端点）：
+  f84 总股本 / f85 流通股（单位股，不放大）/ f127 所属行业 / f189 上市时间（yyyymmdd 整数）；
+  停牌/退市/已切换代码返回 `"-"`
 - 价格类字段放大 100 倍；停牌返回 `"-"`
 - push2 被 IP 限流时可用 `push2delay.eastmoney.com` 同构接口（延时行情）临时验证字段/录 fixture
 

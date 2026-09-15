@@ -76,6 +76,16 @@ export interface HistoryBar {
   changePct: number; // 涨跌幅 %
 }
 
+/** 公司资料（F3-2）：近静态信息，字段缺失（停牌/退市）时为 undefined 而非 0 */
+export interface CompanyProfile {
+  code: string;
+  name?: string;        // 股票简称
+  industry?: string;    // 所属行业（东财行业分类，如 "白酒Ⅱ"）
+  listingDate?: string; // 上市日期 YYYY-MM-DD
+  totalShares?: number; // 总股本（股）
+  floatShares?: number; // 流通股（股）
+}
+
 /** 涨跌榜条目（全市场涨跌浏览页用） */
 export interface MoverItem {
   code: string;
@@ -166,6 +176,8 @@ export interface DataProvider {
   getFinancials?(code: string, limit?: number): Promise<FinancialReport[]>;
   /** 历史日 K 线（前复权，日期升序）；东财直连无此能力，仅微服务模式提供 */
   getHistory?(code: string, days?: number): Promise<HistoryBar[]>;
+  /** 公司资料（行业/上市日期/股本，F3-2）；东财直连无此能力，仅微服务模式提供 */
+  getProfile?(code: string): Promise<CompanyProfile>;
   /** 全市场今日涨跌榜（上涨/下跌/平盘 + 家数统计）；仅东财系接口提供 */
   getMovers?(limit?: number): Promise<MarketMovers>;
   /** 全市场财经快讯（区别于个股新闻）；东财直连无此能力，仅微服务模式提供 */
