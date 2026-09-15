@@ -31,6 +31,15 @@ export interface NewsItem {
   summary?: string;
 }
 
+/** 全市场财经快讯（区别于个股 NewsItem）；publishTime 为 "YYYY-MM-DD HH:MM:SS"（北京时间） */
+export interface MarketNewsItem {
+  title: string;
+  summary?: string;
+  url?: string;        // 财联社降级源无链接，为空串/缺省
+  publishTime: string;
+  source: string;      // 数据源名称（东方财富 / 财联社）
+}
+
 /** 新闻排序：hot=数据源原始相关度/热度序（默认），time=发布时间倒序 */
 export type NewsSort = 'hot' | 'time';
 
@@ -101,6 +110,8 @@ export interface DataProvider {
   getHistory?(code: string, days?: number): Promise<HistoryBar[]>;
   /** 全市场今日涨跌榜（上涨/下跌/平盘 + 家数统计）；仅东财系接口提供 */
   getMovers?(limit?: number): Promise<MarketMovers>;
+  /** 全市场财经快讯（区别于个股新闻）；东财直连无此能力，仅微服务模式提供 */
+  getMarketNews?(limit?: number): Promise<MarketNewsItem[]>;
   /** 按关键词搜索股票（名称/代码），返回候选代码列表 */
   search?(keyword: string): Promise<{ code: string; name: string }[]>;
 }

@@ -1,0 +1,180 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>股助手 - 财经快讯</title>
+  <link rel="stylesheet" href="/shared/theme.css" />
+  <style>
+    /* ---- 快讯列表 ---- */
+    .news-list { display: flex; flex-direction: column; }
+    .news-item {
+      display: block; padding: 14px 4px; border-bottom: 1px solid var(--border);
+      text-decoration: none; color: inherit;
+    }
+    .news-item:last-child { border-bottom: none; }
+    .news-item .title { font-size: 15px; font-weight: 600; line-height: 1.5; }
+    .news-item .summary { font-size: 13px; color: var(--text-2); line-height: 1.6; margin-top: 4px; }
+    .news-item .meta { display: flex; align-items: center; gap: 10px; margin-top: 6px; }
+    .news-item .time { font-size: 12px; color: var(--text-3); font-variant-numeric: tabular-nums; }
+    .news-item .source { font-size: 12px; color: var(--text-3); }
+    a.news-item:hover .title { color: var(--accent); }
+
+    .toolbar { display: flex; align-items: center; gap: 10px; margin-bottom: 8px; }
+    .toolbar .time { font-size: 12px; color: var(--text-3); }
+    .toolbar .side { margin-left: auto; display: flex; align-items: center; gap: 10px; }
+    .block-error { color: var(--text-3); font-size: 13px; padding: 16px 4px; }
+  </style>
+</head>
+<body>
+  <header class="page-header">
+    <div class="inner">
+      <span class="brand">📈 股助手</span>
+      <span class="sub">财经快讯</span>
+      <span class="spacer"></span>
+      <a class="nav" href="/stocks">⭐ 自选股</a>
+      <a class="nav" href="/market">📊 涨跌榜</a>
+      <a class="nav" href="/webchat">💬 聊天</a>
+    </div>
+  </header>
+
+  <main class="page">
+    <div class="card">
+      <div class="toolbar">
+        <span class="time" id="data-time"></span>
+        <div class="side">
+          <button class="btn btn-ghost" id="refresh-btn">刷新</button>
+        </div>
+      </div>
+      <div id="news-list" class="news-list"></div>
+    </div>
+
+    <div class="disclaimer">数据仅供参考，不构成投资建议</div>
+  </main>
+
+  <!-- 口令鉴权浮层（与 webchat/stocks/market 共用 localStorage 键） -->
+  <div class="auth-overlay" id="auth-overlay" hidden>
+    <div class="auth-card">
+      <h2>输入访问口令</h2>
+      <p>口令见服务端启动日志或 .env 的 ACCESS_TOKEN</p>
+      <input id="auth-input" class="input" type="password" placeholder="ACCESS_TOKEN" />
+      <div class="error" id="auth-error"></div>
+      <button class="btn btn-primary" id="auth-confirm">确认</button>
+    </div>
+  </div>
+
+  <script>
+    'use strict';
+    const $ = (id) => document.getElementById(id);
+
+    /* ================= 鉴权（与 webchat/stocks/market 共用 localStorage 键） ================= */
+    let accessToken = localStorage.getItem('cnstockbot_token') || '';
+
+    const authOverlay = $('auth-overlay');
+    let authResolve = null;
+    function showAuth(hasError) {
+      $('auth-error').textContent = hasError ? '口令错误，请重新输入' : '';
+      authOverlay.hidden = false;
+      $('auth-input').focus();
+      return new Promise((resolve) => { authResolve = resolve; });
+    }
+    function submitAuth() {
+      const t = $('auth-input').value.trim();
+      if (!t) return;
+      accessToken = t;
+      localStorage.setItem('cnstockbot_token', t);
+      $('auth-input').value = '';
+      authOverlay.hidden = true;
+      if (authResolve) { authResolve(); authResolve = null; }
+    }
+    $('auth-confirm').onclick = submitAuth;
+    $('auth-input').onkeydown = (e) => { if (e.key === 'Enter') submitAuth(); };
+
+    async function apiFetch(url, options = {}) {
+      if (!accessToken) await showAuth(false);
+      options.headers = Object.assign({}, options.headers, { 'Authorization': 'Bearer ' + accessToken });
+      const res = await fetch(url, options);
+      if (res.status === 401) {
+        accessToken = '';
+        localStorage.removeItem('cnstockbot_token');
+        await showAuth(true);
+        return apiFetch(url, options); // 重输口令后重试一次（新口令已带上）
+      }
+      return res;
+    }
+
+    /* ================= 工具 ================= */
+    function el(tag, cls, text) {
+      const e = document.createElement(tag);
+      if (cls) e.className = cls;
+      if (text !== undefined) e.textContent = text; // 一律 textContent，防 XSS
+      return e;
+    }
+
+    /* ================= 快讯列表 ================= */
+    const LIMIT = 50;            // 每页显示条数（API 上限 50）
+    const AUTO_REFRESH_MS = 60_000; // 自动刷新间隔（微服务侧另有 90s 缓存）
+
+    function newsItem(item) {
+      // 有 url 时可点击新窗口打开；无 url（财联社降级源）渲染为纯文本块
+      const box = el(item.url ? 'a' : 'div', 'news-item');
+      if (item.url) {
+        box.href = item.url; // url 只赋给 href 属性，不进 innerHTML
+        box.target = '_blank';
+        box.rel = 'noopener noreferrer';
+      }
+      box.appendChild(el('div', 'title', item.title));
+      if (item.summary && item.summary !== item.title) {
+        box.appendChild(el('div', 'summary', item.summary));
+      }
+      const meta = el('div', 'meta');
+      if (item.publishTime) meta.appendChild(el('span', 'time', item.publishTime));
+      if (item.source) meta.appendChild(el('span', 'source', item.source));
+      box.appendChild(meta);
+      return box;
+    }
+
+    function renderList(items) {
+      const list = $('news-list');
+      list.replaceChildren();
+      if (items.length === 0) {
+        list.appendChild(el('div', 'block-error', '暂无快讯数据'));
+        return;
+      }
+      for (const item of items) list.appendChild(newsItem(item));
+    }
+
+    function fmtNow() {
+      const d = new Date();
+      const p = (n) => String(n).padStart(2, '0');
+      return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}:${p(d.getSeconds())}`;
+    }
+
+    let loading = false;
+    async function loadNews(silent) {
+      if (loading) return;
+      loading = true;
+      const btn = $('refresh-btn');
+      btn.disabled = true;
+      if (!silent) $('news-list').replaceChildren(el('div', 'block-error', '加载中…'));
+      try {
+        const res = await apiFetch('/api/market/news?limit=' + LIMIT);
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.error || ('HTTP ' + res.status));
+        renderList(data.news || []);
+        $('data-time').textContent = '更新于 ' + fmtNow() + '（每 60 秒自动刷新）';
+      } catch (e) {
+        $('news-list').replaceChildren(el('div', 'block-error', '快讯加载失败：' + e.message));
+      } finally {
+        loading = false;
+        btn.disabled = false;
+      }
+    }
+
+    $('refresh-btn').onclick = () => loadNews(false);
+    setInterval(() => loadNews(true), AUTO_REFRESH_MS);
+
+    loadNews(false);
+  </script>
+</body>
+</html>
