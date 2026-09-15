@@ -8,6 +8,8 @@
  *   索引：1=name 2=code 3=price 4=prevClose 5=open 30=time 32=changePct 33=high 34=low
  *   估值与规模（2026-09-15 与东财 f162/f163/f164/f167/f116/f117 实测交叉核对，值完全一致）：
  *   39=市盈率(TTM) 44=流通市值(亿元) 45=总市值(亿元) 46=市净率 52=市盈率(动) 53=市盈率(静)
+ *   成交活跃度（F3-3，2026-09-15 与东财 f47/f48/f168/f50 交叉核对一致）：
+ *   6=成交量(手) 37=成交额(万元) 38=换手率(%) 49=量比 —— 成交额 ×1e4 转元，其余不缩放
  * 代码前缀规则：沪市 6/9 → sh，深市 0/3 → sz，北交所 4/8/920 → bj。
  */
 import type { DataProvider, NewsItem, Quote } from './provider.js';
@@ -62,6 +64,14 @@ export class TencentProvider implements DataProvider {
       const v = Number(f[i]);
       return Number.isFinite(v) && v > 0 ? v * 1e8 : undefined;
     };
+    // 成交活跃度（F3-3）：0 是合法值（如零成交），只排除空串/非法值。
+    // 注意不能用 opt()（v>0）——会吞掉合法的 0；也不能裸 Number()——Number('') === 0 会把缺失变 0
+    const act = (i: number) => {
+      const s = String(f[i] ?? '');
+      if (s === '') return undefined;
+      const v = Number(s);
+      return Number.isFinite(v) && v >= 0 ? v : undefined;
+    };
     return {
       code: String(f[2] ?? label),
       name: String(f[1] ?? label),
@@ -78,6 +88,10 @@ export class TencentProvider implements DataProvider {
       pb: opt(46),
       floatMarketCap: cap(44),
       totalMarketCap: cap(45),
+      volume: act(6),           // 手
+      amount: (() => { const v = act(37); return v === undefined ? undefined : v * 1e4; })(), // 万元→元
+      turnover: act(38),        // %
+      volumeRatio: act(49),
       time,
     };
   }

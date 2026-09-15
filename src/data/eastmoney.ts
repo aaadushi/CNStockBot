@@ -7,13 +7,15 @@
  *   估值与规模（F3-1，2026-09-15 经 push2delay 实测核对）：
  *   f162 市盈率(动) f163 市盈率(静) f164 市盈率(TTM) f167 市净率 —— 均放大 100 倍
  *   f116 总市值 f117 流通市值 —— 单位元，**不放大**（大数值，不能用 ÷100 的价格解析）
+ *   成交活跃度（F3-3，2026-09-15 经 push2delay 与腾讯接口交叉实测核对）：
+ *   f47 成交量（手）f48 成交额（元）—— 均**不放大**；f168 换手率(%) f50 量比 —— 均放大 100 倍
  * 另注意：短时间内高频请求 push2 会触发东财 IP 级断连限流（PITFALLS.md 东财条目）。
  * 限流期间可用 push2delay.eastmoney.com 同构接口临时验证字段（延时行情，勿作数据源切换）。
  */
 import type { DataProvider, MarketMovers, MoverItem, NewsItem, Quote } from './provider.js';
 
 const PUSH2 = 'https://push2.eastmoney.com/api/qt/stock/get';
-const FIELDS = 'f43,f44,f45,f46,f57,f58,f60,f170,f86,f116,f117,f162,f163,f164,f167';
+const FIELDS = 'f43,f44,f45,f46,f47,f48,f50,f57,f58,f60,f170,f86,f116,f117,f162,f163,f164,f167,f168';
 /** 东财接口显式超时：防对端半挂拖住对话/调度链（审计 A-301） */
 const FETCH_TIMEOUT_MS = 10_000;
 
@@ -44,6 +46,9 @@ interface EastmoneyQuotePayload {
     f44?: number | '-';
     f45?: number | '-';
     f46?: number | '-';
+    f47?: number | '-';
+    f48?: number | '-';
+    f50?: number | '-';
     f57?: string;
     f58?: string;
     f60?: number | '-';
@@ -55,6 +60,7 @@ interface EastmoneyQuotePayload {
     f163?: number | '-';
     f164?: number | '-';
     f167?: number | '-';
+    f168?: number | '-';
   } | null;
 }
 
@@ -117,6 +123,11 @@ export class EastmoneyProvider implements DataProvider {
       pb: priceField(d.f167),
       totalMarketCap: capField(d.f116),
       floatMarketCap: capField(d.f117),
+      // 成交活跃度（F3-3）：f47 手/f48 元不缩放，f168 换手率/f50 量比放大 100 倍
+      volume: capField(d.f47),
+      amount: capField(d.f48),
+      turnover: priceField(d.f168),
+      volumeRatio: priceField(d.f50),
       time: d.f86 ? new Date(Number(d.f86) * 1000).toLocaleString('zh-CN', { timeZone: 'Asia/Shanghai' }) : undefined,
     };
   }

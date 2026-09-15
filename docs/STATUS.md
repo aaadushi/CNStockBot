@@ -17,7 +17,7 @@
 |---|---|---|---|
 | 对话主循环（LLM + function calling） | `src/agent/loop.ts` | ✅ 可用 | 会话历史 SQLite 持久化，**含工具调用上下文**（P3 已解决）；同用户消息串行队列防并发覆盖 |
 | 技能框架（SKILL.md + 注册表） | `src/skills/` | ✅ 可用 | 新增技能四步见 CLAUDE.md；启动检测技能重名；参数校验助手 `args.ts` |
-| 实时行情查询 `get_stock_quote` | `src/skills/bundled/quote/` | ✅ 可用 | 东财公开接口，免 key；**东财失败自动降级腾讯行情**（2026-09-15）；涨跌幅缺失显示 — 而非静默 0；2026-09-15 起输出含估值与市值（F3-1） |
+| 实时行情查询 `get_stock_quote` | `src/skills/bundled/quote/` | ✅ 可用 | 东财公开接口，免 key；**东财失败自动降级腾讯行情**（2026-09-15）；涨跌幅缺失显示 — 而非静默 0；2026-09-15 起输出含估值与市值（F3-1）、成交额/换手率/量比（F3-3） |
 | 新闻查询 `get_stock_news` | `src/skills/bundled/news/` | ✅ 可用 | 依赖 Python data-service 运行 |
 | 自选股管理 `manage_watchlist` | `src/skills/bundled/watchlist/` | ✅ 可用 | SQLite 持久化，按 userId 隔离；停牌股可入自选（搜索降级验证）；action 白名单防误删 |
 | 股票搜索 `search_stock` | `src/skills/bundled/search/` | ✅ 可用 | Python 全量表优先，东财 suggest 降级（降级有日志）；覆盖北交所 4/8/920 |
@@ -32,7 +32,7 @@
 | Python 数据微服务（行情/新闻/搜索） | `data-service/main.py` | ✅ 可用 | FastAPI + AKShare；AKShare 调用统一 30s 超时（504），财报 NaN/交易日历格式已加固 |
 | 飞书渠道 | `src/channels/feishu.ts` | ✅ 可用 | 验签（含 ±5 分钟防重放）/token 缓存/回复/去重/主动推送；chat_id 映射 **kv 表持久化**（只学单聊，防持仓日报进群）；双凭据缺失时 fail-closed |
 | 股票浏览页 + 个股详情页（/stocks） | `public/stocks/` + `src/channels/webchat.ts` | ✅ 可用 | F1/F2 完成：自选股圆角卡片列表、页内搜索（同款卡片结果）、详情页行情/公司资料/走势图/新闻/公告/财报；API 全部在口令鉴权后；2026-09-15 |
-| 历史 K 线数据（走势图数据源） | `data-service/main.py` `/history` + `DataProvider.getHistory` | ✅ 可用 | 前复权日 K；东财 `stock_zh_a_hist` 失败自动降级新浪 `stock_zh_a_daily`（push2his 限流托底，见 PITFALLS） |
+| 历史 K 线数据（走势图数据源） | `data-service/main.py` `/history` + `DataProvider.getHistory` | ✅ 可用 | 前复权日 K；东财 `stock_zh_a_hist` 失败自动降级新浪 `stock_zh_a_daily`（push2his 限流托底，见 PITFALLS）；2026-09-15 起东财源透出成交额/换手率（F3-3），新浪降级源无此列、成交量已归一（股→手） |
 | 前端共享设计系统 | `public/shared/theme.css` | ✅ 可用 | ShadcnUI 风格（黑白灰 + indigo CTA、圆角卡片、微阴影）；webchat 与 stocks 两页共用；2026-09-15 UI 重设计 |
 | 全市场涨跌榜（/market） | `public/market/` + `src/channels/webchat.ts` `/api/market/movers` | ✅ 可用 | 今日涨幅榜/跌幅榜/平盘三 Tab + 涨跌平家数总览（沪深京）；东财 clist/ulist 接口，push2 限流自动降级 push2delay（延时 15 分钟，页面标注）；不依赖 data-service；2026-09-15 新增 |
 | 基金版块（/funds + 基金技能，F4-B） | `public/funds/` + `src/skills/bundled/fundrank/`、`fundinfo/` + data-service `/funds/*` | ✅ 可用 | 开放式基金排行（按类型）/基金搜索/基金详情净值走势/场内 ETF 实时榜；天天基金数据（支付宝同源）经微服务，依赖 data-service 运行；2026-09-15 新增 |
@@ -116,7 +116,7 @@
 |---|---|---|---|
 | ~~F3-1~~ | ~~**估值与规模**~~ | ✅ 2026-09-15 完成（见更新日志） | — |
 | ~~F3-2~~ | ~~**公司资料**：所属行业、板块、上市日期、总股本~~ | ✅ 2026-09-15 完成（见更新日志） | — |
-| F3-3 | **成交活跃度**：成交额、换手率、量比 | 实时：东财 push2 加 f47 成交量/f48 成交额/f168 换手率/f50 量比（同样抓包核对）；历史：`stock_zh_a_hist` 本就有"成交额/换手率"列，`/history` 端点 `_hist_items` 加映射即可 | Quote/HistoryBar 加可选字段；详情页统计格 + 走势图可加成交量副图 |
+| ~~F3-3~~ | ~~**成交活跃度**：成交额、换手率、量比~~ | ✅ 2026-09-15 完成（见更新日志） | — |
 | F3-4 | **资金流**：主力/超大单净流入 | `ak.stock_individual_fund_flow(stock=code, market=...)`（东财个股资金流，market 参数 sh/sz/bj 按代码前缀映射）→ data-service `/fund-flow/{code}` | 详情页新 Tab 或独立卡片 |
 | F3-5 | **分时数据**（今日分时走势） | `ak.stock_zh_a_hist_min_em(symbol=code, period="1")` 或东财 trends2 接口；注意数据量大，前端图可复用现有 SVG 折线组件 | 详情页走势图加"分时/日K"切换 |
 | F3-6 | **其他**（低优先）：涨跌停价、52 周高低、分红送配 | 涨跌停：东财 push2 f51/f52（抓包核对）；分红：`ak.stock_history_dividend_detail` | 详情页补充展示 |
@@ -230,6 +230,23 @@ pattern_analyzer（K 线形态识别 + 历史成绩单）、狙击手模块（�
 ---
 
 ## 更新日志
+
+- 2026-09-15（夜间批次 4）：**F3-3 成交活跃度完成**——`Quote` 新增 volume/amount/turnover/
+  volumeRatio 可选字段。东财 push2 加 f47（成交量，手）/f48（成交额，元，浮点）——**不缩放**，
+  f168（换手率）/f50（量比）——放大 100 倍（push2delay + 腾讯实时响应交叉实测核对一致；
+  腾讯侧 6=手 / 37=成交额万元×1e4 / 38=换手率 / 49=量比，空串缺失先判空再 Number）。
+  `HistoryBar` 加 amount/turnover 可选字段，`/history` 东财源透出"成交额/换手率"列
+  （列名漂移时不输出该字段而非静默 0）；**顺带修复新浪降级源成交量单位差 100 倍的问题**
+  （新浪按股返回，÷100 归一到手，PITFALLS 已记录）。落点三处：详情页统计格加成交额/
+  换手率/量比、走势图加**成交量副图**（红涨绿跌柱，tooltip 加成交量/成交额/换手率）、
+  `get_stock_quote` 技能输出加成交活跃度行（缺失整条不显示）。
+  验证：typecheck + 112 测试全绿（东财/腾讯解析 4 条新用例 + fixture 重录回放 + quote
+  技能格式化 2 条）+ py_compile 通过；端到端实测 /api/stocks/600519 聚合 quote 含成交
+  字段（东财直连路径，与 push2delay/腾讯三方数值一致）、/history 新浪降级路径成交量归一
+  且 amount/turnover 正确缺省、401/无效代码正常（验证端口 8103/18803，验后已停）。
+  **未覆盖**：东财源 /history 的 amount/turnover 列透出未实测（push2his 对本机限流中，
+  列名为 AKShare 公开文档口径，漂移时降级为不输出该字段）。另记录新坑：手写腾讯 mock
+  用中文名称会被 GBK 解码吃掉 '~' 分隔符致下标偏移（测试已改用 ASCII 名称）。
 
 - 2026-09-15（夜间批次 3）：**F3-2 公司资料完成**——data-service 新增 `GET /profile/{code}`
   （所属行业/上市日期/总股本/流通股）：主源 AKShare `stock_individual_info_em`（东财 push2），

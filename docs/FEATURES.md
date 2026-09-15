@@ -64,7 +64,8 @@
 - **实现方式**：调 `DataProvider.getQuote(code)`，默认走东财 push2 接口直连；
   格式化为带涨跌 emoji 的多行文本。**2026-09-15 起输出含估值与规模（F3-1）**：
   总市值/流通市值（元→亿/万亿格式化）、市盈率(TTM)/市净率——字段缺失（亏损股 PE、
-  数据源降级等）时对应行整条不显示。
+  数据源降级等）时对应行整条不显示。**同日起含成交活跃度（F3-3）**：成交额（元→亿）、
+  换手率（%）、量比——同样缺失整条不显示。
 - **代码位置**：[src/skills/bundled/quote/index.ts](../src/skills/bundled/quote/index.ts)、
   数据层 [src/data/eastmoney.ts](../src/data/eastmoney.ts)
 - **改动入口**：改输出格式 → 技能 `execute`；改行情字段/数据源 → eastmoney.ts
@@ -172,6 +173,9 @@
   **估值与规模字段（F3-1，2026-09-15）**：东财 f162/f163/f164/f167（PE 动/静/TTM、PB，
   放大 100 倍）+ f116/f117（总/流通市值，单位元**不放大**）；腾讯下标 39/52/53/46
   （PE TTM/动/静、PB）+ 44/45（流通/总市值，单位亿元×1e8）。缺失/`"-"`/非正值置 undefined。
+  **成交活跃度字段（F3-3，2026-09-15）**：东财 f47 成交量（手）/f48 成交额（元，浮点）
+  **不缩放** + f168 换手率/f50 量比（放大 100 倍）；腾讯下标 6（手）/37（成交额万元×1e4）/
+  38（换手率%）/49（量比），空串缺失先判空再转数值（`Number('') === 0` 坑），0 是合法值。
   **自动降级（2026-09-15）**：东财失败（限流/接口变更）时 CompositeProvider 自动切换
   腾讯行情（`src/data/tencent.ts`，qt.gtimg.cn，GBK 文本协议、价格不放大），
   个股与指数行情都有降级，降级有 console.warn 日志。
@@ -333,9 +337,11 @@
   URL query 区分视图（`?code=` 为详情页，pushState/popstate 路由）。
   列表视图：自选股圆角卡片（一行一只）+ 顶部防抖搜索（结果同款卡片，可一键加自选）；
   详情视图：行情卡（开/高/低/昨收四格 + **估值规模第二行**：总市值/流通市值/PE(TTM)/PB，
-  PE(TTM) 缺失时降级显示 PE(动) 并标注口径，F3-1）+ **公司资料卡**（行业/上市日期/
-  总股本/流通股，F3-2，见第 26 节）+ 手写 SVG 收盘折线图（渐变填充、网格线、
-  hover 十字线 + tooltip、近1月/3月/6月/1年 区间切换）+ 新闻/公告/财报 Tab。
+  PE(TTM) 缺失时降级显示 PE(动) 并标注口径，F3-1 + **成交活跃度第三行**：成交额/换手率/
+  量比，F3-3）+ **公司资料卡**（行业/上市日期/总股本/流通股，F3-2，见第 26 节）+
+  手写 SVG 收盘折线图（渐变填充、网格线、hover 十字线 + tooltip、近1月/3月/6月/1年
+  区间切换）+ **成交量副图**（F3-3：价格区下方红涨绿跌柱，柱高按区间最大成交量归一，
+  tooltip 加成交量/成交额/换手率）+ 新闻/公告/财报 Tab。
   设计系统抽在 `public/shared/theme.css`（CSS 变量 + 通用组件类），webchat 与 stocks 共用；
   口令鉴权为卡片式浮层（localStorage `cnstockbot_token`/`cnstockbot_uid`，与 webchat 互通）。
 - **代码位置**：页面 [public/stocks/index.html](../public/stocks/index.html)、
@@ -351,10 +357,12 @@
 ## 21. 历史 K 线数据（getHistory，2026-09-15 新增）
 
 - **实现方式**：`DataProvider.getHistory(code, days)`（可选方法，返回 `HistoryBar[]`
-  日期升序：date/open/close/high/low/volume/changePct）→ 微服务 `/history/{code}?days=`
+  日期升序：date/open/close/high/low/volume/changePct，**F3-3 起东财源另透出
+  amount 成交额（元）/turnover 换手率（%）可选字段**）→ 微服务 `/history/{code}?days=`
   → `ak.stock_zh_a_hist(period="daily", adjust="qfq")`（东财前复权日 K）；
   **东财失败（含超时）自动降级新浪 `ak.stock_zh_a_daily`**（sh/sz 前缀），新浪无涨跌幅列
-  时用收盘价环比补算。start_date 按日历日 2×days 前推后取尾部，保证凑满交易日条数。
+  时用收盘价环比补算、无成交额/换手率列则不输出该字段，**成交量按股返回、端点 ÷100
+  归一到手**（与东财源口径一致）。start_date 按日历日 2×days 前推后取尾部，保证凑满交易日条数。
 - **代码位置**：[data-service/main.py](../data-service/main.py) 的 `/history` 端点与
   `_hist_items()` 归一化、[src/data/pythonService.ts](../src/data/pythonService.ts)、
   接口定义 [src/data/provider.ts](../src/data/provider.ts)（`HistoryBar`）
