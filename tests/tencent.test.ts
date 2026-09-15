@@ -49,6 +49,29 @@ describe('TencentProvider.getQuote', () => {
     expect(q.time).toBe('2026-09-14 16:14:50');
   });
 
+  it('fixture 回放：估值与规模字段（39=PE TTM 52=PE动 53=PE静 46=PB 44/45=市值亿元→元）', async () => {
+    mockFetchWith(readFileSync(path.join(FIXTURES, 'quote-600519.txt')));
+    const q = await new TencentProvider().getQuote('600519');
+    expect(q.peTtm).toBeCloseTo(19.62);
+    expect(q.peDynamic).toBeCloseTo(17.94);
+    expect(q.peStatic).toBeCloseTo(19.41);
+    expect(q.pb).toBeCloseTo(6.36);
+    expect(q.totalMarketCap).toBeCloseTo(15975.54e8, -6); // 亿元 ×1e8 → 元
+    expect(q.floatMarketCap).toBeCloseTo(15975.54e8, -6);
+  });
+
+  it('估值字段缺失或为 0（指数/亏损股）时置 undefined', async () => {
+    // 构造一个估值相关下标为 0/空 的响应（价格等基础字段正常）
+    const f = new Array(60).fill('0');
+    f[1] = '测试指数'; f[2] = '000001'; f[3] = '3888.99'; f[4] = '3870.00'; f[32] = '0.49';
+    mockFetchWith(Buffer.from(`v_sh000001="${f.join('~')}";`, 'utf-8'));
+    const q = await new TencentProvider().getQuote('000001');
+    expect(q.peTtm).toBeUndefined();
+    expect(q.pb).toBeUndefined();
+    expect(q.totalMarketCap).toBeUndefined();
+    expect(q.floatMarketCap).toBeUndefined();
+  });
+
   it('无效代码/停牌（价格为 0 或空）抛错，错误信息包含代码', async () => {
     mockFetchWith(Buffer.from('v_xx999999="";', 'utf-8'));
     await expect(new TencentProvider().getQuote('999999')).rejects.toThrow('999999');

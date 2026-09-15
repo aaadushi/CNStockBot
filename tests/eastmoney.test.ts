@@ -102,6 +102,39 @@ describe('EastmoneyProvider.getQuote 行情解析', () => {
     expect(q.changePct).toBeCloseTo(1.0);
   });
 
+  it('估值与规模字段：PE/PB 除以 100，市值单位元不缩放（F3-1）', async () => {
+    mockFetchWith({
+      data: {
+        f43: 127721, f57: '600519', f58: '贵州茅台', f60: 127796, f170: -6,
+        f116: 1596616721613.21, f117: 1596616721613.21,
+        f162: 1793, f163: 1940, f164: 1961, f167: 635,
+      },
+    });
+    const q = await new EastmoneyProvider().getQuote('600519');
+    expect(q.peDynamic).toBeCloseTo(17.93);
+    expect(q.peStatic).toBeCloseTo(19.4);
+    expect(q.peTtm).toBeCloseTo(19.61);
+    expect(q.pb).toBeCloseTo(6.35);
+    expect(q.totalMarketCap).toBeCloseTo(1.5966e12, -8); // 约 1.6 万亿，不 ÷100
+    expect(q.floatMarketCap).toBeCloseTo(1.5966e12, -8);
+  });
+
+  it('估值字段为 "-"（亏损股 PE 等）时置 undefined 而非抛错或 NaN', async () => {
+    mockFetchWith({
+      data: {
+        f43: 1000, f57: '688001', f58: '测试亏损股', f60: 990, f170: 101,
+        f116: 5e10, f117: 3e10, f162: '-', f163: '-', f164: '-', f167: '-',
+      },
+    });
+    const q = await new EastmoneyProvider().getQuote('688001');
+    expect(q.peTtm).toBeUndefined();
+    expect(q.peDynamic).toBeUndefined();
+    expect(q.peStatic).toBeUndefined();
+    expect(q.pb).toBeUndefined();
+    expect(q.totalMarketCap).toBe(5e10);
+    expect(q.floatMarketCap).toBe(3e10);
+  });
+
   it('HTTP 非 2xx 抛错并带状态码', async () => {
     mockFetchWith({}, false, 503);
     await expect(new EastmoneyProvider().getQuote('600519')).rejects.toThrow('503');
