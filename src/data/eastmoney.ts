@@ -6,12 +6,20 @@
  *   f60 昨收    f169 涨跌额  f170 涨跌幅  f86 时间戳
  * 另注意：短时间内高频请求 push2 会触发东财 IP 级断连限流（PITFALLS.md 东财条目）。
  */
-import type { DataProvider, NewsItem, Quote } from './provider.js';
+import type { DataProvider, MarketMovers, MoverItem, NewsItem, Quote } from './provider.js';
 
 const PUSH2 = 'https://push2.eastmoney.com/api/qt/stock/get';
 const FIELDS = 'f43,f44,f45,f46,f57,f58,f60,f170,f86';
 /** 东财接口显式超时：防对端半挂拖住对话/调度链（审计 A-301） */
 const FETCH_TIMEOUT_MS = 10_000;
+
+/** 涨跌榜（clist 排行榜）宿主降级链：push2 被 IP 限流时用 push2delay 同构接口托底
+ *  （延时约 15 分钟，字段结构一致；腾讯无对应榜单接口，见 PITFALLS 东财条目） */
+const PUSH2_HOSTS = ['https://push2.eastmoney.com', 'https://push2delay.eastmoney.com'];
+/** 全市场 A 股范围：深主板/创业板/沪主板/科创板/北交所 */
+const CLIST_FS = 'm:0+t:6,m:0+t:80,m:1+t:2,m:1+t:23,m:0+t:81+s:2048';
+/** 涨跌榜进程内缓存：榜单页用户会反复刷新/切 Tab，防高频请求触发东财限流 */
+const MOVERS_CACHE_MS = 60_000;
 
 /**
  * A 股代码 → 东财 secid：
@@ -38,6 +46,22 @@ interface EastmoneyQuotePayload {
     f170?: number | '-';
     f86?: number;
   } | null;
+}
+
+/** clist 排行榜响应（fltt=2 时 f2/f3 为不缩放的浮点数；停牌股 f2/f3 为 "-"） */
+interface EastmoneyClistRow {
+  f2?: number | '-';
+  f3?: number | '-';
+  f12?: string;
+  f14?: string;
+}
+interface EastmoneyClistPayload {
+  data?: { total?: number; diff?: EastmoneyClistRow[] } | null;
+}
+
+/** ulist 涨跌家数统计响应：f104 上涨 / f105 下跌 / f106 平盘 */
+interface EastmoneyUlistPayload {
+  data?: { diff?: { f104?: number; f105?: number; f106?: number }[] } | null;
 }
 
 export class EastmoneyProvider implements DataProvider {
@@ -88,6 +112,131 @@ export class EastmoneyProvider implements DataProvider {
     if (!/^[01]\.\d{6}$/.test(secid)) throw new Error(`无效的指数 secid: ${secid}（应形如 1.000001）`);
     // label 用友好文案：指数没有"退市/停牌"，裸 secid 用户也看不懂（审计 A-307）
     return this.fetchQuote(secid, `指数 ${secid}`);
+  }
+
+  // ---- 全市场涨跌榜（涨跌浏览页，2026-09-15 新增） ----
+
+  private moversCache: { at: number; value: MarketMovers } | null = null;
+
+  private async fetchJson<T>(url: string): Promise<T> {
+    const res = await fetch(url, {
+      headers: { Referer: 'https://quote.eastmoney.com/' },
+      signal: AbortSignal.timeout(FETCH_TIMEOUT_MS),
+    });
+    if (!res.ok) throw new Error(`东财接口请求失败: HTTP ${res.status}`);
+    return (await res.json()) as T;
+  }
+
+  /** 单页排行榜原始行：po=1 按涨跌幅降序（涨幅榜），po=0 升序（跌幅榜）。
+   *  注意 fltt=2：f2 最新价/f3 涨跌幅为**不缩放**的浮点数（与报价接口 ×100 不同）。
+   *  停牌股 f2/f3 为 "-"，且在降序排序中与涨跌幅 0 的股票**混排在零区**（2026-09-15 实测）。 */
+  private async fetchClistRaw(
+    host: string,
+    po: 0 | 1,
+    pn: number,
+    pz: number,
+  ): Promise<{ total: number; rows: EastmoneyClistRow[] }> {
+    const url =
+      `${host}/api/qt/clist/get?pn=${pn}&pz=${pz}&po=${po}&np=1&fltt=2&invt=2` +
+      `&fid=f3&fs=${CLIST_FS}&fields=f12,f14,f2,f3`;
+    const json = await this.fetchJson<EastmoneyClistPayload>(url);
+    return { total: json.data?.total ?? 0, rows: json.data?.diff ?? [] };
+  }
+
+  /** 原始行 → 榜单条目；停牌行（f2/f3 为 "-"）返回 null 由调用方过滤 */
+  private static toMover(d: EastmoneyClistRow): MoverItem | null {
+    if (typeof d.f2 !== 'number' || typeof d.f3 !== 'number' || !d.f12) return null;
+    return { code: d.f12, name: d.f14 ?? d.f12, price: d.f2, changePct: d.f3 };
+  }
+
+  /** 沪深京涨跌平家数统计（1.000001=沪、0.399001=深、0.899050=北交所，f104/f105/f106 求和） */
+  private async fetchMoverCounts(host: string): Promise<{ up: number; down: number; flat: number }> {
+    const url = `${host}/api/qt/ulist.np/get?secids=1.000001,0.399001,0.899050&fields=f104,f105,f106`;
+    const json = await this.fetchJson<EastmoneyUlistPayload>(url);
+    const diff = json.data?.diff ?? [];
+    if (diff.length === 0) throw new Error('东财涨跌家数统计返回为空');
+    let up = 0, down = 0, flat = 0;
+    for (const d of diff) {
+      up += d.f104 ?? 0;
+      down += d.f105 ?? 0;
+      flat += d.f106 ?? 0;
+    }
+    return { up, down, flat };
+  }
+
+  /** 平盘二分/扫描用的大页长：页数少 → 请求数少（防触发东财限流） */
+  private static readonly FLAT_SCAN_PZ = 200;
+
+  private async fetchMovers(host: string, limit: number): Promise<MarketMovers> {
+    const [counts, upPage, downPage] = await Promise.all([
+      this.fetchMoverCounts(host),
+      this.fetchClistRaw(host, 1, 1, limit),
+      this.fetchClistRaw(host, 0, 1, limit),
+    ]);
+    const toList = (rows: EastmoneyClistRow[]) =>
+      rows.map((d) => EastmoneyProvider.toMover(d)).filter((m): m is MoverItem => m !== null);
+    const up = toList(upPage.rows);
+    const down = toList(downPage.rows).filter((i) => i.changePct < 0);
+
+    // 平盘定位：clist 不支持按值筛选，且停牌股（f3="-"）与平盘混排在零区、
+    // ulist 家数统计不含停牌股，无法靠"上涨家数"精确算页码——改为二分查找
+    // "末条不再为正"的第一页（零区起点），再向后扫描收集 f3 恰为 0 的条目
+    const flat: MoverItem[] = [];
+    if (counts.flat > 0 && upPage.total > 0) {
+      const pz = EastmoneyProvider.FLAT_SCAN_PZ;
+      let lo = 1;
+      let hi = Math.max(1, Math.ceil(upPage.total / pz));
+      while (lo < hi) {
+        const mid = (lo + hi) >> 1;
+        const page = await this.fetchClistRaw(host, 1, mid, pz);
+        const last = page.rows[page.rows.length - 1];
+        const pastGain = !last || last.f3 === '-' || (typeof last.f3 === 'number' && last.f3 <= 0);
+        if (pastGain) hi = mid; else lo = mid + 1;
+      }
+      // 从零区起点向后扫描：页内最后一个**数值**涨跌幅为负则零区已翻完（不能用 "-" 判断，
+      // 停牌行与 0 混排）；flat 凑满 limit 或扫满 3 页即停
+      for (let pn = lo; pn < lo + 3 && flat.length < limit; pn++) {
+        const page = await this.fetchClistRaw(host, 1, pn, pz);
+        if (page.rows.length === 0) break;
+        for (const d of page.rows) {
+          if (d.f3 === 0 && flat.length < limit) {
+            const m = EastmoneyProvider.toMover(d);
+            if (m) flat.push(m);
+          }
+        }
+        const lastNumeric = [...page.rows].reverse().find((r) => typeof r.f3 === 'number');
+        if (lastNumeric && (lastNumeric.f3 as number) < 0) break;
+      }
+    }
+    return {
+      up,
+      down,
+      flat,
+      upCount: counts.up,
+      downCount: counts.down,
+      flatCount: counts.flat,
+      time: new Date().toLocaleString('zh-CN', { timeZone: 'Asia/Shanghai' }),
+    };
+  }
+
+  /** 全市场今日涨跌榜。宿主按 push2 → push2delay 降级（延时数据），结果缓存 60s */
+  async getMovers(limit = 50): Promise<MarketMovers> {
+    if (this.moversCache && Date.now() - this.moversCache.at < MOVERS_CACHE_MS) {
+      return this.moversCache.value;
+    }
+    let lastErr: unknown;
+    for (const host of PUSH2_HOSTS) {
+      try {
+        const value = await this.fetchMovers(host, limit);
+        if (host.includes('delay')) value.delayed = true; // 延时宿主，展示层提示
+        this.moversCache = { at: Date.now(), value };
+        return value;
+      } catch (err) {
+        lastErr = err;
+        console.warn(`[data] 东财涨跌榜 ${host} 失败，尝试下一宿主:`, err instanceof Error ? err.message : err);
+      }
+    }
+    throw lastErr instanceof Error ? lastErr : new Error(String(lastErr));
   }
 
   async getNews(_code: string, _limit = 10): Promise<NewsItem[]> {

@@ -1,0 +1,234 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>股助手 - 今日涨跌榜</title>
+  <link rel="stylesheet" href="/shared/theme.css" />
+  <style>
+    /* ---- 榜单卡片（与自选股卡片同款圆角矩形） ---- */
+    .stock-list { display: flex; flex-direction: column; gap: 12px; }
+    .stock-card {
+      display: flex; align-items: center; gap: 12px;
+      background: var(--card); border: 1px solid var(--border); border-radius: var(--radius);
+      box-shadow: var(--shadow-sm); padding: 16px 20px; cursor: pointer;
+      transition: box-shadow 150ms ease, transform 150ms ease;
+    }
+    .stock-card:hover { box-shadow: var(--shadow-md); transform: translateY(-1px); }
+    .stock-card .meta { flex: 1; min-width: 0; }
+    .stock-card .name { font-size: 16px; font-weight: 600; }
+    .stock-card .code { font-size: 13px; color: var(--text-2); font-variant-numeric: tabular-nums; }
+    .stock-card .quote { text-align: right; font-variant-numeric: tabular-nums; }
+    .stock-card .price { font-size: 16px; font-weight: 600; margin-bottom: 2px; }
+
+    /* ---- 涨跌家数总览 ---- */
+    .overview { display: flex; align-items: center; gap: 20px; flex-wrap: wrap; }
+    .overview .stat { display: flex; align-items: baseline; gap: 6px; }
+    .overview .stat .num { font-size: 22px; font-weight: 700; font-variant-numeric: tabular-nums; }
+    .overview .stat .unit { font-size: 12px; color: var(--text-3); }
+    .overview .side { margin-left: auto; display: flex; align-items: center; gap: 10px; }
+    .overview .time { font-size: 12px; color: var(--text-3); }
+
+    /* ---- 榜单 Tab ---- */
+    .tabs { display: flex; gap: 4px; border-bottom: 1px solid var(--border); margin-bottom: 16px; }
+    .tabs button {
+      border: none; background: none; font-family: var(--font); font-size: 14px; color: var(--text-2);
+      padding: 8px 14px; cursor: pointer; border-bottom: 2px solid transparent; margin-bottom: -1px;
+      transition: color 150ms ease;
+    }
+    .tabs button:hover { color: var(--text); }
+    .tabs button.active { color: var(--accent); font-weight: 600; border-bottom-color: var(--accent); }
+    .tabs .cnt { font-size: 12px; color: var(--text-3); margin-left: 2px; }
+
+    .list-note { font-size: 12px; color: var(--text-3); margin-top: 12px; text-align: center; }
+    .block-error { color: var(--text-3); font-size: 13px; padding: 16px 4px; }
+  </style>
+</head>
+<body>
+  <header class="page-header">
+    <div class="inner">
+      <span class="brand">📈 股助手</span>
+      <span class="sub">今日涨跌榜</span>
+      <span class="spacer"></span>
+      <a class="nav" href="/stocks">⭐ 自选股</a>
+      <a class="nav" href="/webchat">💬 聊天</a>
+    </div>
+  </header>
+
+  <main class="page">
+    <div class="card" style="margin-bottom: 16px;">
+      <div class="overview">
+        <div class="stat"><span class="num text-up" id="up-count">—</span><span class="unit">家上涨</span></div>
+        <div class="stat"><span class="num text-down" id="down-count">—</span><span class="unit">家下跌</span></div>
+        <div class="stat"><span class="num text-2" id="flat-count">—</span><span class="unit">家平盘</span></div>
+        <div class="side">
+          <span class="time" id="data-time"></span>
+          <button class="btn btn-ghost" id="refresh-btn">刷新</button>
+        </div>
+      </div>
+    </div>
+
+    <div class="card">
+      <div class="tabs" id="tabs">
+        <button data-tab="up" class="active">涨幅榜<span class="cnt" id="tab-up-cnt"></span></button>
+        <button data-tab="down">跌幅榜<span class="cnt" id="tab-down-cnt"></span></button>
+        <button data-tab="flat">平盘<span class="cnt" id="tab-flat-cnt"></span></button>
+      </div>
+      <div id="mover-list" class="stock-list"></div>
+      <div class="list-note" id="list-note"></div>
+    </div>
+
+    <div class="disclaimer">数据仅供参考，不构成投资建议</div>
+  </main>
+
+  <!-- 口令鉴权浮层（与 webchat/stocks 共用 localStorage 键） -->
+  <div class="auth-overlay" id="auth-overlay" hidden>
+    <div class="auth-card">
+      <h2>输入访问口令</h2>
+      <p>口令见服务端启动日志或 .env 的 ACCESS_TOKEN</p>
+      <input id="auth-input" class="input" type="password" placeholder="ACCESS_TOKEN" />
+      <div class="error" id="auth-error"></div>
+      <button class="btn btn-primary" id="auth-confirm">确认</button>
+    </div>
+  </div>
+
+  <script>
+    'use strict';
+    const $ = (id) => document.getElementById(id);
+
+    /* ================= 鉴权（与 webchat/stocks 共用 localStorage 键） ================= */
+    let accessToken = localStorage.getItem('cnstockbot_token') || '';
+
+    const authOverlay = $('auth-overlay');
+    let authResolve = null;
+    function showAuth(hasError) {
+      $('auth-error').textContent = hasError ? '口令错误，请重新输入' : '';
+      authOverlay.hidden = false;
+      $('auth-input').focus();
+      return new Promise((resolve) => { authResolve = resolve; });
+    }
+    function submitAuth() {
+      const t = $('auth-input').value.trim();
+      if (!t) return;
+      accessToken = t;
+      localStorage.setItem('cnstockbot_token', t);
+      $('auth-input').value = '';
+      authOverlay.hidden = true;
+      if (authResolve) { authResolve(); authResolve = null; }
+    }
+    $('auth-confirm').onclick = submitAuth;
+    $('auth-input').onkeydown = (e) => { if (e.key === 'Enter') submitAuth(); };
+
+    async function apiFetch(url, options = {}) {
+      if (!accessToken) await showAuth(false);
+      options.headers = Object.assign({}, options.headers, { 'Authorization': 'Bearer ' + accessToken });
+      const res = await fetch(url, options);
+      if (res.status === 401) {
+        accessToken = '';
+        localStorage.removeItem('cnstockbot_token');
+        await showAuth(true);
+        return apiFetch(url, options); // 重输口令后重试一次（新口令已带上）
+      }
+      return res;
+    }
+
+    /* ================= 工具 ================= */
+    function el(tag, cls, text) {
+      const e = document.createElement(tag);
+      if (cls) e.className = cls;
+      if (text !== undefined) e.textContent = text; // 一律 textContent，防 XSS
+      return e;
+    }
+    function fmtPrice(v) { return typeof v === 'number' && isFinite(v) ? v.toFixed(2) : '—'; }
+    function fmtPct(v) {
+      if (typeof v !== 'number' || !isFinite(v)) return null;
+      return (v > 0 ? '+' : '') + v.toFixed(2) + '%';
+    }
+    function pctBadge(v) {
+      const s = fmtPct(v);
+      const badge = el('span', 'badge', s ?? '—');
+      badge.classList.add(s == null ? 'badge-flat' : v > 0 ? 'badge-up' : v < 0 ? 'badge-down' : 'badge-flat');
+      return badge;
+    }
+    function upDownClass(v) { return v > 0 ? 'text-up' : v < 0 ? 'text-down' : 'text-2'; }
+
+    /* ================= 涨跌榜 ================= */
+    const LIMIT = 50; // 每个榜单显示前 50 条
+    let moversData = null; // { up, down, flat, upCount, downCount, flatCount, time }
+    let activeTab = 'up';
+
+    function moverCard(item) {
+      const card = el('div', 'stock-card');
+      const meta = el('div', 'meta');
+      meta.appendChild(el('div', 'name', item.name || item.code));
+      meta.appendChild(el('div', 'code', item.code));
+      card.appendChild(meta);
+      const quote = el('div', 'quote');
+      quote.appendChild(el('div', 'price ' + upDownClass(item.changePct), fmtPrice(item.price)));
+      quote.appendChild(pctBadge(item.changePct));
+      card.appendChild(quote);
+      card.onclick = () => { location.href = '/stocks?code=' + encodeURIComponent(item.code); };
+      return card;
+    }
+
+    function renderList() {
+      const box = $('mover-list');
+      const note = $('list-note');
+      box.replaceChildren();
+      if (!moversData) return;
+      const items = moversData[activeTab] || [];
+      const total = { up: moversData.upCount, down: moversData.downCount, flat: moversData.flatCount }[activeTab];
+      if (items.length === 0) {
+        box.appendChild(el('div', 'block-error', '该榜单今日暂无数据'));
+      } else {
+        for (const item of items) box.appendChild(moverCard(item));
+      }
+      note.textContent = total > items.length
+        ? `共 ${total} 家，显示前 ${items.length} 家`
+        : '';
+    }
+
+    function renderOverview() {
+      if (!moversData) return;
+      $('up-count').textContent = moversData.upCount;
+      $('down-count').textContent = moversData.downCount;
+      $('flat-count').textContent = moversData.flatCount;
+      $('data-time').textContent = moversData.time
+        ? '数据时间 ' + moversData.time + (moversData.delayed ? '（延时约 15 分钟）' : '')
+        : '';
+      $('tab-up-cnt').textContent = moversData.upCount ? ` ${moversData.upCount}` : '';
+      $('tab-down-cnt').textContent = moversData.downCount ? ` ${moversData.downCount}` : '';
+      $('tab-flat-cnt').textContent = moversData.flatCount ? ` ${moversData.flatCount}` : '';
+    }
+
+    async function loadMovers() {
+      const btn = $('refresh-btn');
+      btn.disabled = true;
+      $('mover-list').replaceChildren(el('div', 'block-error', '加载中…'));
+      try {
+        const res = await apiFetch('/api/market/movers?limit=' + LIMIT);
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.error || ('HTTP ' + res.status));
+        moversData = data;
+        renderOverview();
+        renderList();
+      } catch (e) {
+        $('mover-list').replaceChildren(el('div', 'block-error', '榜单加载失败：' + e.message));
+      } finally {
+        btn.disabled = false;
+      }
+    }
+
+    $('tabs').addEventListener('click', (e) => {
+      const btn = e.target.closest('button[data-tab]');
+      if (!btn) return;
+      activeTab = btn.dataset.tab;
+      for (const b of $('tabs').querySelectorAll('button')) b.classList.toggle('active', b === btn);
+      renderList();
+    });
+    $('refresh-btn').onclick = loadMovers;
+
+    loadMovers();
+  </script>
+</body>
+</html>

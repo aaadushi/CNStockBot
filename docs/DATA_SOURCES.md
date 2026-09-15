@@ -23,6 +23,19 @@ GET https://searchapi.eastmoney.com/api/suggest/get?input=茅台&type=14&count=1
   创业板指 `0.399006`、沪深300 `1.000300`、北证50 `0.899050`
 - **不能复用个股 `toSecid()` 规则**；技能内置显式映射表，新增指数先查东财行情页确认 secid
 
+**全市场涨跌榜（已接入：/market 涨跌浏览页，2026-09-15）**
+```
+GET https://push2.eastmoney.com/api/qt/clist/get?pn=1&pz=50&po=1&np=1&fltt=2&invt=2&fid=f3&fs=m:0+t:6,m:0+t:80,m:1+t:2,m:1+t:23,m:0+t:81+s:2048&fields=f12,f14,f2,f3
+GET https://push2.eastmoney.com/api/qt/ulist.np/get?secids=1.000001,0.399001,0.899050&fields=f104,f105,f106
+```
+- clist：排行榜。fid=f3 按涨跌幅排序，po=1 降序/0 升序；fs 为全 A 范围（深主板/创业板/
+  沪主板/科创板/北交所）。f2 最新价 / f3 涨跌幅 / f12 代码 / f14 名称；
+  **`fltt=2` 时 f2/f3 是不缩放的浮点数**（与报价接口 ×100 相反！）；停牌股 f2/f3 为 `"-"`，
+  且与涨跌幅 0 的股票**混排在零区**（平盘定位须二分查找，见 PITFALLS）
+- ulist：涨跌平家数统计。f104 上涨 / f105 下跌 / f106 平盘；secid 1.000001=沪、
+  0.399001=深、**0.899050=北交所**（实测可返回北交所全区统计），三市求和
+- push2 限流时两个端点都可换 `push2delay.eastmoney.com` 同构托底（延时约 15 分钟）
+
 ## 腾讯行情（免 key，已接入：东财的自动降级备份）
 
 ```

@@ -2,6 +2,7 @@
  * WebChat 渠道：内置网页聊天界面 + 股票浏览页 API。
  * - GET  /webchat                 聊天静态页面（public/webchat/index.html），不鉴权
  * - GET  /stocks                  股票浏览静态页面（public/stocks/），不鉴权
+ * - GET  /market                  全市场涨跌榜静态页面（public/market/），不鉴权
  * - GET  /shared                  前端共享静态资源（public/shared/），不鉴权
  * - POST /api/chat                { userId, message } -> { reply }
  * - GET  /api/inbox?userId=       拉取离线通知（读后即删）
@@ -11,6 +12,7 @@
  * - GET  /api/stocks/:code        个股详情聚合（行情/新闻/公告/财报，各板块独立降级）
  * - GET  /api/stocks/:code/news?sort=hot|time  单块新闻（浏览页排序切换用）
  * - GET  /api/stocks/:code/history?days=  历史 K 线（需 data-service 提供 getHistory）
+ * - GET  /api/market/movers?limit=  全市场今日涨跌榜（上涨/下跌/平盘 + 家数统计）
  * - GET  /api/search?keyword=     股票搜索（薄封装 provider.search，上限 20 条）
  *
  * 鉴权：所有 /api/* 请求需带请求头 `Authorization: Bearer <ACCESS_TOKEN>`，
@@ -38,6 +40,7 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 // dist/channels/webchat.js -> 项目根/public/<子目录>（tsx dev 时 __dirname 是 src/channels，同样上溯两级）
 const WEB_ROOT = path.resolve(__dirname, '../../public/webchat');
 const STOCKS_ROOT = path.resolve(__dirname, '../../public/stocks');
+const MARKET_ROOT = path.resolve(__dirname, '../../public/market');
 const SHARED_ROOT = path.resolve(__dirname, '../../public/shared');
 
 /** 股票代码统一校验：6 位数字 */
@@ -104,6 +107,7 @@ export class WebChatChannel implements Channel {
   mount(app: express.Express, agent: Agent): void {
     app.use('/webchat', express.static(WEB_ROOT));
     app.use('/stocks', express.static(STOCKS_ROOT));
+    app.use('/market', express.static(MARKET_ROOT));
     app.use('/shared', express.static(SHARED_ROOT));
 
     // 只保护 /api/*，静态资源（/webchat、/stocks、/shared）不鉴权
@@ -245,6 +249,21 @@ export class WebChatChannel implements Channel {
       try {
         const bars: HistoryBar[] = await this.data.getHistory(code, days);
         res.json({ bars });
+      } catch (err) {
+        res.status(500).json({ error: errText(err) });
+      }
+    });
+
+    // 全市场涨跌榜（今日上涨/下跌/平盘）：依赖可选方法 getMovers（东财 clist，不依赖 data-service）
+    app.get('/api/market/movers', async (req, res) => {
+      if (!this.data.getMovers) {
+        res.status(503).json({ error: '当前数据源不支持全市场涨跌榜' });
+        return;
+      }
+      const parsed = Number.parseInt(String(req.query.limit ?? ''), 10);
+      const limit = Number.isNaN(parsed) ? 50 : Math.min(100, Math.max(1, parsed));
+      try {
+        res.json(await this.data.getMovers(limit));
       } catch (err) {
         res.status(500).json({ error: errText(err) });
       }

@@ -368,3 +368,26 @@
   新页面 → 引入 theme.css 并复用组件类，不要另起色板
 - **注意事项**：离线约束——禁止 CDN/外链资源（图表手写 SVG、无框架）；
   `--up`/`--down` 是 A 股红涨绿跌语义色，只用於行情数据，不要当 UI 强调色用。
+
+## 23. 全市场涨跌榜（/market，2026-09-15 新增）
+
+- **实现方式**：与自选股页（/stocks）平行的独立页面——全市场今日涨幅榜/跌幅榜/平盘
+  三 Tab + 涨跌平家数总览卡，每榜前 50 条（limit 上限 100），点卡片跳 /stocks?code= 详情页。
+  数据链路：`GET /api/market/movers?limit=`（口令鉴权后）→ `DataProvider.getMovers()`
+  → 东财 clist 排行榜（`push2 /api/qt/clist/get`，fid=f3 按涨跌幅排序，`fltt=2` 价格**不缩放**）
+  + ulist 涨跌平家数统计（`/api/qt/ulist.np/get`，secids=1.000001,0.399001,0.899050
+  沪深京三市 f104/f105/f106 求和）。**平盘定位**是主要难点：clist 不支持按值筛选，
+  且停牌股（f3="-"）与平盘混排在零区，实现为二分查找"末条不再为正"的第一页
+  （零区起点）再向后最多扫 3 页收集 f3 恰为 0 的（大页长 200 减少请求数）。
+  **宿主降级**：push2 被 IP 限流时自动切 push2delay 同构接口（延时约 15 分钟，
+  响应带 `delayed: true`，页面在数据时间后标注）；结果进程内缓存 60s 防刷新刷限流。
+  不依赖 data-service；腾讯无对应榜单接口，故不走腾讯降级。
+- **代码位置**：页面 [public/market/index.html](../public/market/index.html)、
+  API [src/channels/webchat.ts](../src/channels/webchat.ts)（`/api/market/movers`）、
+  数据层 [src/data/eastmoney.ts](../src/data/eastmoney.ts)（`getMovers`/`fetchClistRaw`/
+  `fetchMoverCounts`）、接口 [src/data/provider.ts](../src/data/provider.ts)（`MarketMovers`/`MoverItem`）
+- **改动入口**：改每榜条数 → 前端 `LIMIT` 与 API limit 上限；改缓存时长 →
+  `MOVERS_CACHE_MS`；加榜单（如振幅榜）→ clist 换 fid 排序字段即可
+- **注意事项**：clist 的 f2/f3 在 `fltt=2` 下不缩放，与报价接口 ×100 规则相反，别混用；
+  停牌股混排零区是实测行为（PITFALLS 东财条目），改平盘定位逻辑前先读；
+  测试用合成全市场 mock（`tests/movers.test.ts` 的 `clistHandler`），改请求模式要同步改。
