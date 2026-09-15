@@ -113,6 +113,14 @@
 
 ## 更新日志
 
+- 2026-09-15（深夜批次）：**修复 akshare 1.18.94 引发的公告/财报双故障**（用户浏览详情页发现）。
+  财报：`stock_financial_abstract` 返回结构从长表变宽表（行=指标、列=报告期），旧映射静默全空
+  ——端点按 `"指标" in df.columns` 分流，宽表走 `_financials_wide()` 透视；FinancialReport
+  新增 netAssets/roe/eps（新版无"资产总计/长期负债/财务费用"）；技能格式化与详情页表格
+  （+ROE 列、金额亿/万格式化）同步。公告：巨潮上游返回非 JSON（JSONDecodeError）——
+  `/announcements` 加东财 `stock_individual_notice_report` 降级链（全量翻页 180s 超时 +
+  按代码缓存 6h）。另记录 tsx watch 旧子进程占端口致"修复不生效"的排查过程（PITFALLS 加重版）。
+  验证：端到端详情聚合四块（行情/新闻/公告/财报）全部实测通过，66 测试全绿。
 - 2026-09-15（下午批次）：**F1/F2 完成——股票浏览页 + 个股详情页 + 页内搜索，同步 UI 重设计**。
   后端：data-service 新增 `/history/{code}` 历史 K 线端点（前复权日 K，东财失败自动降级新浪）；
   `DataProvider` 新增 `getHistory` 与 `Quote.open/high/low` 可选字段（东财 f44/45/46、腾讯

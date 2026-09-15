@@ -33,13 +33,17 @@ export interface Announcement {
 /** 单期财报摘要；数值为带单位的中文格式字符串（如 "999,862,000.00元"），未做数值清洗 */
 export interface FinancialReport {
   period: string;           // 报告期截止日期，如 2025-06-30
-  revenue?: string;         // 主营业务收入
-  netProfit?: string;       // 净利润
+  revenue?: string;         // 营业总收入
+  netProfit?: string;       // 净利润（新版数据源为归母净利润）
+  netAssets?: string;       // 股东权益合计（净资产）；akshare ≥1.18.94 宽表提供
+  roe?: string;             // 净资产收益率（%）；akshare ≥1.18.94 宽表提供
+  eps?: string;             // 基本每股收益；akshare ≥1.18.94 宽表提供
+  netAssetsPerShare?: string;  // 每股净资产
+  cashFlowPerShare?: string;   // 每股现金流
+  // 以下三个仅旧版 akshare（长表）提供，新版宽表无此指标，保留字段以兼容旧部署
   totalAssets?: string;     // 资产总计
   longTermDebt?: string;    // 长期负债合计
   financeCost?: string;     // 财务费用
-  netAssetsPerShare?: string;  // 每股净资产
-  cashFlowPerShare?: string;   // 每股现金流
 }
 
 /** 历史日 K 线（前复权），按日期升序 */

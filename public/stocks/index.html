@@ -467,6 +467,17 @@
     }
 
     /* ---- Tab：新闻 / 公告 / 财报 ---- */
+    // 财报金额展示格式化：新版数据源返回无单位原始数值（元），大额转 亿/万 便于阅读
+    function fmtMoney(s) {
+      const v = Number(String(s).replace(/[,\s元]/g, ''));
+      if (!isFinite(v) || v === 0) return s;
+      const sign = v < 0 ? '-' : '';
+      const a = Math.abs(v);
+      if (a >= 1e8) return `${sign}${(a / 1e8).toFixed(2)}亿`;
+      if (a >= 1e4) return `${sign}${(a / 1e4).toFixed(2)}万`;
+      return s;
+    }
+
     let activeTab = 'news';
     $('tabs').addEventListener('click', (e) => {
       const btn = e.target.closest('button[data-tab]');
@@ -513,15 +524,16 @@
       const table = el('table', 'fin-table');
       const thead = el('thead');
       const hr = el('tr');
-      for (const h of ['报告期', '营收', '净利润', '每股净资产']) hr.appendChild(el('th', '', h));
+      for (const h of ['报告期', '营收', '净利润', 'ROE', '每股净资产']) hr.appendChild(el('th', '', h));
       thead.appendChild(hr);
       table.appendChild(thead);
       const tbody = el('tbody');
       for (const f of items) {
         const tr = el('tr');
         tr.appendChild(el('td', '', f.period || '—'));
-        tr.appendChild(el('td', '', f.revenue || '—'));
-        tr.appendChild(el('td', '', f.netProfit || '—'));
+        tr.appendChild(el('td', '', f.revenue ? fmtMoney(f.revenue) : '—'));
+        tr.appendChild(el('td', '', f.netProfit ? fmtMoney(f.netProfit) : '—'));
+        tr.appendChild(el('td', '', f.roe ? f.roe + '%' : '—'));
         tr.appendChild(el('td', '', f.netAssetsPerShare || '—'));
         tbody.appendChild(tr);
       }
