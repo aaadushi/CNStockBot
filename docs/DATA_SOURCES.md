@@ -65,6 +65,8 @@ GET https://qt.gtimg.cn/q=sh600519
 | `ak.stock_financial_abstract(symbol)` | 财报摘要，新浪（已接入 /financials；**参数名随版本变动**：旧版 `stock`、1.18.94 起 `symbol`，端点已双兼容；返回带"元"单位的字符串） |
 | `ak.stock_info_a_code_name()` | 全量代码名称表（已接入 /search，进程内缓存 24h） |
 | `ak.tool_trade_date_hist_sina()` | 交易日历，新浪（已接入 /trade-calendar?year=，进程内缓存 24h；返回 trade_date 为 date 对象，`str()` 即 "YYYY-MM-DD"） |
+| `ak.stock_info_global_em()` | 东财全球财经快讯，约 200 条（已接入 /market-news 主源；列：标题/摘要/发布时间/链接，含 URL） |
+| `ak.stock_info_global_cls()` | 财联社电报，约 20 条（已接入 /market-news 降级源；列：标题/内容/发布日期/发布时间，无 URL；短快讯"标题"常为空，端点取"内容"前 60 字充任） |
 
 AKShare 文档：https://akshare.akfamily.xyz/
 

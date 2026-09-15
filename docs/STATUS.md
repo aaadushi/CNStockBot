@@ -35,6 +35,7 @@
 | 历史 K 线数据（走势图数据源） | `data-service/main.py` `/history` + `DataProvider.getHistory` | ✅ 可用 | 前复权日 K；东财 `stock_zh_a_hist` 失败自动降级新浪 `stock_zh_a_daily`（push2his 限流托底，见 PITFALLS） |
 | 前端共享设计系统 | `public/shared/theme.css` | ✅ 可用 | ShadcnUI 风格（黑白灰 + indigo CTA、圆角卡片、微阴影）；webchat 与 stocks 两页共用；2026-09-15 UI 重设计 |
 | 全市场涨跌榜（/market） | `public/market/` + `src/channels/webchat.ts` `/api/market/movers` | ✅ 可用 | 今日涨幅榜/跌幅榜/平盘三 Tab + 涨跌平家数总览（沪深京）；东财 clist/ulist 接口，push2 限流自动降级 push2delay（延时 15 分钟，页面标注）；不依赖 data-service；2026-09-15 新增 |
+| 财经快讯（/news + `get_market_news` 技能） | `public/news/` + `src/skills/bundled/marketnews/` + data-service `/market-news` | ✅ 可用 | 全市场财经快讯（区别于个股新闻）；东财全球快讯主源、财联社降级，进程内缓存 90s；网页 60s 自动刷新；依赖 data-service；2026-09-15 新增（F4-A） |
 
 ## 二、待办优先级总表（下一个 agent 从这里开始）
 
@@ -136,9 +137,9 @@
 
 | # | 事项 | 数据来源建议 | 落点 |
 |---|---|---|---|
-| F4-A1 | 快讯数据 | data-service 新端点 `GET /market-news?limit=`：`ak.stock_info_global_em()`（东财全球财经快讯）或 `ak.stock_info_global_cls()`（财联社），**先实测哪个在当前 akshare 版本可用再定**，可双源降级；`DataProvider` 加 `getMarketNews()`，CompositeProvider 接线 | 数据层 |
-| F4-A2 | 聊天技能 | `get_market_news`：不带代码的全市场财经快讯（与个股 `get_stock_news` 分工，SKILL.md 写清触发场景区别） | 对话 |
-| F4-A3 | 网页 | 新页面（建议 `/news`）：快讯滚动列表、时间倒序、自动刷新；API `GET /api/market/news` 挂口令鉴权后；复用 theme.css，/stocks 与 /market 页头加导航 | 前端 |
+| ~~F4-A1~~ | ~~快讯数据~~ | ✅ 2026-09-15 完成（见更新日志）：`/market-news`，东财 `stock_info_global_em` 主源（实测 200 条含 URL）+ 财联社 `stock_info_global_cls` 降级，缓存 90s | 数据层 |
+| ~~F4-A2~~ | ~~聊天技能~~ | ✅ 2026-09-15 完成：`get_market_news`（`src/skills/bundled/marketnews/`），SYSTEM_PROMPT 加了与个股新闻的 routing 引导 | 对话 |
+| ~~F4-A3~~ | ~~网页~~ | ✅ 2026-09-15 完成：`/news` 页（60s 自动刷新）+ `GET /api/market/news`（口令鉴权后），/stocks 与 /market 页头加导航 | 前端 |
 
 **F4-B 基金版块**（对标支付宝财富页的基金内容）
 
@@ -167,6 +168,19 @@
 
 ## 更新日志
 
+- 2026-09-15（傍晚批次 2）：**F4-A 财经快讯版块完成**——数据层：data-service 新增
+  `GET /market-news?limit=`（上限 50），主源东财 `stock_info_global_em`（实测返回约 200 条，
+  列：标题/摘要/发布时间/链接，含 URL），失败自动降级财联社 `stock_info_global_cls`
+  （约 20 条，无 URL，短快讯"标题"常为空、取"内容"前 60 字充任），发布时间倒序 +
+  进程内缓存 90s 防刷新打爆上游；`DataProvider` 新增 `MarketNewsItem`/`getMarketNews`，
+  CompositeProvider 接线（微服务未启动返回带启动提示的结构化错误）。对话：新增
+  `get_market_news` 技能（无代码参数的全市场快讯，与 `get_stock_news` 分工写在 SKILL.md，
+  SYSTEM_PROMPT 加 routing 引导）。网页：新增 `/news` 页（时间倒序列表、有 URL 可点击
+  新窗口打开、60s 自动刷新 + 手动刷新 + 数据更新时间），API `GET /api/market/news?limit=`
+  挂口令鉴权后，/stocks 与 /market 页头加"📰 快讯"导航。验证：typecheck + 85 测试全绿
+  （新增 8 条：provider URL/透传/错误分支 + 技能格式化/limit 归一化/降级提示）；
+  端到端实测 /market-news 与 /api/market/news 返回真实快讯、401 正常、微服务停掉时
+  降级错误提示正确；/webchat 发"最近有什么财经新闻"实测 LLM 调用技能并汇总输出。
 - 2026-09-15（傍晚批次）：**新增 F4 路线图（基金与财经资讯版块）**——用户要求项目内
   可查看"支付宝相关版块"与"财经相关内容"，经确认范围为股票+基金相关内容：
   基金（净值/排行/场内 ETF，对标支付宝财富页基金版块）与全市场财经快讯；

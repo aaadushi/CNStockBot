@@ -30,6 +30,7 @@ uvicorn main:app --host 127.0.0.1 --port 8000
 | `GET /financials/{code}` | 财报摘要（新浪，按报告期倒序） |
 | `GET /history/{code}?days=120` | 历史日 K 线（前复权；东财失败自动降级新浪） |
 | `GET /trade-calendar?year=` | 交易日历（新浪，用于跳过法定节假日） |
+| `GET /market-news?limit=20` | 全市场财经快讯（东财全球快讯主源、财联社降级，缓存 90s，上限 50 条） |
 
 ## 注意
 

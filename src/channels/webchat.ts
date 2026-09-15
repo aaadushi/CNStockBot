@@ -3,6 +3,7 @@
  * - GET  /webchat                 聊天静态页面（public/webchat/index.html），不鉴权
  * - GET  /stocks                  股票浏览静态页面（public/stocks/），不鉴权
  * - GET  /market                  全市场涨跌榜静态页面（public/market/），不鉴权
+ * - GET  /news                    财经快讯静态页面（public/news/），不鉴权
  * - GET  /shared                  前端共享静态资源（public/shared/），不鉴权
  * - POST /api/chat                { userId, message } -> { reply }
  * - GET  /api/inbox?userId=       拉取离线通知（读后即删）
@@ -13,6 +14,7 @@
  * - GET  /api/stocks/:code/news?sort=hot|time  单块新闻（浏览页排序切换用）
  * - GET  /api/stocks/:code/history?days=  历史 K 线（需 data-service 提供 getHistory）
  * - GET  /api/market/movers?limit=  全市场今日涨跌榜（上涨/下跌/平盘 + 家数统计）
+ * - GET  /api/market/news?limit=    全市场财经快讯（需 data-service 提供 getMarketNews）
  * - GET  /api/search?keyword=     股票搜索（薄封装 provider.search，上限 20 条）
  *
  * 鉴权：所有 /api/* 请求需带请求头 `Authorization: Bearer <ACCESS_TOKEN>`，
@@ -41,6 +43,7 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const WEB_ROOT = path.resolve(__dirname, '../../public/webchat');
 const STOCKS_ROOT = path.resolve(__dirname, '../../public/stocks');
 const MARKET_ROOT = path.resolve(__dirname, '../../public/market');
+const NEWS_ROOT = path.resolve(__dirname, '../../public/news');
 const SHARED_ROOT = path.resolve(__dirname, '../../public/shared');
 
 /** 股票代码统一校验：6 位数字 */
@@ -114,9 +117,10 @@ export class WebChatChannel implements Channel {
     app.use('/webchat', express.static(WEB_ROOT));
     app.use('/stocks', express.static(STOCKS_ROOT));
     app.use('/market', express.static(MARKET_ROOT));
+    app.use('/news', express.static(NEWS_ROOT));
     app.use('/shared', express.static(SHARED_ROOT));
 
-    // 只保护 /api/*，静态资源（/webchat、/stocks、/shared）不鉴权
+    // 只保护 /api/*，静态资源（/webchat、/stocks、/market、/news、/shared）不鉴权
     app.use('/api', requireAccessToken);
 
     app.post('/api/chat', async (req, res) => {
@@ -270,6 +274,23 @@ export class WebChatChannel implements Channel {
       const limit = Number.isNaN(parsed) ? 50 : Math.min(100, Math.max(1, parsed));
       try {
         res.json(await this.data.getMovers(limit));
+      } catch (err) {
+        res.status(500).json({ error: errText(err) });
+      }
+    });
+
+    // 全市场财经快讯：依赖可选方法 getMarketNews（微服务 /market-news，东财快讯/财联社降级）
+    app.get('/api/market/news', async (req, res) => {
+      if (!this.data.getMarketNews) {
+        res
+          .status(503)
+          .json({ error: '财经快讯需要 data-service（AKShare 微服务），请确认已启动' });
+        return;
+      }
+      const parsed = Number.parseInt(String(req.query.limit ?? ''), 10);
+      const limit = Number.isNaN(parsed) ? 20 : Math.min(50, Math.max(1, parsed));
+      try {
+        res.json({ news: await this.data.getMarketNews(limit) });
       } catch (err) {
         res.status(500).json({ error: errText(err) });
       }
