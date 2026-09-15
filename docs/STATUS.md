@@ -7,7 +7,7 @@
 > 看 [FEATURES.md](FEATURES.md)；踩过的坑看 [PITFALLS.md](PITFALLS.md)；
 > 数据源接口细节看 [DATA_SOURCES.md](DATA_SOURCES.md)。
 
-最后更新：2026-09-14
+最后更新：2026-09-15
 
 ---
 
@@ -38,12 +38,12 @@
 > S2 = 工程质量，防回归；S3 = 体验与健壮性，有余力再做。
 > 代码类问题的详细描述在第三节（P 编号稳定，不重排）。
 
-### S0 环境前置（当前状态：S0-3 已就绪；S0-1/S0-2 仍需人工）
+### S0 环境前置（当前状态：✅ 已就绪，系统可运行）
 
 | # | 事项 | 现状 | 做法 |
 |---|---|---|---|
-| S0-1 | **配置 LLM_API_KEY** | 根目录**连 `.env` 文件都没有**，所有对话功能不可用 | `cp .env.example .env`，填入 DeepSeek 等平台的 key |
-| S0-2 | **固定 ACCESS_TOKEN** | 无 .env，启动时每次随机生成口令，重启即变 | 在 .env 里设一个强口令 |
+| S0-1 | ~~配置 LLM_API_KEY~~ | ✅ 2026-09-15 已配置 **Kimi 开放平台**（kimi-k3，工具调用实测正常）。注意：Kimi 会员 key（sk-kimi- 开头）不能用于开放平台 API（401），必须用 platform.moonshot.cn 创建的 key | 换服务商时改 .env 的 LLM_BASE_URL/LLM_API_KEY/LLM_MODEL 三行 |
+| S0-2 | ~~固定 ACCESS_TOKEN~~ | ✅ 已在 .env 固定 | — |
 | S0-3 | ~~安装 data-service 依赖~~ | ✅ 2026-09-14 已建 venv 并装好（akshare 1.18.94），实测 /health、/trade-calendar 通过 | 以后依赖变更：`cd data-service && .venv\Scripts\activate && pip install -r requirements.txt` |
 | S0-4 | （可选）飞书凭据 | 未启用 | 需要飞书渠道时配 `FEISHU_*` 系列变量（ENCRYPT_KEY 与 VERIFICATION_TOKEN 至少配其一，否则事件接口 fail-closed） |
 
@@ -87,10 +87,58 @@
 
 ### P6 ~~无自动化测试~~（已解决，见更新日志 2026-09-14）
 
+### P8 LLM 429 限流（Kimi 低等级账号 RPM 配额低，暂不修）
+- **影响**：一次对话的工具调用循环会连续发起多轮 LLM 请求，Kimi 新账号/低等级账号
+  每分钟配额低，对话偶发 `LLM 请求失败 429`。
+- **根因**：Moonshot 按账号等级限 RPM；agent 循环无 429 重试（审计 A-102 的建议修法
+  里提过"可选：429/5xx 有限重试"，当时未做）。
+- **建议修法**：LLM 客户端对 429/5xx 加 1~2 次指数退避重试（如 5s/15s）；
+  或用户在 Kimi 平台充值提升账号等级。**用户决定暂不修（2026-09-15）**。
+
+---
+
+## 四、功能路线图（待做，交给下一个 agent）
+
+> 以下两项是用户 2026-09-15 提出的新需求，按 F1 → F2 顺序做。
+
+### F1 股票浏览页 + 个股详情页
+
+**需求（用户原话要点）**：
+- 新增一个浏览页面：自选股每只对应一个**圆角矩形**，从上到下排列，一行一只
+- 点进某个圆角矩形 → 进入该股的**详情页**，显示完整信息
+- 股价上涨/下跌的**具体情况用折线图**展示，**可查看往期数据**
+
+**实现建议**：
+- 页面：`public/stocks/`（新静态页，列表 + `?code=` 详情视图，风格参照 public/webchat/）
+- 列表数据：`GET /api/watchlist?userId=`（需新增端点，走 `store.getWatchlist` + 批量行情；
+  **必须挂在 /api 口令鉴权后面**，与 webchat 一致）
+- 详情页完整信息：行情（现有 getQuote）+ 新闻/公告/财报（微服务端点已有）
+- 折线图需要**历史 K 线数据**——目前数据层没有这个能力，需新增：
+  - data-service 加端点：`ak.stock_zh_a_hist(symbol=code, period="daily", start_date, end_date, adjust="qfq")`（东财历史行情）
+  - `DataProvider` 加 `getHistory(code, days)`，CompositeProvider 接线
+  - 前端画图：轻量起见用 Canvas/SVG 手写或 Chart.js CDN（注意内网/离线可用性）
+- 注意 PITFALLS：东财/腾讯接口限流、停牌股抛错（详情页要优雅降级显示）
+
+### F2 浏览页内搜索
+
+**需求（用户原话要点）**：
+- 在 F1 的浏览页里做搜索功能
+- 用户只输入几个数字、有多个匹配结果时，搜索结果以**浏览页同款圆角矩形列表**展示
+- 点进结果 → 进入同一个个股详情页
+
+**实现建议**：
+- 复用现有搜索链路：`DataProvider.search()`（Python 全量表优先，东财 suggest 降级），
+  新增 `GET /api/search?keyword=`（口令鉴权）薄封装即可，不要另起炉灶
+- 搜索结果行点击行为与 F1 列表一致（进详情页）；可加"加入自选"按钮（调 manage_watchlist 对应的存储方法，或新增 POST /api/watchlist 端点）
+
 ---
 
 ## 更新日志
 
+- 2026-09-15：**环境就绪**——LLM 接入 Kimi 开放平台 kimi-k3（对话链路实测可用；
+  会员 key 不能用的坑已记入 PITFALLS），ACCESS_TOKEN 已固定。Kimi 429 限流记为 P8（暂不修）。
+  新增待办功能路线图（第四节）：F1 股票浏览页+个股详情页（折线图/往期数据）、
+  F2 浏览页内搜索，交给下一个 agent。
 - 2026-09-15：**行情链路加腾讯自动降级**——东财 push2 触发 IP 级限流（前一日录 fixture
   时高频请求所致，超 14 小时未解除），新增 `src/data/tencent.ts`（qt.gtimg.cn，GBK 文本
   协议），CompositeProvider 的 getQuote/getIndexQuote 东财失败时自动切腾讯（有降级日志）。
