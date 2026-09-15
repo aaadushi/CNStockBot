@@ -18,6 +18,7 @@
 - 🌐 内置网页聊天界面（WebChat，API 访问口令保护）；飞书渠道已实现（验签/回复/主动推送），默认关闭
 - 📊 股票浏览页（/stocks）：自选股卡片列表 + 页内搜索 + 个股详情页（历史走势折线图、新闻/公告/财报）
 - 🚀 全市场涨跌榜（/market）：今日涨幅榜/跌幅榜/平盘 + 涨跌平家数总览，点卡片跳个股详情
+- 📰 财经快讯（/news + `get_market_news` 技能）：全市场财经快讯滚动列表，60s 自动刷新（需 data-service）
 
 ## 快速开始
 
@@ -29,10 +30,10 @@ cp .env.example .env   # 填入 LLM_API_KEY（推荐 DeepSeek，国内直连且�
 npm run dev
 ```
 
-打开 http://localhost:18790/webchat 、http://localhost:18790/stocks 或 http://localhost:18790/market ，按提示输入访问口令
+打开 http://localhost:18790/webchat 、http://localhost:18790/stocks 、http://localhost:18790/market 或 http://localhost:18790/news ，按提示输入访问口令
 （口令 = `.env` 的 `ACCESS_TOKEN`；未配置时启动日志会打印一个随机口令）。
 
-**启用新闻/公告/财报/历史走势/搜索功能**（需要 Python ≥ 3.10；行情/指数/涨跌榜不需要 data-service）：
+**启用新闻/公告/财报/历史走势/搜索/财经快讯功能**（需要 Python ≥ 3.10；行情/指数/涨跌榜不需要 data-service）：
 
 ```bash
 cd data-service
