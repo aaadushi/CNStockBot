@@ -7,9 +7,11 @@ import search from './bundled/search/index.js';
 import announcement from './bundled/announcement/index.js';
 import financials from './bundled/financials/index.js';
 import marketIndex from './bundled/index/index.js';
+import fundrank from './bundled/fundrank/index.js';
+import fundinfo from './bundled/fundinfo/index.js';
 
 /** 所有已注册技能。新增技能时在此追加。 */
-const skills: Skill[] = [quote, news, watchlist, search, announcement, financials, marketIndex];
+const skills: Skill[] = [quote, news, watchlist, search, announcement, financials, marketIndex, fundrank, fundinfo];
 
 const byName = new Map(skills.map((s) => [s.name, s]));
 

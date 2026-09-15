@@ -8,7 +8,7 @@ import { config } from '../config.js';
 import { EastmoneyProvider } from './eastmoney.js';
 import { TencentProvider } from './tencent.js';
 import { PythonServiceProvider } from './pythonService.js';
-import type { Announcement, DataProvider, FinancialReport, HistoryBar, MarketMovers, NewsItem, NewsSort, Quote } from './provider.js';
+import type { Announcement, DataProvider, EtfQuote, FinancialReport, FundInfo, FundRankItem, FundSearchItem, HistoryBar, MarketMovers, NewsItem, NewsSort, Quote } from './provider.js';
 
 class CompositeProvider implements DataProvider {
   readonly name = 'composite(eastmoney+python)';
@@ -97,6 +97,46 @@ class CompositeProvider implements DataProvider {
       // 降级必须留痕，否则微服务挂掉后故障不可观测（审计 A-308）
       console.warn('[data] python 搜索失败，降级东财 suggest:', err instanceof Error ? err.message : err);
       return this.quote.search(keyword);
+    }
+  }
+
+  /** 基金版块（F4-B）只能走微服务（天天基金/东财 ETF，AKShare 封装），未启动时给出带启动提示的错误 */
+  private fundUnavailable(err: unknown): Error {
+    return new Error(
+      `基金数据不可用：${err instanceof Error ? err.message : String(err)}\n` +
+        '提示：进入 data-service 目录运行 `pip install -r requirements.txt && uvicorn main:app` 启动数据微服务。',
+    );
+  }
+
+  async getFundRank(type = '全部', limit = 50): Promise<FundRankItem[]> {
+    try {
+      return await this.python.getFundRank(type, limit);
+    } catch (err) {
+      throw this.fundUnavailable(err);
+    }
+  }
+
+  async getFundInfo(code: string, days = 250): Promise<FundInfo> {
+    try {
+      return await this.python.getFundInfo(code, days);
+    } catch (err) {
+      throw this.fundUnavailable(err);
+    }
+  }
+
+  async searchFunds(keyword: string, limit = 10): Promise<FundSearchItem[]> {
+    try {
+      return await this.python.searchFunds(keyword, limit);
+    } catch (err) {
+      throw this.fundUnavailable(err);
+    }
+  }
+
+  async getEtfRank(limit = 50): Promise<EtfQuote[]> {
+    try {
+      return await this.python.getEtfRank(limit);
+    } catch (err) {
+      throw this.fundUnavailable(err);
     }
   }
 }

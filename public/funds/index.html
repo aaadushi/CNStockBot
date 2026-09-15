@@ -1,0 +1,612 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>股助手 - 基金</title>
+  <link rel="stylesheet" href="/shared/theme.css" />
+  <style>
+    /* ---- 搜索 ---- */
+    .search-wrap { position: relative; margin-bottom: 16px; }
+    .search-box { position: relative; }
+    .search-box .icon {
+      position: absolute; left: 14px; top: 50%; transform: translateY(-50%);
+      color: var(--text-3); font-size: 14px; pointer-events: none;
+    }
+    .search-box .input { padding-left: 38px; border-radius: var(--radius); }
+    .search-results {
+      position: absolute; top: calc(100% + 8px); left: 0; right: 0; z-index: 20;
+      background: var(--card); border: 1px solid var(--border); border-radius: var(--radius);
+      box-shadow: var(--shadow-md); padding: 8px; display: none;
+      max-height: 380px; overflow-y: auto;
+    }
+    .search-results.open { display: flex; flex-direction: column; gap: 8px; }
+
+    /* ---- 基金卡片（排行/搜索/ETF 同款圆角矩形） ---- */
+    .fund-list { display: flex; flex-direction: column; gap: 12px; }
+    .fund-card {
+      display: flex; align-items: center; gap: 12px;
+      background: var(--card); border: 1px solid var(--border); border-radius: var(--radius);
+      box-shadow: var(--shadow-sm); padding: 16px 20px; cursor: pointer;
+      transition: box-shadow 150ms ease, transform 150ms ease;
+    }
+    .fund-card:hover { box-shadow: var(--shadow-md); transform: translateY(-1px); }
+    .fund-card .meta { flex: 1; min-width: 0; }
+    .fund-card .name { font-size: 16px; font-weight: 600; }
+    .fund-card .code { font-size: 13px; color: var(--text-2); font-variant-numeric: tabular-nums; }
+    .fund-card .perf { font-size: 12px; color: var(--text-3); margin-top: 3px; font-variant-numeric: tabular-nums; }
+    .fund-card .quote { text-align: right; font-variant-numeric: tabular-nums; }
+    .fund-card .price { font-size: 16px; font-weight: 600; margin-bottom: 2px; }
+    .fund-card .sub-note { font-size: 11px; color: var(--text-3); margin-top: 2px; }
+
+    /* ---- Tab 与类型 pill ---- */
+    .tabs { display: flex; gap: 4px; border-bottom: 1px solid var(--border); margin-bottom: 16px; }
+    .tabs button {
+      border: none; background: none; font-family: var(--font); font-size: 14px; color: var(--text-2);
+      padding: 8px 14px; cursor: pointer; border-bottom: 2px solid transparent; margin-bottom: -1px;
+      transition: color 150ms ease;
+    }
+    .tabs button:hover { color: var(--text); }
+    .tabs button.active { color: var(--accent); font-weight: 600; border-bottom-color: var(--accent); }
+    .type-pills { display: flex; gap: 4px; flex-wrap: wrap; margin-bottom: 16px; background: var(--bg); border-radius: 999px; padding: 3px; width: fit-content; }
+    .type-pills button {
+      border: none; background: none; font-family: var(--font); font-size: 12px; color: var(--text-2);
+      padding: 4px 12px; border-radius: 999px; cursor: pointer; transition: all 150ms ease;
+    }
+    .type-pills button:hover { color: var(--text); }
+    .type-pills button.active { background: var(--accent-soft); color: var(--accent); font-weight: 600; }
+
+    /* ---- 详情页 ---- */
+    .detail-top { display: flex; align-items: center; gap: 12px; }
+    .back-link {
+      font-size: 13px; color: var(--text-2); text-decoration: none;
+      padding: 6px 10px; border-radius: 8px; transition: background 150ms ease, color 150ms ease;
+    }
+    .back-link:hover { background: var(--border); color: var(--text); }
+    .detail-top .title { flex: 1; min-width: 0; }
+    .detail-top .title .name { font-size: 20px; font-weight: 600; }
+    .detail-top .title .code { font-size: 13px; color: var(--text-2); margin-left: 8px; }
+    .nav-main { display: flex; align-items: flex-end; gap: 16px; flex-wrap: wrap; }
+    .nav-main .nav-value { font-size: 32px; font-weight: 700; font-variant-numeric: tabular-nums; line-height: 1.1; }
+    .nav-main .time { font-size: 12px; color: var(--text-3); margin-left: auto; }
+    .stat-grid {
+      display: grid; grid-template-columns: repeat(5, 1fr); gap: 12px;
+      margin-top: 16px; padding-top: 16px; border-top: 1px solid var(--border);
+    }
+    .stat-grid .label { font-size: 12px; color: var(--text-3); margin-bottom: 2px; }
+    .stat-grid .value { font-size: 15px; font-weight: 600; font-variant-numeric: tabular-nums; }
+    @media (max-width: 640px) { .stat-grid { grid-template-columns: repeat(3, 1fr); } }
+
+    /* ---- 走势图 ---- */
+    .chart-head { display: flex; align-items: center; justify-content: space-between; margin-bottom: 16px; flex-wrap: wrap; gap: 8px; }
+    .chart-head h3 { font-size: 15px; font-weight: 600; }
+    .chart-box { position: relative; }
+    .chart-box svg { display: block; width: 100%; height: auto; }
+    .chart-tip {
+      position: absolute; pointer-events: none; display: none; z-index: 5;
+      background: var(--text); color: #fff; font-size: 12px; border-radius: 8px;
+      padding: 6px 10px; line-height: 1.5; white-space: nowrap;
+      transform: translate(-50%, -100%); font-variant-numeric: tabular-nums;
+    }
+
+    .list-note { font-size: 12px; color: var(--text-3); margin-top: 12px; text-align: center; }
+    .block-error { color: var(--text-3); font-size: 13px; padding: 16px 4px; }
+    [hidden] { display: none !important; }
+  </style>
+</head>
+<body>
+  <header class="page-header">
+    <div class="inner">
+      <span class="brand">📈 股助手</span>
+      <span class="sub" id="header-sub">基金</span>
+      <span class="spacer"></span>
+      <a class="nav" href="/stocks">⭐ 自选股</a>
+      <a class="nav" href="/market">📊 涨跌榜</a>
+      <a class="nav" href="/webchat">💬 聊天</a>
+    </div>
+  </header>
+
+  <main class="page">
+    <!-- ========== 列表视图 ========== -->
+    <section id="view-list">
+      <div class="search-wrap">
+        <div class="search-box">
+          <span class="icon">🔍</span>
+          <input id="search-input" class="input" placeholder="输入基金代码 / 名称 / 拼音缩写搜索" autocomplete="off" />
+        </div>
+        <div id="search-results" class="search-results"></div>
+      </div>
+
+      <div class="card">
+        <div class="tabs" id="tabs">
+          <button data-tab="rank" class="active">基金排行</button>
+          <button data-tab="etf">场内 ETF</button>
+        </div>
+        <div class="type-pills" id="type-pills">
+          <button data-type="股票型" class="active">股票型</button>
+          <button data-type="混合型">混合型</button>
+          <button data-type="债券型">债券型</button>
+          <button data-type="指数型">指数型</button>
+          <button data-type="QDII">QDII</button>
+          <button data-type="FOF">FOF</button>
+          <button data-type="全部">全部</button>
+        </div>
+        <div id="fund-list" class="fund-list"></div>
+        <div class="list-note" id="list-note"></div>
+      </div>
+    </section>
+
+    <!-- ========== 详情视图（?code=） ========== -->
+    <section id="view-detail" hidden>
+      <div class="card" style="margin-bottom: 16px;">
+        <div class="detail-top" style="margin-bottom: 16px;">
+          <a class="back-link" href="/funds">← 返回基金列表</a>
+          <div class="title">
+            <span class="name" id="d-name"></span>
+            <span class="code" id="d-code"></span>
+            <span class="badge" id="d-type" style="margin-left: 8px;"></span>
+          </div>
+        </div>
+        <div class="nav-main">
+          <span class="nav-value" id="d-nav">—</span>
+          <span id="d-daypct"></span>
+          <span class="time" id="d-date"></span>
+        </div>
+        <div class="stat-grid" id="d-stats"></div>
+      </div>
+
+      <div class="card">
+        <div class="chart-head">
+          <h3>单位净值走势</h3>
+          <div class="type-pills" id="range-pills" style="margin-bottom: 0;">
+            <button data-n="22">近1月</button>
+            <button data-n="63">近3月</button>
+            <button data-n="126">近6月</button>
+            <button data-n="252" class="active">近1年</button>
+          </div>
+        </div>
+        <div class="chart-box" id="chart-box">
+          <div class="chart-tip" id="chart-tip"></div>
+        </div>
+      </div>
+    </section>
+
+    <div class="disclaimer">数据仅供参考，不构成投资建议</div>
+  </main>
+
+  <!-- 口令鉴权浮层（与 webchat/stocks/market 共用 localStorage 键） -->
+  <div class="auth-overlay" id="auth-overlay" hidden>
+    <div class="auth-card">
+      <h2>输入访问口令</h2>
+      <p>口令见服务端启动日志或 .env 的 ACCESS_TOKEN</p>
+      <input id="auth-input" class="input" type="password" placeholder="ACCESS_TOKEN" />
+      <div class="error" id="auth-error"></div>
+      <button class="btn btn-primary" id="auth-confirm">确认</button>
+    </div>
+  </div>
+
+  <script>
+    'use strict';
+    const $ = (id) => document.getElementById(id);
+
+    /* ================= 鉴权（与其他页面共用 localStorage 键） ================= */
+    let accessToken = localStorage.getItem('cnstockbot_token') || '';
+
+    const authOverlay = $('auth-overlay');
+    let authResolve = null;
+    function showAuth(hasError) {
+      $('auth-error').textContent = hasError ? '口令错误，请重新输入' : '';
+      authOverlay.hidden = false;
+      $('auth-input').focus();
+      return new Promise((resolve) => { authResolve = resolve; });
+    }
+    function submitAuth() {
+      const t = $('auth-input').value.trim();
+      if (!t) return;
+      accessToken = t;
+      localStorage.setItem('cnstockbot_token', t);
+      $('auth-input').value = '';
+      authOverlay.hidden = true;
+      if (authResolve) { authResolve(); authResolve = null; }
+    }
+    $('auth-confirm').onclick = submitAuth;
+    $('auth-input').onkeydown = (e) => { if (e.key === 'Enter') submitAuth(); };
+
+    async function apiFetch(url, options = {}) {
+      if (!accessToken) await showAuth(false);
+      options.headers = Object.assign({}, options.headers, { 'Authorization': 'Bearer ' + accessToken });
+      const res = await fetch(url, options);
+      if (res.status === 401) {
+        accessToken = '';
+        localStorage.removeItem('cnstockbot_token');
+        await showAuth(true);
+        return apiFetch(url, options);
+      }
+      return res;
+    }
+
+    /* ================= 工具 ================= */
+    function el(tag, cls, text) {
+      const e = document.createElement(tag);
+      if (cls) e.className = cls;
+      if (text !== undefined) e.textContent = text; // 一律 textContent，防 XSS
+      return e;
+    }
+    function fmtPct(v) {
+      if (typeof v !== 'number' || !isFinite(v)) return null;
+      return (v > 0 ? '+' : '') + v.toFixed(2) + '%';
+    }
+    function pctBadge(v) {
+      const s = fmtPct(v);
+      const badge = el('span', 'badge', s ?? '—');
+      badge.classList.add(s == null ? 'badge-flat' : v > 0 ? 'badge-up' : v < 0 ? 'badge-down' : 'badge-flat');
+      return badge;
+    }
+    function upDownClass(v) { return v > 0 ? 'text-up' : v < 0 ? 'text-down' : 'text-2'; }
+    function fmtAmount(v) { // 成交额（元）→ 亿/万
+      if (typeof v !== 'number' || !isFinite(v)) return null;
+      if (v >= 1e8) return (v / 1e8).toFixed(1) + ' 亿';
+      if (v >= 1e4) return (v / 1e4).toFixed(0) + ' 万';
+      return String(Math.round(v));
+    }
+    function goDetail(code) { location.href = '/funds?code=' + encodeURIComponent(code); }
+
+    /* ================= 路由（?code= 为详情视图） ================= */
+    let currentCode = null;
+
+    function renderRoute() {
+      const code = new URLSearchParams(location.search).get('code');
+      currentCode = code && /^\d{6}$/.test(code) ? code : null;
+      $('view-list').hidden = !!currentCode;
+      $('view-detail').hidden = !currentCode;
+      $('header-sub').textContent = currentCode ? '基金详情' : '基金';
+      if (currentCode) loadDetail();
+    }
+    window.addEventListener('popstate', renderRoute);
+
+    /* ================= 列表视图：排行 / ETF ================= */
+    const LIMIT = 50;
+    let activeTab = 'rank';
+    let activeType = '股票型';
+    const cache = {}; // "rank:股票型" / "etf" -> items
+
+    function fundCard(f) {
+      const card = el('div', 'fund-card');
+      const meta = el('div', 'meta');
+      meta.appendChild(el('div', 'name', f.name || f.code));
+      meta.appendChild(el('div', 'code', f.code + (f.type ? ' · ' + f.type : '')));
+      const perf = [];
+      if (fmtPct(f.month1)) perf.push('近1月 ' + fmtPct(f.month1));
+      if (fmtPct(f.year1)) perf.push('近1年 ' + fmtPct(f.year1));
+      if (perf.length) meta.appendChild(el('div', 'perf', perf.join('　')));
+      card.appendChild(meta);
+      const quote = el('div', 'quote');
+      quote.appendChild(el('div', 'price', f.unitNav != null ? Number(f.unitNav).toFixed(4) : '—'));
+      quote.appendChild(pctBadge(f.dayPct));
+      if (f.date) quote.appendChild(el('div', 'sub-note', f.date));
+      card.appendChild(quote);
+      card.onclick = () => goDetail(f.code);
+      return card;
+    }
+
+    function etfCard(f) {
+      const card = el('div', 'fund-card');
+      const meta = el('div', 'meta');
+      meta.appendChild(el('div', 'name', f.name || f.code));
+      meta.appendChild(el('div', 'code', f.code));
+      const amt = fmtAmount(f.amount);
+      if (amt) meta.appendChild(el('div', 'perf', '成交额 ' + amt + (f.turnover != null ? '　换手 ' + Number(f.turnover).toFixed(2) + '%' : '')));
+      card.appendChild(meta);
+      const quote = el('div', 'quote');
+      quote.appendChild(el('div', 'price ' + upDownClass(f.changePct), f.price != null ? Number(f.price).toFixed(3) : '—'));
+      quote.appendChild(pctBadge(f.changePct));
+      card.appendChild(quote);
+      card.onclick = () => goDetail(f.code);
+      return card;
+    }
+
+    function renderFundList(items, isEtf) {
+      const box = $('fund-list');
+      box.replaceChildren();
+      if (!items) return;
+      if (items.length === 0) {
+        box.appendChild(el('div', 'block-error', '暂无数据'));
+        return;
+      }
+      for (const f of items) box.appendChild(isEtf ? etfCard(f) : fundCard(f));
+    }
+
+    async function loadList(force) {
+      const key = activeTab === 'etf' ? 'etf' : 'rank:' + activeType;
+      $('type-pills').style.display = activeTab === 'rank' ? '' : 'none';
+      if (!force && cache[key]) { renderFundList(cache[key], activeTab === 'etf'); return; }
+      $('fund-list').replaceChildren(el('div', 'block-error', '加载中…（ETF 全量行情首次加载约需半分钟）'));
+      $('list-note').textContent = '';
+      try {
+        const url = activeTab === 'etf'
+          ? '/api/funds/etf?limit=' + LIMIT
+          : '/api/funds/rank?type=' + encodeURIComponent(activeType) + '&limit=' + LIMIT;
+        const res = await apiFetch(url);
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.error || ('HTTP ' + res.status));
+        cache[key] = data.items || [];
+        if ((activeTab === 'etf' ? 'etf' : 'rank:' + activeType) !== key) return;
+        renderFundList(cache[key], activeTab === 'etf');
+        $('list-note').textContent = activeTab === 'etf'
+          ? '场内 ETF 按今日涨跌幅降序，显示前 ' + cache[key].length + ' 只'
+          : '按近1年收益率降序，显示前 ' + cache[key].length + ' 只（天天基金数据）';
+      } catch (e) {
+        $('fund-list').replaceChildren(el('div', 'block-error', '加载失败：' + e.message));
+      }
+    }
+
+    $('tabs').addEventListener('click', (e) => {
+      const btn = e.target.closest('button[data-tab]');
+      if (!btn) return;
+      activeTab = btn.dataset.tab;
+      for (const b of $('tabs').querySelectorAll('button')) b.classList.toggle('active', b === btn);
+      loadList();
+    });
+    $('type-pills').addEventListener('click', (e) => {
+      const btn = e.target.closest('button[data-type]');
+      if (!btn) return;
+      activeType = btn.dataset.type;
+      for (const b of $('type-pills').querySelectorAll('button')) b.classList.toggle('active', b === btn);
+      loadList();
+    });
+
+    /* ================= 列表视图：基金搜索（防抖） ================= */
+    const searchInput = $('search-input');
+    const searchBox = $('search-results');
+    let searchTimer = null;
+    let searchSeq = 0;
+
+    function closeSearch() { searchBox.classList.remove('open'); searchBox.replaceChildren(); }
+
+    searchInput.addEventListener('input', () => {
+      clearTimeout(searchTimer);
+      const kw = searchInput.value.trim();
+      if (!kw) { closeSearch(); return; }
+      searchTimer = setTimeout(() => doSearch(kw), 300);
+    });
+    searchInput.addEventListener('keydown', (e) => { if (e.key === 'Escape') { searchInput.value = ''; closeSearch(); } });
+    document.addEventListener('click', (e) => {
+      if (!e.target.closest('.search-wrap')) closeSearch();
+    });
+
+    async function doSearch(kw) {
+      const seq = ++searchSeq;
+      try {
+        const res = await apiFetch('/api/funds/search?keyword=' + encodeURIComponent(kw));
+        const data = await res.json();
+        if (seq !== searchSeq) return; // 过期响应丢弃
+        if (!res.ok) throw new Error(data.error || ('HTTP ' + res.status));
+        searchBox.replaceChildren();
+        const results = data.results || [];
+        if (results.length === 0) {
+          searchBox.appendChild(el('div', 'block-error', '未找到匹配"' + kw + '"的基金'));
+        } else {
+          for (const f of results) searchBox.appendChild(fundCard(f));
+        }
+        searchBox.classList.add('open');
+      } catch (e) {
+        if (seq !== searchSeq) return;
+        searchBox.replaceChildren(el('div', 'block-error', '搜索失败：' + e.message));
+        searchBox.classList.add('open');
+      }
+    }
+
+    /* ================= 详情视图 ================= */
+    let detailInfo = null;  // 完整 FundInfo（history 最多 260 条，区间切换本地切片）
+    let rangeN = 252;
+
+    async function loadDetail() {
+      $('d-name').textContent = '';
+      $('d-code').textContent = currentCode;
+      $('d-type').textContent = '';
+      $('d-nav').textContent = '—';
+      $('d-daypct').replaceChildren();
+      $('d-date').textContent = '';
+      $('d-stats').replaceChildren();
+      const box = $('chart-box');
+      box.querySelectorAll('svg, .block-error, .skeleton').forEach((n) => n.remove());
+      $('chart-tip').style.display = 'none';
+      const sk = el('div', 'skeleton'); sk.style.height = '260px';
+      box.appendChild(sk);
+      try {
+        const res = await apiFetch('/api/funds/' + currentCode + '?days=260');
+        const data = await res.json();
+        if (currentCode !== new URLSearchParams(location.search).get('code')) return;
+        sk.remove();
+        if (!res.ok) throw new Error(data.error || data.detail || ('HTTP ' + res.status));
+        detailInfo = data;
+        renderDetail();
+      } catch (e) {
+        sk.remove();
+        $('d-name').textContent = '基金 ' + currentCode;
+        box.appendChild(el('div', 'block-error', '基金数据加载失败：' + e.message));
+      }
+    }
+
+    /** 区间收益（与 get_fund_info 技能同口径：按交易日回推） */
+    function periodReturns(points) {
+      const pts = (points || []).filter((p) => typeof p.nav === 'number' && isFinite(p.nav) && p.nav > 0);
+      const defs = [['近1周', 5], ['近1月', 22], ['近3月', 63], ['近6月', 126], ['近1年', 252]];
+      const out = [];
+      for (const [label, n] of defs) {
+        if (pts.length <= n) continue;
+        const base = pts[pts.length - 1 - n].nav;
+        out.push({ label, pct: (pts[pts.length - 1].nav - base) / base * 100 });
+      }
+      return out;
+    }
+
+    function renderDetail() {
+      const info = detailInfo;
+      $('d-name').textContent = info.name || ('基金 ' + info.code);
+      $('d-code').textContent = info.code;
+      $('d-type').textContent = info.type || '';
+      $('d-type').style.display = info.type ? '' : 'none';
+      const latest = info.latest;
+      if (latest) {
+        $('d-nav').textContent = latest.nav != null ? Number(latest.nav).toFixed(4) : '—';
+        $('d-nav').className = 'nav-value ' + upDownClass(latest.changePct);
+        $('d-daypct').replaceChildren(pctBadge(latest.changePct));
+        $('d-date').textContent = '净值日期 ' + latest.date;
+      }
+      const stats = $('d-stats');
+      stats.replaceChildren();
+      for (const r of periodReturns(info.history)) {
+        const cell = el('div');
+        cell.appendChild(el('div', 'label', r.label));
+        cell.appendChild(el('div', 'value ' + upDownClass(r.pct), fmtPct(r.pct)));
+        stats.appendChild(cell);
+      }
+      stats.style.display = stats.childElementCount ? '' : 'none';
+      drawRange();
+    }
+
+    $('range-pills').addEventListener('click', (e) => {
+      const btn = e.target.closest('button[data-n]');
+      if (!btn) return;
+      rangeN = Number(btn.dataset.n);
+      $('range-pills').querySelectorAll('button').forEach((b) => b.classList.toggle('active', b === btn));
+      drawRange();
+    });
+
+    function drawRange() {
+      const box = $('chart-box');
+      box.querySelectorAll('svg, .block-error').forEach((n) => n.remove());
+      $('chart-tip').style.display = 'none';
+      const pts = (detailInfo && detailInfo.history ? detailInfo.history : [])
+        .filter((p) => typeof p.nav === 'number')
+        .slice(-rangeN);
+      if (pts.length < 2) {
+        box.appendChild(el('div', 'block-error', '该区间净值数据不足'));
+        return;
+      }
+      drawChart(box, pts);
+    }
+
+    /* ---- 手写 SVG 折线图（改写自 /stocks 详情页，净值版） ---- */
+    function drawChart(box, pts) {
+      const W = 680, H = 260, padL = 52, padR = 12, padT = 14, padB = 26;
+      const iw = W - padL - padR, ih = H - padT - padB;
+      const vals = pts.map((p) => p.nav);
+      let min = Math.min(...vals), max = Math.max(...vals);
+      if (min === max) { min *= 0.99; max *= 1.01; }
+      const pad = (max - min) * 0.08; min -= pad; max += pad;
+      const x = (i) => padL + (pts.length === 1 ? iw / 2 : (i / (pts.length - 1)) * iw);
+      const y = (v) => padT + (1 - (v - min) / (max - min)) * ih;
+
+      const up = vals[vals.length - 1] >= vals[0];
+      const lineColor = up ? '#dc2626' : '#16a34a';
+      const ns = 'http://www.w3.org/2000/svg';
+      const svg = document.createElementNS(ns, 'svg');
+      svg.setAttribute('viewBox', `0 0 ${W} ${H}`);
+      svg.setAttribute('preserveAspectRatio', 'none');
+      svg.style.height = '260px';
+
+      // 渐变填充
+      const defs = document.createElementNS(ns, 'defs');
+      const grad = document.createElementNS(ns, 'linearGradient');
+      grad.id = 'fill-grad'; grad.setAttribute('x1', '0'); grad.setAttribute('y1', '0');
+      grad.setAttribute('x2', '0'); grad.setAttribute('y2', '1');
+      const s1 = document.createElementNS(ns, 'stop');
+      s1.setAttribute('offset', '0'); s1.setAttribute('stop-color', lineColor); s1.setAttribute('stop-opacity', '0.16');
+      const s2 = document.createElementNS(ns, 'stop');
+      s2.setAttribute('offset', '1'); s2.setAttribute('stop-color', lineColor); s2.setAttribute('stop-opacity', '0');
+      grad.append(s1, s2); defs.appendChild(grad); svg.appendChild(defs);
+
+      // 水平网格线 + 净值标签（4 条）
+      for (let g = 0; g <= 3; g++) {
+        const v = min + ((max - min) * g) / 3;
+        const gy = y(v);
+        const line = document.createElementNS(ns, 'line');
+        line.setAttribute('x1', padL); line.setAttribute('x2', W - padR);
+        line.setAttribute('y1', gy); line.setAttribute('y2', gy);
+        line.setAttribute('stroke', '#e4e4e7'); line.setAttribute('stroke-dasharray', g === 0 || g === 3 ? '0' : '3 3');
+        svg.appendChild(line);
+        const label = document.createElementNS(ns, 'text');
+        label.setAttribute('x', padL - 8); label.setAttribute('y', gy + 4);
+        label.setAttribute('text-anchor', 'end');
+        label.setAttribute('fill', '#a1a1aa'); label.setAttribute('font-size', '11');
+        label.textContent = v.toFixed(3);
+        svg.appendChild(label);
+      }
+
+      // X 轴首末日期
+      for (const [i, anchor] of [[0, 'start'], [pts.length - 1, 'end']]) {
+        const t = document.createElementNS(ns, 'text');
+        t.setAttribute('x', x(i)); t.setAttribute('y', H - 8);
+        t.setAttribute('text-anchor', anchor);
+        t.setAttribute('fill', '#a1a1aa'); t.setAttribute('font-size', '11');
+        t.textContent = pts[i].date;
+        svg.appendChild(t);
+      }
+
+      // 折线 + 填充
+      const path = pts.map((p, i) => `${x(i).toFixed(1)},${y(p.nav).toFixed(1)}`);
+      const area = document.createElementNS(ns, 'path');
+      area.setAttribute('d', `M${padL},${y(min)} L${path.join(' L')} L${W - padR},${y(min)} Z`);
+      area.setAttribute('fill', 'url(#fill-grad)');
+      svg.appendChild(area);
+      const line2 = document.createElementNS(ns, 'path');
+      line2.setAttribute('d', `M${path.join(' L')}`);
+      line2.setAttribute('fill', 'none');
+      line2.setAttribute('stroke', lineColor);
+      line2.setAttribute('stroke-width', '2');
+      line2.setAttribute('stroke-linejoin', 'round');
+      line2.setAttribute('vector-effect', 'non-scaling-stroke');
+      svg.appendChild(line2);
+
+      // hover：竖线 + 圆点 + tooltip
+      const vline = document.createElementNS(ns, 'line');
+      vline.setAttribute('stroke', '#a1a1aa'); vline.setAttribute('stroke-dasharray', '3 3');
+      vline.setAttribute('y1', padT); vline.setAttribute('y2', H - padB);
+      vline.style.display = 'none';
+      svg.appendChild(vline);
+      const dot = document.createElementNS(ns, 'circle');
+      dot.setAttribute('r', '4'); dot.setAttribute('fill', lineColor);
+      dot.setAttribute('stroke', '#fff'); dot.setAttribute('stroke-width', '2');
+      dot.style.display = 'none';
+      svg.appendChild(dot);
+
+      const tip = $('chart-tip');
+      const overlay = document.createElementNS(ns, 'rect');
+      overlay.setAttribute('x', padL); overlay.setAttribute('y', padT);
+      overlay.setAttribute('width', iw); overlay.setAttribute('height', ih);
+      overlay.setAttribute('fill', 'transparent');
+      overlay.addEventListener('mousemove', (e) => {
+        const rect = svg.getBoundingClientRect();
+        const mx = ((e.clientX - rect.left) / rect.width) * W;
+        const i = Math.max(0, Math.min(pts.length - 1, Math.round(((mx - padL) / iw) * (pts.length - 1))));
+        const p = pts[i];
+        vline.setAttribute('x1', x(i)); vline.setAttribute('x2', x(i));
+        vline.style.display = '';
+        dot.setAttribute('cx', x(i)); dot.setAttribute('cy', y(p.nav));
+        dot.style.display = '';
+        tip.replaceChildren();
+        tip.appendChild(el('div', '', p.date));
+        const pc = fmtPct(p.changePct);
+        tip.appendChild(el('div', '', `净值 ${p.nav.toFixed(4)}${pc ? '  ' + pc : ''}`));
+        tip.style.display = 'block';
+        const px = (x(i) / W) * rect.width;
+        const py = (y(p.nav) / H) * rect.height;
+        tip.style.left = Math.max(70, Math.min(rect.width - 70, px)) + 'px';
+        tip.style.top = (py - 10) + 'px';
+      });
+      overlay.addEventListener('mouseleave', () => {
+        vline.style.display = 'none'; dot.style.display = 'none'; tip.style.display = 'none';
+      });
+      svg.appendChild(overlay);
+
+      box.appendChild(svg);
+    }
+
+    /* ================= 启动 ================= */
+    renderRoute();
+    if (!currentCode) loadList();
+  </script>
+</body>
+</html>

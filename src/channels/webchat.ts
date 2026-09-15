@@ -3,6 +3,7 @@
  * - GET  /webchat                 聊天静态页面（public/webchat/index.html），不鉴权
  * - GET  /stocks                  股票浏览静态页面（public/stocks/），不鉴权
  * - GET  /market                  全市场涨跌榜静态页面（public/market/），不鉴权
+ * - GET  /funds                   基金版块静态页面（public/funds/），不鉴权
  * - GET  /shared                  前端共享静态资源（public/shared/），不鉴权
  * - POST /api/chat                { userId, message } -> { reply }
  * - GET  /api/inbox?userId=       拉取离线通知（读后即删）
@@ -14,6 +15,10 @@
  * - GET  /api/stocks/:code/history?days=  历史 K 线（需 data-service 提供 getHistory）
  * - GET  /api/market/movers?limit=  全市场今日涨跌榜（上涨/下跌/平盘 + 家数统计）
  * - GET  /api/search?keyword=     股票搜索（薄封装 provider.search，上限 20 条）
+ * - GET  /api/funds/rank?type=&limit=   开放式基金排行（需 data-service）
+ * - GET  /api/funds/search?keyword=     基金搜索（名称/代码/拼音缩写，需 data-service）
+ * - GET  /api/funds/etf?limit=          场内 ETF 实时行情榜（需 data-service）
+ * - GET  /api/funds/:code?days=         单只基金详情 + 单位净值走势（需 data-service）
  *
  * 鉴权：所有 /api/* 请求需带请求头 `Authorization: Bearer <ACCESS_TOKEN>`，
  * 口令来自 config.accessToken（.env 的 ACCESS_TOKEN，未配置时启动时随机生成并打印）。
@@ -41,6 +46,7 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const WEB_ROOT = path.resolve(__dirname, '../../public/webchat');
 const STOCKS_ROOT = path.resolve(__dirname, '../../public/stocks');
 const MARKET_ROOT = path.resolve(__dirname, '../../public/market');
+const FUNDS_ROOT = path.resolve(__dirname, '../../public/funds');
 const SHARED_ROOT = path.resolve(__dirname, '../../public/shared');
 
 /** 股票代码统一校验：6 位数字 */
@@ -114,6 +120,7 @@ export class WebChatChannel implements Channel {
     app.use('/webchat', express.static(WEB_ROOT));
     app.use('/stocks', express.static(STOCKS_ROOT));
     app.use('/market', express.static(MARKET_ROOT));
+    app.use('/funds', express.static(FUNDS_ROOT));
     app.use('/shared', express.static(SHARED_ROOT));
 
     // 只保护 /api/*，静态资源（/webchat、/stocks、/shared）不鉴权
@@ -289,6 +296,86 @@ export class WebChatChannel implements Channel {
       try {
         const results = (await this.data.search(keyword)).slice(0, 20);
         res.json({ results });
+      } catch (err) {
+        res.status(500).json({ error: errText(err) });
+      }
+    });
+
+    // ---- 基金版块 API（F4-B，2026-09-15；全部依赖 data-service 微服务的可选方法） ----
+
+    /** 与 data-service /funds/rank 白名单一致 */
+    const FUND_TYPES = new Set(['全部', '股票型', '混合型', '债券型', '指数型', 'QDII', 'FOF']);
+    const noFundService = (res: express.Response) =>
+      res.status(503).json({ error: '基金数据需要 data-service（AKShare 微服务），请确认已启动' });
+
+    // 开放式基金排行（天天基金，按近1年收益率降序）
+    app.get('/api/funds/rank', async (req, res) => {
+      if (!this.data.getFundRank) {
+        noFundService(res);
+        return;
+      }
+      const type = String(req.query.type ?? '全部');
+      if (!FUND_TYPES.has(type)) {
+        res.status(400).json({ error: 'type 只能是：全部/股票型/混合型/债券型/指数型/QDII/FOF' });
+        return;
+      }
+      const parsed = Number.parseInt(String(req.query.limit ?? ''), 10);
+      const limit = Number.isNaN(parsed) ? 50 : Math.min(100, Math.max(1, parsed));
+      try {
+        res.json({ items: await this.data.getFundRank(type, limit) });
+      } catch (err) {
+        res.status(500).json({ error: errText(err) });
+      }
+    });
+
+    // 基金搜索（名称/代码/拼音缩写），结果上限 20 条
+    app.get('/api/funds/search', async (req, res) => {
+      if (!this.data.searchFunds) {
+        noFundService(res);
+        return;
+      }
+      const keyword = String(req.query.keyword ?? '').trim();
+      if (!keyword) {
+        res.status(400).json({ error: '需要 keyword 参数' });
+        return;
+      }
+      try {
+        res.json({ results: await this.data.searchFunds(keyword, 20) });
+      } catch (err) {
+        res.status(500).json({ error: errText(err) });
+      }
+    });
+
+    // 场内 ETF 实时行情榜（按涨跌幅降序）
+    app.get('/api/funds/etf', async (req, res) => {
+      if (!this.data.getEtfRank) {
+        noFundService(res);
+        return;
+      }
+      const parsed = Number.parseInt(String(req.query.limit ?? ''), 10);
+      const limit = Number.isNaN(parsed) ? 50 : Math.min(200, Math.max(1, parsed));
+      try {
+        res.json({ items: await this.data.getEtfRank(limit) });
+      } catch (err) {
+        res.status(500).json({ error: errText(err) });
+      }
+    });
+
+    // 单只基金详情 + 单位净值走势（声明在 rank/search/etf 之后，Express 按注册顺序匹配）
+    app.get('/api/funds/:code', async (req, res) => {
+      if (!this.data.getFundInfo) {
+        noFundService(res);
+        return;
+      }
+      const code = req.params.code;
+      if (!CODE_RE.test(code)) {
+        res.status(400).json({ error: 'code 必须是 6 位数字' });
+        return;
+      }
+      const parsed = Number.parseInt(String(req.query.days ?? ''), 10);
+      const days = Number.isNaN(parsed) ? 260 : Math.min(1000, Math.max(1, parsed));
+      try {
+        res.json(await this.data.getFundInfo(code, days));
       } catch (err) {
         res.status(500).json({ error: errText(err) });
       }

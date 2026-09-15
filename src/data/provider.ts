@@ -87,6 +87,64 @@ export interface MarketMovers {
   delayed?: boolean; // true = 数据来自延时宿主（push2delay，约延时 15 分钟）
 }
 
+// ---- 基金版块（F4-B，2026-09-15 新增；全部仅微服务模式提供） ----
+
+/** 开放式基金排行条目（天天基金数据源，按近1年收益率降序；新基金部分区间收益缺失为 null） */
+export interface FundRankItem {
+  code: string;
+  name: string;
+  date: string;              // 净值日期 YYYY-MM-DD
+  unitNav: number | null;    // 单位净值
+  accumNav: number | null;   // 累计净值
+  dayPct: number | null;     // 日增长率 %
+  week1: number | null;      // 近1周收益 %
+  month1: number | null;     // 近1月收益 %
+  month3: number | null;
+  month6: number | null;
+  year1: number | null;      // 近1年收益 %
+  thisYear: number | null;   // 今年来收益 %
+  sinceInception: number | null; // 成立来收益 %
+  fee?: string;              // 手续费（如 "0.15%"）
+}
+
+/** 基金搜索结果条目 */
+export interface FundSearchItem {
+  code: string;
+  name: string;
+  type: string; // 基金类型，如 股票型 / 混合型-灵活
+}
+
+/** 基金单位净值数据点（日期升序） */
+export interface FundNavPoint {
+  date: string;           // YYYY-MM-DD
+  nav: number | null;     // 单位净值
+  changePct: number | null; // 日增长率 %
+}
+
+/** 单只开放式基金详情：名称/类型 + 单位净值走势 */
+export interface FundInfo {
+  code: string;
+  name: string;
+  type: string;
+  latest: FundNavPoint | null;
+  history: FundNavPoint[]; // 日期升序
+}
+
+/** 场内 ETF 实时行情条目（东财全量快照，按涨跌幅降序） */
+export interface EtfQuote {
+  code: string;
+  name: string;
+  price: number | null;        // 最新价
+  changePct: number | null;    // 涨跌幅 %
+  change: number | null;       // 涨跌额
+  volume: number | null;       // 成交量（手）
+  amount: number | null;       // 成交额（元）
+  turnover: number | null;     // 换手率 %
+  iopv: number | null;         // IOPV 实时估值
+  discountRate: number | null; // 基金折价率 %
+  time?: string;               // 更新时间
+}
+
 export interface DataProvider {
   readonly name: string;
   getQuote(code: string): Promise<Quote>;
@@ -103,4 +161,12 @@ export interface DataProvider {
   getMovers?(limit?: number): Promise<MarketMovers>;
   /** 按关键词搜索股票（名称/代码），返回候选代码列表 */
   search?(keyword: string): Promise<{ code: string; name: string }[]>;
+  /** 开放式基金排行（天天基金）；东财直连无此能力，仅微服务模式提供 */
+  getFundRank?(type?: string, limit?: number): Promise<FundRankItem[]>;
+  /** 单只开放式基金详情（名称/类型 + 单位净值走势）；仅微服务模式提供 */
+  getFundInfo?(code: string, days?: number): Promise<FundInfo>;
+  /** 基金搜索（名称/代码/拼音缩写）；仅微服务模式提供 */
+  searchFunds?(keyword: string, limit?: number): Promise<FundSearchItem[]>;
+  /** 场内 ETF 实时行情榜（按涨跌幅降序）；仅微服务模式提供 */
+  getEtfRank?(limit?: number): Promise<EtfQuote[]>;
 }
