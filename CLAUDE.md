@@ -3,12 +3,13 @@
 > 本文档面向下一个接手开发的 agent / 工程师。读完本文件即可了解项目的
 > 目的、现状、约定和下一步该做什么。请保持本文件与代码同步更新。
 >
-> **docs/ 下的四份配套文档**（按建议阅读顺序）：
+> **docs/ 下的配套文档**（按建议阅读顺序）：
 > 1. [docs/STATUS.md](docs/STATUS.md) —— 功能与问题清单：哪些已能用、哪些待做、当前痛点
 > 2. [docs/FEATURES.md](docs/FEATURES.md) —— 功能实现手册：每个功能怎么实现的、代码在哪
 > 3. [docs/PITFALLS.md](docs/PITFALLS.md) —— 技术坑病例库：动手前必扫，踩坑必回填
 > 4. [docs/AUDIT.md](docs/AUDIT.md) —— 代码审计记录：审查发现的问题与修复备注（含审查进度表）
 > 5. [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) / [docs/DATA_SOURCES.md](docs/DATA_SOURCES.md) —— 架构原理与数据源细节
+> 6. [docs/WORKFLOW.md](docs/WORKFLOW.md) —— **提交规范与版本管理：改动必须走分支 + PR，禁止直接推 main**
 
 ## 项目目的与定位
 
@@ -67,6 +68,10 @@ docs/                 文档库：STATUS（功能与问题）/ FEATURES（实现
 ```
 
 ## 开发工作流
+
+> ⚠️ **Git 流程（必须遵守）**：任何改动先 `git checkout -b feat/xxx` 切分支，
+> 推送到远程后开 PR 合并到 main，**不要直接提交/推送到 main**。
+> 分支命名、提交信息格式、PR 规范、回退方法见 [docs/WORKFLOW.md](docs/WORKFLOW.md)。
 
 ```bash
 # 首次设置
