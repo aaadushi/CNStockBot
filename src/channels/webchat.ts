@@ -14,6 +14,7 @@
  * - GET  /api/stocks/:code        个股详情聚合（行情/新闻/公告/财报/公司资料/资金流，各板块独立降级）
  * - GET  /api/stocks/:code/news?sort=hot|time  单块新闻（浏览页排序切换用）
  * - GET  /api/stocks/:code/history?days=  历史 K 线（需 data-service 提供 getHistory）
+ * - GET  /api/stocks/:code/intraday       今日分时 1 分钟线（需 data-service 提供 getIntraday，F3-5）
  * - GET  /api/market/movers?limit=  全市场今日涨跌榜（上涨/下跌/平盘 + 家数统计）
  * - GET  /api/market/news?limit=    全市场财经快讯（需 data-service 提供 getMarketNews）
  * - GET  /api/search?keyword=     股票搜索（薄封装 provider.search，上限 20 条）
@@ -276,6 +277,24 @@ export class WebChatChannel implements Channel {
       try {
         const bars: HistoryBar[] = await this.data.getHistory(code, days);
         res.json({ bars });
+      } catch (err) {
+        res.status(500).json({ error: errText(err) });
+      }
+    });
+
+    // 分时数据（今日 1 分钟线）：依赖可选方法 getIntraday（仅 data-service 模式提供）
+    app.get('/api/stocks/:code/intraday', async (req, res) => {
+      const code = req.params.code;
+      if (!CODE_RE.test(code)) {
+        res.status(400).json({ error: 'code 必须是 6 位数字' });
+        return;
+      }
+      if (!this.data.getIntraday) {
+        res.status(503).json({ error: '分时数据需要 data-service（AKShare 微服务），请确认已启动' });
+        return;
+      }
+      try {
+        res.json({ intraday: await this.data.getIntraday(code) });
       } catch (err) {
         res.status(500).json({ error: errText(err) });
       }

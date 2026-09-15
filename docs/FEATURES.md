@@ -519,3 +519,33 @@
 - **注意事项**：主源走 push2his，与 /history 东财源同宿主——限流状态联动（本机 2026-09-15
   仍在封禁，五档列名为 AKShare 源码口径未实测，漂移时降级为 null）；腾讯 `ff_` 资金流接口
   已下线（`v_pv_none_match`，勿再尝试，见 PITFALLS）。
+
+## 28. 分时数据（F3-5，2026-09-16 新增）
+
+- **实现方式**：`DataProvider.getIntraday(code)`（可选方法，返回 `Intraday`：
+  `{code, date, source, points: IntradayPoint[]}`，points 时间升序，含 time(HH:MM)/
+  price/volume(手)，有成交额列时附 amount 与 avgPrice）→ 微服务 `/intraday/{code}`
+  （按代码缓存 60s）。数据源降级链：AKShare `stock_zh_a_hist_min_em(symbol, period="1",
+  adjust="")`（东财 push2his 当日 1 分钟 K）→ **新浪 `stock_zh_a_minute`**（symbol 带
+  sh/sz/bj 前缀，**bj 北交所实测覆盖**——与日 K/资金流的新浪降级源不同）：返回近约 8 个
+  交易日分钟数据，端点只保留最近一个交易日；**新浪成交量单位是股**（与日 K 一致），
+  端点 ÷100 归一到手。分时均价 avgPrice = 累计成交额 ÷ 累计成交量（股），即 VWAP，
+  两源都有成交额列故两源都输出；成交额列名漂移时整条不输出 amount/avgPrice（不静默发错值）。
+  按 date 过滤用 `pd.to_datetime(errors="coerce")`，防列类型漂移。
+- **落点**：详情页走势图卡加"分时 | 日K"切换 pill（默认分时，日K 模式下才显示区间 pill）；
+  分时图为价格折线 + 渐变填充 + 昨收参考虚线 + VWAP 均价虚线（琥珀色）+ 成交量副图
+  （红绿按相对前一分钟涨跌）+ hover tooltip（时间/价格+涨跌幅/均价/成交量），
+  图下注明数据日期与数据源（新浪降级源标注）。昨收取自详情聚合 quote 块，quote 失败时
+  退化为首价基准不阻塞图表。主服务新增 `GET /api/stocks/:code/intraday`（口令鉴权后）。
+- **代码位置**：端点 [data-service/main.py](../data-service/main.py)（"分时数据（F3-5）"节，
+  `_intraday_from_df`）、接口 [src/data/provider.ts](../src/data/provider.ts)
+  （`IntradayPoint`/`Intraday`）、客户端 [src/data/pythonService.ts](../src/data/pythonService.ts)、
+  API [src/channels/webchat.ts](../src/channels/webchat.ts)、
+  页面 [public/stocks/index.html](../public/stocks/index.html)（`loadIntraday`/`drawIntraday`/
+  `chartMode`/mode-pills）、测试 [tests/pythonService-intraday.test.ts](../tests/pythonService-intraday.test.ts)
+- **改动入口**：调缓存 → `_INTRADAY_TTL`；加分时字段 → 两源 cols 映射 + `_intraday_from_df`
+  + `IntradayPoint` + 前端 tooltip；F5/F6 的盘中信号可复用本端点
+- **注意事项**：主源走 push2his，与 /history、/fund-flow 东财源同宿主——限流状态联动
+  （本机 2026-09-16 仍在封禁，东财源列名为 AKShare 文档口径未实测，漂移时
+  time/price/volume 缺失会跳过该行、amount 缺列则 avgPrice 不输出）；新浪源首个分钟 bar
+  （09:31）的成交额含集合竞价，avgPrice 首点可能偏离首价，属上游口径不是 bug。

@@ -68,6 +68,7 @@
     /* ---- 走势图 ---- */
     .chart-head { display: flex; align-items: center; justify-content: space-between; margin-bottom: 16px; flex-wrap: wrap; gap: 8px; }
     .chart-head h3 { font-size: 15px; font-weight: 600; }
+    .chart-controls { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
     .range-pills { display: flex; gap: 4px; background: var(--bg); border-radius: 999px; padding: 3px; }
     .range-pills button {
       border: none; background: none; font-family: var(--font); font-size: 12px; color: var(--text-2);
@@ -167,12 +168,18 @@
 
       <div class="card">
         <div class="chart-head">
-          <h3>历史走势</h3>
-          <div class="range-pills" id="range-pills">
-            <button data-days="30">近1月</button>
-            <button data-days="90">近3月</button>
-            <button data-days="120" class="active">近6月</button>
-            <button data-days="250">近1年</button>
+          <h3 id="chart-title">分时走势</h3>
+          <div class="chart-controls">
+            <div class="range-pills" id="mode-pills">
+              <button data-mode="intraday" class="active">分时</button>
+              <button data-mode="daily">日K</button>
+            </div>
+            <div class="range-pills" id="range-pills" hidden>
+              <button data-days="30">近1月</button>
+              <button data-days="90">近3月</button>
+              <button data-days="120" class="active">近6月</button>
+              <button data-days="250">近1年</button>
+            </div>
           </div>
         </div>
         <div class="chart-box" id="chart-box">
@@ -822,7 +829,20 @@
       box.appendChild(table);
     }
 
-    /* ================= 历史走势图（手写 SVG，无外链依赖） ================= */
+    /* ================= 走势图（分时 / 日K，手写 SVG，无外链依赖） ================= */
+    // chartMode：intraday=今日分时（F3-5，需 data-service）；daily=历史日 K（区间 pill 切换）
+    let chartMode = 'intraday';
+
+    $('mode-pills').addEventListener('click', (e) => {
+      const btn = e.target.closest('button[data-mode]');
+      if (!btn || btn.dataset.mode === chartMode) return;
+      chartMode = btn.dataset.mode;
+      $('mode-pills').querySelectorAll('button').forEach((b) => b.classList.toggle('active', b === btn));
+      $('range-pills').hidden = chartMode !== 'daily';
+      $('chart-title').textContent = chartMode === 'daily' ? '历史走势' : '分时走势';
+      loadHistory();
+    });
+
     $('range-pills').addEventListener('click', (e) => {
       const btn = e.target.closest('button[data-days]');
       if (!btn) return;
@@ -831,12 +851,19 @@
       loadHistory();
     });
 
-    async function loadHistory() {
+    function resetChartBox() {
       const box = $('chart-box');
-      box.querySelectorAll('svg, .block-error, .skeleton').forEach((n) => n.remove());
+      box.querySelectorAll('svg, .block-error, .skeleton, .flow-note').forEach((n) => n.remove());
       $('chart-tip').style.display = 'none';
       const sk = el('div', 'skeleton'); sk.style.height = '320px';
       box.appendChild(sk);
+      return sk;
+    }
+
+    async function loadHistory() {
+      if (chartMode === 'intraday') return loadIntraday();
+      const sk = resetChartBox();
+      const box = $('chart-box');
       try {
         const res = await apiFetch(`/api/stocks/${currentCode}/history?days=${currentDays}`);
         const data = await res.json();
@@ -852,6 +879,203 @@
         sk.remove();
         box.appendChild(el('div', 'block-error', '走势数据加载失败：' + e.message));
       }
+    }
+
+    /* ---- 分时（今日 1 分钟线，F3-5） ---- */
+    async function loadIntraday() {
+      const sk = resetChartBox();
+      const box = $('chart-box');
+      try {
+        const res = await apiFetch(`/api/stocks/${currentCode}/intraday`);
+        const data = await res.json();
+        sk.remove();
+        if (currentCode !== new URLSearchParams(location.search).get('code')) return;
+        const intraday = data.intraday;
+        if (!intraday || !intraday.points || intraday.points.length < 2) {
+          box.appendChild(el('div', 'block-error', '分时数据暂不可用：' + (data.error || '最近交易日无分时数据')));
+          return;
+        }
+        // 昨收参考线来自行情聚合（quote 块失败时退化为首日开盘价基准，不阻塞图表）
+        const q = detailData && detailData.quote;
+        const prevClose = q && typeof q.prevClose === 'number' && isFinite(q.prevClose) ? q.prevClose : null;
+        drawIntraday(box, intraday, prevClose);
+      } catch (e) {
+        sk.remove();
+        box.appendChild(el('div', 'block-error', '分时数据加载失败：' + e.message));
+      }
+    }
+
+    function drawIntraday(box, intraday, prevClose) {
+      const pts = intraday.points;
+      const W = 680, H = 320, padL = 52, padR = 12, padT = 14, padB = 26;
+      const iw = W - padL - padR;
+      const priceB = 226;                // 价格区底
+      const ih = priceB - padT;
+      const volT = 238, volB = H - padB; // 成交量副图区域
+      const prices = pts.map((p) => p.price);
+      const avgs = pts.map((p) => p.avgPrice).filter((v) => typeof v === 'number' && isFinite(v));
+      // 均价线与昨收纳入值域，避免被裁剪
+      let min = Math.min(...prices, ...avgs), max = Math.max(...prices, ...avgs);
+      if (typeof prevClose === 'number') { min = Math.min(min, prevClose); max = Math.max(max, prevClose); }
+      if (min === max) { min *= 0.99; max *= 1.01; }
+      const pad = (max - min) * 0.05; min -= pad; max += pad;
+      const x = (i) => padL + (i / (pts.length - 1)) * iw;
+      const y = (v) => padT + (1 - (v - min) / (max - min)) * ih;
+      const vols = pts.map((p) => (typeof p.volume === 'number' && isFinite(p.volume) ? p.volume : 0));
+      const vmax = Math.max(...vols);
+      // 涨跌基准：昨收优先，缺失时退化为当序列首价
+      const ref = typeof prevClose === 'number' ? prevClose : prices[0];
+      const lineColor = prices[prices.length - 1] >= ref ? '#dc2626' : '#16a34a';
+
+      const ns = 'http://www.w3.org/2000/svg';
+      const svg = document.createElementNS(ns, 'svg');
+      svg.setAttribute('viewBox', `0 0 ${W} ${H}`);
+      svg.setAttribute('preserveAspectRatio', 'none');
+      svg.style.height = '320px';
+
+      // 渐变填充
+      const defs = document.createElementNS(ns, 'defs');
+      const grad = document.createElementNS(ns, 'linearGradient');
+      grad.id = 'fill-grad-intra'; grad.setAttribute('x1', '0'); grad.setAttribute('y1', '0');
+      grad.setAttribute('x2', '0'); grad.setAttribute('y2', '1');
+      const s1 = document.createElementNS(ns, 'stop');
+      s1.setAttribute('offset', '0'); s1.setAttribute('stop-color', lineColor); s1.setAttribute('stop-opacity', '0.16');
+      const s2 = document.createElementNS(ns, 'stop');
+      s2.setAttribute('offset', '1'); s2.setAttribute('stop-color', lineColor); s2.setAttribute('stop-opacity', '0');
+      grad.append(s1, s2); defs.appendChild(grad); svg.appendChild(defs);
+
+      // 水平网格线 + 价格标签（4 条）
+      for (let g = 0; g <= 3; g++) {
+        const v = min + ((max - min) * g) / 3;
+        const gy = y(v);
+        const line = document.createElementNS(ns, 'line');
+        line.setAttribute('x1', padL); line.setAttribute('x2', W - padR);
+        line.setAttribute('y1', gy); line.setAttribute('y2', gy);
+        line.setAttribute('stroke', '#e4e4e7'); line.setAttribute('stroke-dasharray', g === 0 || g === 3 ? '0' : '3 3');
+        svg.appendChild(line);
+        const label = document.createElementNS(ns, 'text');
+        label.setAttribute('x', padL - 8); label.setAttribute('y', gy + 4);
+        label.setAttribute('text-anchor', 'end');
+        label.setAttribute('fill', '#a1a1aa'); label.setAttribute('font-size', '11');
+        label.textContent = v.toFixed(2);
+        svg.appendChild(label);
+      }
+
+      // X 轴时间标签（首/中/末）
+      for (const [i, anchor] of [[0, 'start'], [Math.floor((pts.length - 1) / 2), 'middle'], [pts.length - 1, 'end']]) {
+        const t = document.createElementNS(ns, 'text');
+        t.setAttribute('x', x(i)); t.setAttribute('y', H - 8);
+        t.setAttribute('text-anchor', anchor);
+        t.setAttribute('fill', '#a1a1aa'); t.setAttribute('font-size', '11');
+        t.textContent = pts[i].time;
+        svg.appendChild(t);
+      }
+
+      // 昨收参考线（虚线）
+      if (typeof prevClose === 'number') {
+        const ry = y(prevClose);
+        const rl = document.createElementNS(ns, 'line');
+        rl.setAttribute('x1', padL); rl.setAttribute('x2', W - padR);
+        rl.setAttribute('y1', ry); rl.setAttribute('y2', ry);
+        rl.setAttribute('stroke', '#a1a1aa'); rl.setAttribute('stroke-dasharray', '4 4');
+        svg.appendChild(rl);
+      }
+
+      // 价格折线 + 填充
+      const linePts = pts.map((p, i) => `${x(i).toFixed(1)},${y(p.price).toFixed(1)}`);
+      const area = document.createElementNS(ns, 'path');
+      area.setAttribute('d', `M${padL},${y(min)} L${linePts.join(' L')} L${W - padR},${y(min)} Z`);
+      area.setAttribute('fill', 'url(#fill-grad-intra)');
+      svg.appendChild(area);
+      const path = document.createElementNS(ns, 'path');
+      path.setAttribute('d', `M${linePts.join(' L')}`);
+      path.setAttribute('fill', 'none');
+      path.setAttribute('stroke', lineColor);
+      path.setAttribute('stroke-width', '2');
+      path.setAttribute('stroke-linejoin', 'round');
+      path.setAttribute('vector-effect', 'non-scaling-stroke');
+      svg.appendChild(path);
+
+      // 分时均价线（VWAP，琥珀色虚线；数据源无成交额列时不画）
+      if (avgs.length > 0) {
+        const avgPts = [];
+        for (let i = 0; i < pts.length; i++) {
+          if (typeof pts[i].avgPrice === 'number') avgPts.push(`${x(i).toFixed(1)},${y(pts[i].avgPrice).toFixed(1)}`);
+        }
+        const avgPath = document.createElementNS(ns, 'path');
+        avgPath.setAttribute('d', `M${avgPts.join(' L')}`);
+        avgPath.setAttribute('fill', 'none');
+        avgPath.setAttribute('stroke', '#d97706');
+        avgPath.setAttribute('stroke-width', '1.5');
+        avgPath.setAttribute('stroke-dasharray', '5 3');
+        avgPath.setAttribute('vector-effect', 'non-scaling-stroke');
+        svg.appendChild(avgPath);
+      }
+
+      // 成交量副图：柱高按最大成交量归一，红/绿按该分钟相对前一分钟涨跌
+      if (vmax > 0) {
+        const bw = Math.max(1, iw / pts.length - 1);
+        for (let i = 0; i < pts.length; i++) {
+          if (vols[i] <= 0) continue;
+          const bh = (vols[i] / vmax) * (volB - volT);
+          const rect = document.createElementNS(ns, 'rect');
+          rect.setAttribute('x', x(i) - bw / 2);
+          rect.setAttribute('y', volB - bh);
+          rect.setAttribute('width', bw);
+          rect.setAttribute('height', bh);
+          const base = i > 0 ? pts[i - 1].price : ref;
+          rect.setAttribute('fill', pts[i].price >= base ? '#dc2626' : '#16a34a');
+          rect.setAttribute('fill-opacity', '0.55');
+          svg.appendChild(rect);
+        }
+      }
+
+      // hover：竖线 + 圆点 + tooltip（竖线贯穿价格区与成交量副图）
+      const vline = document.createElementNS(ns, 'line');
+      vline.setAttribute('stroke', '#a1a1aa'); vline.setAttribute('stroke-dasharray', '3 3');
+      vline.setAttribute('y1', padT); vline.setAttribute('y2', volB);
+      vline.style.display = 'none';
+      svg.appendChild(vline);
+      const dot = document.createElementNS(ns, 'circle');
+      dot.setAttribute('r', '4'); dot.setAttribute('fill', lineColor);
+      dot.setAttribute('stroke', '#fff'); dot.setAttribute('stroke-width', '2');
+      dot.style.display = 'none';
+      svg.appendChild(dot);
+
+      const tip = $('chart-tip');
+      const overlay = document.createElementNS(ns, 'rect');
+      overlay.setAttribute('x', padL); overlay.setAttribute('y', padT);
+      overlay.setAttribute('width', iw); overlay.setAttribute('height', volB - padT);
+      overlay.setAttribute('fill', 'transparent');
+      overlay.addEventListener('mousemove', (e) => {
+        const rect = svg.getBoundingClientRect();
+        const mx = ((e.clientX - rect.left) / rect.width) * W;
+        const i = Math.max(0, Math.min(pts.length - 1, Math.round(((mx - padL) / iw) * (pts.length - 1))));
+        const p = pts[i];
+        vline.setAttribute('x1', x(i)); vline.setAttribute('x2', x(i));
+        vline.style.display = '';
+        dot.setAttribute('cx', x(i)); dot.setAttribute('cy', y(p.price));
+        dot.style.display = '';
+        tip.replaceChildren();
+        tip.appendChild(el('div', '', p.time));
+        const pct = ref > 0 ? ((p.price - ref) / ref) * 100 : null;
+        tip.appendChild(el('div', '', `价格 ${fmtPrice(p.price)}${pct != null ? '  ' + fmtPct(pct) : ''}`));
+        if (typeof p.avgPrice === 'number') tip.appendChild(el('div', '', `均价 ${fmtPrice(p.avgPrice)}`));
+        tip.appendChild(el('div', '', `成交量 ${fmtVol(p.volume)}`));
+        tip.style.display = 'block';
+        const px = (x(i) / W) * rect.width;
+        const py = (y(p.price) / H) * rect.height;
+        tip.style.left = Math.max(70, Math.min(rect.width - 70, px)) + 'px';
+        tip.style.top = (py - 10) + 'px';
+      });
+      overlay.addEventListener('mouseleave', () => {
+        vline.style.display = 'none'; dot.style.display = 'none'; tip.style.display = 'none';
+      });
+      svg.appendChild(overlay);
+
+      box.appendChild(svg);
+      const srcLabel = intraday.source === 'sina' ? '新浪财经（降级源）' : '东方财富';
+      box.appendChild(el('div', 'flow-note', `数据日期 ${intraday.date}（最近交易日）· 数据源：${srcLabel}`));
     }
 
     function drawChart(box, bars) {

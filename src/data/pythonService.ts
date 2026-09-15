@@ -4,7 +4,7 @@
  */
 import { config } from '../config.js';
 import { EastmoneyProvider } from './eastmoney.js';
-import type { Announcement, CompanyProfile, DataProvider, EtfQuote, FinancialReport, FundFlow, FundInfo, FundRankItem, FundSearchItem, HistoryBar, MarketNewsItem, NewsItem, NewsSort, Quote } from './provider.js';
+import type { Announcement, CompanyProfile, DataProvider, EtfQuote, FinancialReport, FundFlow, FundInfo, FundRankItem, FundSearchItem, HistoryBar, Intraday, MarketNewsItem, NewsItem, NewsSort, Quote } from './provider.js';
 
 /** 微服务显式超时：AKShare 爬网页较慢，放宽到 60s；防上游挂起拖死调度链（审计 A-301/A-506） */
 const FETCH_TIMEOUT_MS = 60_000;
@@ -61,6 +61,10 @@ export class PythonServiceProvider implements DataProvider {
 
   async getFundFlow(code: string, days = 30): Promise<FundFlow> {
     return this.get<FundFlow>(`/fund-flow/${encodeURIComponent(code)}?days=${days}`);
+  }
+
+  async getIntraday(code: string): Promise<Intraday> {
+    return this.get<Intraday>(`/intraday/${encodeURIComponent(code)}`);
   }
 
   async getMarketNews(limit = 20): Promise<MarketNewsItem[]> {

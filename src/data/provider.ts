@@ -136,6 +136,25 @@ export interface FundFlow {
   items: FundFlowDay[]; // 日期升序
 }
 
+// ---- 分时数据（F3-5，2026-09-16 新增；仅微服务模式提供） ----
+
+/** 分时数据点（1 分钟线）；amount/avgPrice 仅数据源提供成交额列时存在 */
+export interface IntradayPoint {
+  time: string;      // HH:MM（北京时间）
+  price: number;     // 该分钟收盘价（元）
+  volume: number;    // 成交量（手，新浪源已 ÷100 归一）
+  amount?: number;   // 成交额（元）
+  avgPrice?: number; // 分时均价（VWAP = 累计成交额/累计成交量，元）
+}
+
+/** 个股分时（最近一个交易日）；source 标注口径：eastmoney=东财分钟 K，sina=新浪降级源 */
+export interface Intraday {
+  code: string;
+  date: string;      // 数据所属交易日 YYYY-MM-DD
+  source: 'eastmoney' | 'sina';
+  points: IntradayPoint[]; // 时间升序
+}
+
 // ---- 基金版块（F4-B，2026-09-15 新增；全部仅微服务模式提供） ----
 
 /** 开放式基金排行条目（天天基金数据源，按近1年收益率降序；新基金部分区间收益缺失为 null） */
@@ -210,6 +229,8 @@ export interface DataProvider {
   getProfile?(code: string): Promise<CompanyProfile>;
   /** 个股资金流向（主力/超大单净流入，F3-4）；东财直连无此能力，仅微服务模式提供 */
   getFundFlow?(code: string, days?: number): Promise<FundFlow>;
+  /** 个股分时（1 分钟线，最近一个交易日，F3-5）；东财直连无此能力，仅微服务模式提供 */
+  getIntraday?(code: string): Promise<Intraday>;
   /** 全市场今日涨跌榜（上涨/下跌/平盘 + 家数统计）；仅东财系接口提供 */
   getMovers?(limit?: number): Promise<MarketMovers>;
   /** 全市场财经快讯（区别于个股新闻）；东财直连无此能力，仅微服务模式提供 */

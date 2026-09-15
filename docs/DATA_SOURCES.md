@@ -82,6 +82,8 @@ GET https://qt.gtimg.cn/q=sh600519
 | `ak.stock_zh_a_hist(symbol, period, start_date, end_date, adjust)` | 个股历史日 K，东财 push2his（已接入 /history 主源；列：日期/开盘/收盘/最高/最低/成交量（**手**）/成交额（元）/涨跌幅/换手率，成交额与换手率 F3-3 起透出） |
 | `ak.stock_zh_a_daily(symbol, start_date, end_date, adjust)` | 个股历史日 K，新浪（已接入 /history 降级源；**成交量单位是股**，端点 ÷100 归一到手；无成交额/换手率/涨跌幅列，涨跌幅由收盘价比算，不覆盖北交所） |
 | `ak.stock_individual_fund_flow(stock, market)` | 个股资金流向，东财 push2his fflow/daykline（已接入 /fund-flow 主源；market=sh/sz/bj 按代码前缀映射——920 段属北交所须先于 "9" 判断；列：日期/收盘价/涨跌幅/主力·超大单·大单·中单·小单净流入-净额与净占比，百分数字段已是 % 单位） |
+| `ak.stock_zh_a_hist_min_em(symbol, period, adjust)` | 个股分钟 K，东财 push2his（已接入 /intraday 主源；period="1" 当日 1 分钟线仅支持 adjust=""；列：时间/开盘/收盘/最高/最低/涨跌幅/涨跌额/成交量（手）/成交额（元）/振幅/换手率——列名为 AKShare 文档口径，主源限流中未实测） |
+| `ak.stock_zh_a_minute(symbol, period, adjust)` | 个股分钟 K，新浪（已接入 /intraday 降级源；symbol 带市场前缀 sh/sz/bj——**bj 北交所实测覆盖**，与日 K 降级源不同；返回近约 8 个交易日约 1970 行，端点只取最近一日；**成交量单位是股**，端点 ÷100 归一到手；列：day/open/high/low/close/volume/amount） |
 
 **新浪 MoneyFlow（直连 requests，非 AKShare，已接入 /fund-flow 降级源）**
 ```
