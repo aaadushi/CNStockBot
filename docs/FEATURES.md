@@ -398,7 +398,33 @@
   停牌股混排零区是实测行为（PITFALLS 东财条目），改平盘定位逻辑前先读；
   测试用合成全市场 mock（`tests/movers.test.ts` 的 `clistHandler`），改请求模式要同步改。
 
-## 24. 基金版块（F4-B，2026-09-15 新增）
+## 24. 财经快讯版块（/news + get_market_news，F4-A，2026-09-15 新增）
+
+- **实现方式**：全市场财经快讯（宏观/政策/外围市场/行业动态的滚动资讯流），区别于
+  个股新闻（第 5 节）。数据链路：`GET /api/market/news?limit=`（口令鉴权后，上限 50）
+  → `DataProvider.getMarketNews()`（可选方法，返回 `MarketNewsItem[]`：
+  title/summary/url/publishTime/source）→ 微服务 `GET /market-news?limit=` →
+  **双源降级**：主源东财 `ak.stock_info_global_em()`（约 200 条，列：标题/摘要/发布时间/链接，
+  含 URL），失败（含超时）自动降级财联社 `ak.stock_info_global_cls()`（约 20 条，无 URL，
+  短快讯"标题"列常为空，取"内容"前 60 字充任标题）；发布时间倒序，进程内缓存 90s。
+  聊天技能 `get_market_news`：无股票代码参数，limit 默认 10/上限 30（`normalizeLimit`），
+  与 `get_stock_news` 的触发分工写在 SKILL.md，SYSTEM_PROMPT 有 routing 引导（规则 4）。
+  网页 `/news` 单文件 SPA：时间倒序列表（标题 + 摘要 + 时间 + 来源，有 URL 可点击
+  新窗口打开），60s 自动刷新 + 手动刷新按钮 + 数据更新时间；复用 theme.css 与口令
+  鉴权浮层；/stocks 与 /market 页头加"📰 快讯"导航。
+- **代码位置**：端点 [data-service/main.py](../data-service/main.py) 的 `/market-news` 与
+  `_market_news_from_em/_from_cls`、技能 [src/skills/bundled/marketnews/](../src/skills/bundled/marketnews/)、
+  页面 [public/news/index.html](../public/news/index.html)、
+  API [src/channels/webchat.ts](../src/channels/webchat.ts)（`/api/market/news`）、
+  接口 [src/data/provider.ts](../src/data/provider.ts)（`MarketNewsItem`）
+- **改动入口**：换快讯源/加源 → main.py 端点降级链；改缓存时长 → `_MARKET_NEWS_TTL`；
+  改网页刷新间隔 → public/news/index.html 的 `AUTO_REFRESH_MS`
+- **注意事项**：财联社降级源无 URL（`url` 为空串），前端据此渲染为纯文本块而非链接；
+  东财直连模式（无微服务）下 `getMarketNews` 不存在，API 返回 503、技能返回降级提示；
+  微服务停掉时 CompositeProvider 包装的错误含启动提示；测试见 `tests/marketNews.test.ts`
+  （fetch 全 mock）。
+
+## 25. 基金版块（F4-B，2026-09-15 新增）
 
 - **实现方式**：对标支付宝财富页的基金内容，数据源为天天基金（东财系，与支付宝同源），
   全部经 data-service（AKShare）暴露，列结构均经 akshare 1.18.94 实测。四个端点：

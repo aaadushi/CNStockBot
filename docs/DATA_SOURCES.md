@@ -69,6 +69,8 @@ GET https://qt.gtimg.cn/q=sh600519
 | `ak.fund_open_fund_info_em(symbol, indicator)` | 单只基金单位净值走势（已接入 /funds/{code}；indicator="单位净值走势"，返回全量历史、日期升序，列：净值日期/单位净值/日增长率，按代码缓存 6h） |
 | `ak.fund_name_em()` | 全量基金代码表约 2.8 万行（已接入 /funds/search，缓存 24h；含基金简称/拼音缩写/类型列） |
 | `ak.fund_etf_spot_em()` | 场内 ETF 全量实时快照，东财（已接入 /funds/etf；全量翻页 30s+，run_ak 超时放宽 120s + 缓存 60s；含 IOPV/溢价率列） |
+| `ak.stock_info_global_em()` | 东财全球财经快讯，约 200 条（已接入 /market-news 主源；列：标题/摘要/发布时间/链接，含 URL） |
+| `ak.stock_info_global_cls()` | 财联社电报，约 20 条（已接入 /market-news 降级源；列：标题/内容/发布日期/发布时间，无 URL；短快讯"标题"常为空，端点取"内容"前 60 字充任） |
 
 AKShare 文档：https://akshare.akfamily.xyz/
 

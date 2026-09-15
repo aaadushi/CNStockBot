@@ -8,7 +8,7 @@ import { config } from '../config.js';
 import { EastmoneyProvider } from './eastmoney.js';
 import { TencentProvider } from './tencent.js';
 import { PythonServiceProvider } from './pythonService.js';
-import type { Announcement, DataProvider, EtfQuote, FinancialReport, FundInfo, FundRankItem, FundSearchItem, HistoryBar, MarketMovers, NewsItem, NewsSort, Quote } from './provider.js';
+import type { Announcement, DataProvider, EtfQuote, FinancialReport, FundInfo, FundRankItem, FundSearchItem, HistoryBar, MarketMovers, MarketNewsItem, NewsItem, NewsSort, Quote } from './provider.js';
 
 class CompositeProvider implements DataProvider {
   readonly name = 'composite(eastmoney+python)';
@@ -87,6 +87,18 @@ class CompositeProvider implements DataProvider {
    *  腾讯无对应榜单接口，故不走腾讯降级；不依赖 data-service。 */
   async getMovers(limit = 50): Promise<MarketMovers> {
     return this.quote.getMovers(limit);
+  }
+
+  /** 全市场财经快讯只能走微服务（东财全球快讯/财联社降级），未启动时给出带启动提示的错误 */
+  async getMarketNews(limit = 20): Promise<MarketNewsItem[]> {
+    try {
+      return await this.python.getMarketNews(limit);
+    } catch (err) {
+      throw new Error(
+        `财经快讯数据不可用：${err instanceof Error ? err.message : String(err)}\n` +
+          '提示：进入 data-service 目录运行 `pip install -r requirements.txt && uvicorn main:app` 启动数据微服务。',
+      );
+    }
   }
 
   /** 搜索优先走 Python 微服务（全量代码表，匹配更准）；未启动时降级到东财搜索建议接口 */

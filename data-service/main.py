@@ -247,6 +247,80 @@ async def _announcements_em_fallback(code: str, limit: int, days: int):
     return [it for it in hit["items"] if it["publishedAt"][:10] >= cutoff][:limit]
 
 
+# --- 全市场财经快讯 ---
+# 双源降级链（2026-09-15 实测 akshare 1.18.94 两者均可用）：
+# 主源东财 stock_info_global_em（约 200 条，列：标题/摘要/发布时间/链接，含 URL）；
+# 降级财联社 stock_info_global_cls（约 20 条，列：标题/内容/发布日期/发布时间，无 URL，
+# 短快讯"标题"列常为空串，此时取"内容"前段作标题）。
+# 结果进程内缓存 90s，防页面自动刷新打爆上游。
+_market_news_cache: dict = {"ts": 0.0, "items": []}
+_MARKET_NEWS_TTL = 90
+
+
+def _market_news_from_em(df) -> list:
+    items = []
+    for _, row in df.iterrows():
+        items.append({
+            "title": _cell(row, "标题"),
+            "summary": _cell(row, "摘要"),
+            "publishTime": _cell(row, "发布时间"),
+            "url": _cell(row, "链接"),
+            "source": "东方财富",
+        })
+    return [it for it in items if it["title"]]
+
+
+def _market_news_from_cls(df) -> list:
+    items = []
+    for _, row in df.iterrows():
+        title = _cell(row, "标题")
+        content = _cell(row, "内容")
+        if not title and content:
+            # 财联社短快讯常无标题，取内容前 60 字充任（去掉开头的【】电头由前端/LLM 阅读）
+            title = content[:60]
+        items.append({
+            "title": title,
+            "summary": content,
+            "publishTime": f"{_cell(row, '发布日期')} {_cell(row, '发布时间')}".strip(),
+            "url": "",
+            "source": "财联社",
+        })
+    return [it for it in items if it["title"]]
+
+
+@app.get("/market-news")
+async def market_news(limit: int = Query(default=20, ge=1, le=50)):
+    """全市场财经快讯（区别于 /news/{code} 的个股新闻）。返回 MarketNewsItem[]。
+
+    字段：{title, summary, url, publishTime, source}；publishTime 为 "YYYY-MM-DD HH:MM:SS"；
+    财联社降级源无 url（空串）。结果按发布时间倒序、进程内缓存 90s。
+    """
+    now = time.time()
+    if not _market_news_cache["items"] or now - _market_news_cache["ts"] > _MARKET_NEWS_TTL:
+        try:
+            df = await run_ak(ak.stock_info_global_em)
+            items = _market_news_from_em(df)
+        except Exception as e:
+            # 含 HTTPException（超时 504）：主源失败尝试财联社降级
+            logger.warning("market-news 东财源失败，降级财联社: err=%s", e)
+            try:
+                df = await run_ak(ak.stock_info_global_cls)
+                items = _market_news_from_cls(df)
+            except HTTPException:
+                raise
+            except Exception as e2:
+                raise HTTPException(
+                    status_code=502,
+                    detail=f"AKShare 财经快讯获取失败（东财: {e}；财联社降级: {e2}）",
+                )
+        if not items:
+            raise HTTPException(status_code=502, detail="AKShare 财经快讯返回为空")
+        items.sort(key=lambda it: it["publishTime"], reverse=True)
+        _market_news_cache["items"] = items
+        _market_news_cache["ts"] = now
+    return _market_news_cache["items"][:limit]
+
+
 # --- 交易日历 ---
 # ak.tool_trade_date_hist_sina() 返回全量历史交易日（trade_date 列，datetime.date），
 # 进程内缓存 24 小时；主服务再按年缓存（年内数据不变）。

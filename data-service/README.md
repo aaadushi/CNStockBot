@@ -34,6 +34,7 @@ uvicorn main:app --host 127.0.0.1 --port 8000
 | `GET /funds/search?keyword=` | 基金搜索（全量代码表缓存 24h，支持名称/代码/拼音缩写） |
 | `GET /funds/etf?limit=` | 场内 ETF 实时行情榜（东财全量快照，翻页 30s+ 故超时 120s + 缓存 60s） |
 | `GET /funds/{code}?days=` | 单只基金详情 + 单位净值走势（按代码缓存 6h；须声明在 rank/search/etf 之后） |
+| `GET /market-news?limit=20` | 全市场财经快讯（东财全球快讯主源、财联社降级，缓存 90s，上限 50 条） |
 
 ## 注意
 
