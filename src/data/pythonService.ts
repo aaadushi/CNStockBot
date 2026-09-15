@@ -4,7 +4,7 @@
  */
 import { config } from '../config.js';
 import { EastmoneyProvider } from './eastmoney.js';
-import type { Announcement, DataProvider, FinancialReport, HistoryBar, NewsItem, Quote } from './provider.js';
+import type { Announcement, DataProvider, FinancialReport, HistoryBar, NewsItem, NewsSort, Quote } from './provider.js';
 
 /** 微服务显式超时：AKShare 爬网页较慢，放宽到 60s；防上游挂起拖死调度链（审计 A-301/A-506） */
 const FETCH_TIMEOUT_MS = 60_000;
@@ -39,8 +39,8 @@ export class PythonServiceProvider implements DataProvider {
     return this.get<Quote>(`/quote/${encodeURIComponent(code)}`);
   }
 
-  async getNews(code: string, limit = 10): Promise<NewsItem[]> {
-    return this.get<NewsItem[]>(`/news/${encodeURIComponent(code)}?limit=${limit}`);
+  async getNews(code: string, limit = 10, sort: NewsSort = 'hot'): Promise<NewsItem[]> {
+    return this.get<NewsItem[]>(`/news/${encodeURIComponent(code)}?limit=${limit}&sort=${sort}`);
   }
 
   async getAnnouncements(code: string, limit = 10): Promise<Announcement[]> {

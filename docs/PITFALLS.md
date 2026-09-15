@@ -66,6 +66,11 @@
 - **解法**：`netstat -ano | findstr :3000` 找到 PID 后 `taskkill //PID <pid> //F`
   （Git Bash 下双斜杠转义），或换端口。
 - **预防**：结束开发用 Ctrl+C 而不是直接关终端窗口。
+- **⚠️ 2026-09-15 加重版**：tsx watch 每次文件变更派生新子进程，**杀父进程（npm/tsx）
+  不会带走已派生的旧子进程**——旧子进程继续占着端口、用旧代码/旧环境变量服务，
+  新子进程 EADDRINUSE 崩溃，表现为"改了代码/换了 env 却不生效"（本次排查财报修复
+  不生效，实际请求全落在旧子进程上）。联调验证期建议用 `npx tsx src/index.ts`
+  （无 watch）跑主服务；验证某进程是否最新，直接打它的独占特征端点而不是看 /health。
 
 ## 2. 东方财富接口（行情数据源）
 
@@ -119,6 +124,33 @@
 - **涉及文件**：`src/data/eastmoney.ts:14-18`
 
 ## 3. Python / AKShare（data-service）
+
+### [2026-09-15] akshare 1.18.94 `stock_financial_abstract` 返回结构从长表变宽表（静默全空）
+- **现象**：`/financials` 端点不报错，但每期所有字段都是空串——比报错更阴，
+  冒烟只看"返回 4 条"会误以为正常。
+- **根因**：1.18.94 起该接口返回**宽表**：行=指标（前两列"选项/指标"），
+  之后每个报告期一列（YYYYMMDD）；旧代码按长表列名（截止日期/主营业务收入…）取数，
+  全部 miss 后 `_cell` 兜底为空串。且新版指标集删掉了"资产总计/长期负债合计/财务费用"，
+  参数名也从 stock 改回 symbol。
+- **解法**：端点检测 `"指标" in df.columns` 分流——宽表走 `_financials_wide()` 透视
+  （优先"常用指标"组取行，同名单指标在多组重复）；输出新增 netAssets/roe/eps 字段，
+  旧三字段仅旧版路径填充。验证接口类改动必须**看字段内容**，不能只看条数。
+- **涉及文件**：`data-service/main.py`（/financials、_financials_wide）、
+  `src/data/provider.ts`（FinancialReport 新字段）
+- **预防**：升级 AKShare 后对每个已接端点跑一次真实调用并**抽查字段值**；
+  结构变更可以完全不报错。
+
+### [2026-09-15] 巨潮公告上游返回非 JSON（JSONDecodeError），降级东财公告接口
+- **现象**：`/announcements` 报 `AKShare 公告获取失败: Expecting value: line 1 column 1
+  (char 0)`——巨潮 cninfo 接口返回了空响应/HTML 而非 JSON（限流或接口变更）。
+- **根因**：`ak.stock_zh_a_disclosure_report_cninfo` 对上游响应直接 `json()`，不做容错。
+- **解法**：公告端点加降级链——巨潮失败（含 504 超时）自动切
+  `ak.stock_individual_notice_report`（东财，列：公告标题/公告日期/网址）。
+  注意东财该接口**无日期参数、全量翻页**（约 1 页/秒，大盘股 >30s）：超时放宽到 180s
+  （run_ak 加了 timeout 参数），全量结果按代码缓存 6 小时，days/limit 本地过滤。
+  主服务侧 60s 超时下，首次未缓存的大盘股请求可能 504，下轮缓存命中即恢复（可接受）。
+- **涉及文件**：`data-service/main.py`（/announcements、_announcements_em_fallback）
+- **预防**：接三方资讯接口默认假设上游会返回非 JSON；耗时型接口必须配缓存。
 
 ### [2026-09-15] `stock_zh_a_hist` 连接被掐断（东财 push2his 独立限流），需新浪源降级
 - **现象**：`GET /history/600519` 报 `AKShare 历史行情获取失败: ('Connection aborted.',

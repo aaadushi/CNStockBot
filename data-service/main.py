@@ -28,12 +28,12 @@ app = FastAPI(title="CNStockBot Data Service", version="0.1.0")
 AKSHARE_TIMEOUT = 30  # 秒
 
 
-async def run_ak(fn, *args, **kwargs):
+async def run_ak(fn, *args, timeout: int = AKSHARE_TIMEOUT, **kwargs):
     """线程池执行 AKShare 同步调用（带超时）。上游异常原样抛出，由端点各自包装。"""
     try:
-        return await asyncio.wait_for(asyncio.to_thread(fn, *args, **kwargs), timeout=AKSHARE_TIMEOUT)
+        return await asyncio.wait_for(asyncio.to_thread(fn, *args, **kwargs), timeout=timeout)
     except asyncio.TimeoutError:
-        raise HTTPException(status_code=504, detail=f"上游数据源超时（{AKSHARE_TIMEOUT}s 无响应）")
+        raise HTTPException(status_code=504, detail=f"上游数据源超时（{timeout}s 无响应）")
 
 
 def _num(v) -> float:
@@ -80,12 +80,21 @@ async def quote(code: str):
 
 
 @app.get("/news/{code}")
-async def news(code: str, limit: int = Query(default=10, ge=1, le=50)):
-    """个股新闻（东财数据源）。返回 NewsItem[]。"""
+async def news(
+    code: str,
+    limit: int = Query(default=10, ge=1, le=50),
+    sort: str = Query(default="hot", pattern="^(hot|time)$"),
+):
+    """个股新闻（东财数据源）。返回 NewsItem[]。
+
+    sort=hot（默认）：东财原始相关度/热度序；sort=time：按发布时间倒序。
+    时间序必须先全量构建、排序后再截 limit——先 head 再排会丢掉不在前 N 条里的
+    更新新闻（2026-09-15 用户实测发现）。
+    """
     try:
         df = await run_ak(ak.stock_news_em, symbol=code)
         items = []
-        for _, row in df.head(limit).iterrows():
+        for _, row in df.iterrows():
             items.append({
                 "title": str(row.get("新闻标题", "")),
                 "summary": str(row.get("新闻内容", ""))[:120],
@@ -93,7 +102,10 @@ async def news(code: str, limit: int = Query(default=10, ge=1, le=50)):
                 "url": str(row.get("新闻链接", "")),
                 "publishedAt": str(row.get("发布时间", "")),
             })
-        return items
+        if sort == "time":
+            # "YYYY-MM-DD HH:MM:SS" 格式可直接按字符串倒序；缺失时间的排最后
+            items.sort(key=lambda it: it["publishedAt"], reverse=True)
+        return items[:limit]
     except HTTPException:
         raise
     except Exception as e:
@@ -154,10 +166,12 @@ async def announcements(
     days: int = Query(default=30, le=365),
     category: str = Query(default=""),
 ):
-    """个股公告（巨潮资讯网，交易所正式披露）。返回 Announcement[]。
+    """个股公告。返回 Announcement[]。
 
-    category 可选值：年报/半年报/一季报/三季报/业绩预告/权益分派/董事会/股东大会/
-    风险提示 等（见 ak.stock_zh_a_disclosure_report_cninfo 文档），空串为全部。
+    数据源降级链：巨潮资讯 stock_zh_a_disclosure_report_cninfo（交易所正式披露）
+    → 东财 stock_individual_notice_report（2026-09-15 巨潮上游返回非 JSON 时托底）。
+    category 仅巨潮源支持：年报/半年报/一季报/三季报/业绩预告/权益分派/董事会/
+    股东大会/风险提示 等，空串为全部。
     """
     end = datetime.now().strftime("%Y%m%d")
     start = (datetime.now() - timedelta(days=days)).strftime("%Y%m%d")
@@ -175,10 +189,23 @@ async def announcements(
         # 但 KeyError 也可能是列结构变化/代码无效，必须留日志可观测（审计 A-507）
         logger.warning("announcements KeyError（按空结果处理，若非空查询请排查列结构）: code=%s err=%s", code, e)
         return []
-    except HTTPException:
-        raise
+    except HTTPException as e:
+        if e.status_code != 504:
+            raise
+        logger.warning("announcements 巨潮源超时，降级东财公告: code=%s", code)
+        return await _announcements_em_fallback(code, limit, days)
     except Exception as e:
-        raise HTTPException(status_code=502, detail=f"AKShare 公告获取失败: {e}")
+        # 巨潮上游非 JSON / 限流 / 接口变更：降级东财公告（2026-09-15 实测 JSONDecodeError）
+        logger.warning("announcements 巨潮源失败，降级东财公告: code=%s err=%s", code, e)
+        try:
+            return await _announcements_em_fallback(code, limit, days)
+        except HTTPException:
+            raise
+        except Exception as e2:
+            raise HTTPException(
+                status_code=502,
+                detail=f"AKShare 公告获取失败（巨潮: {e}；东财降级: {e2}）",
+            )
     items = []
     for _, row in df.head(limit).iterrows():
         items.append({
@@ -187,6 +214,37 @@ async def announcements(
             "url": str(row.get("公告链接", "")),
         })
     return items
+
+
+# --- 东财公告降级（巨潮源失败时托底） ---
+# ak.stock_individual_notice_report 不支持日期参数，会**全量翻页**拉取该股全部历史公告
+# （约 1 页/秒，大盘股可超 30s），所以：超时放宽到 180s + 全量结果按代码缓存 6 小时，
+# days/limit 过滤在缓存命中后本地完成。
+_notice_cache: dict = {}  # code -> {"ts": float, "items": list}
+_NOTICE_CACHE_TTL = 6 * 3600
+_NOTICE_TIMEOUT = 180
+
+
+async def _announcements_em_fallback(code: str, limit: int, days: int):
+    """东财个股公告（降级源）。返回与巨潮源同构的 Announcement[]（日期降序）。"""
+    now = time.time()
+    hit = _notice_cache.get(code)
+    if hit is None or now - hit["ts"] > _NOTICE_CACHE_TTL:
+        df = await run_ak(
+            ak.stock_individual_notice_report, security=code, symbol="全部", timeout=_NOTICE_TIMEOUT
+        )
+        items = []
+        if df is not None and not df.empty:
+            for _, row in df.iterrows():
+                items.append({
+                    "title": str(row.get("公告标题", "")),
+                    "publishedAt": str(row.get("公告日期", "")),
+                    "url": str(row.get("网址", "")),
+                })
+        hit = {"ts": now, "items": items}
+        _notice_cache[code] = hit
+    cutoff = (datetime.now() - timedelta(days=days)).strftime("%Y-%m-%d")
+    return [it for it in hit["items"] if it["publishedAt"][:10] >= cutoff][:limit]
 
 
 # --- 交易日历 ---
@@ -228,7 +286,10 @@ async def financials(code: str, limit: int = Query(default=4, ge=1, le=20)):
 
     注意：数值是带"元"后缀和千分位逗号的字符串（如 "999,862,000.00元"），
     原样返回给主服务由 LLM 阅读，不做数值清洗。
-    参数名随 AKShare 版本变动：旧版是 stock，1.18.94 起改为 symbol，两种都尝试。
+    兼容性：参数名随版本变动（旧版 stock / 1.18.94 起 symbol）；
+    返回结构也随版本变动——旧版是长表（行=报告期，列含"截止日期/主营业务收入"），
+    1.18.94 起是**宽表**（行=指标，列含"选项/指标"+每个报告期一列 YYYYMMDD），
+    两种结构分别走 _financials_wide / 原长表逻辑（2026-09-15 实测，PITFALLS 已记录）。
     """
     try:
         try:
@@ -242,7 +303,9 @@ async def financials(code: str, limit: int = Query(default=4, ge=1, le=20)):
         raise HTTPException(status_code=502, detail=f"AKShare 财报获取失败: {e}")
     if df is None or df.empty:
         return []
-    # 列名 → 稳定输出字段；新浪若改版缺列则该字段为空串
+    if "指标" in df.columns:
+        return _financials_wide(df, limit)
+    # 旧版长表：列名 → 稳定输出字段；新浪若改版缺列则该字段为空串
     col_map = {
         "period": "截止日期",
         "revenue": "主营业务收入",
@@ -256,6 +319,45 @@ async def financials(code: str, limit: int = Query(default=4, ge=1, le=20)):
     items = []
     for _, row in df.head(limit).iterrows():
         items.append({k: _cell(row, col) for k, col in col_map.items()})
+    return items
+
+
+def _financials_wide(df, limit: int):
+    """新版（1.18.94+）宽表透视：行=指标（带"选项"分类列），列=报告期 YYYYMMDD。
+
+    新版指标集与旧长表不同：没有"资产总计/长期负债合计/财务费用"，
+    对应输出 netAssets/roe/eps 三个新字段（provider.ts FinancialReport 已加）。
+    """
+    import re
+
+    date_cols = [c for c in df.columns if re.fullmatch(r"\d{8}", str(c))][:limit]
+
+    def find_row(*names: str):
+        """按候选指标名找行：优先"常用指标"组（同名单指标在多组重复出现），找不到退任意组。"""
+        for name in names:
+            m = df[(df["指标"] == name) & (df["选项"] == "常用指标")]
+            if m.empty:
+                m = df[df["指标"] == name]
+            if not m.empty:
+                return m.iloc[0]
+        return None
+
+    rows_map = {
+        "revenue": find_row("营业总收入", "主营业务收入"),
+        "netProfit": find_row("归母净利润", "净利润"),
+        "netAssets": find_row("股东权益合计(净资产)"),
+        "roe": find_row("净资产收益率(ROE)"),
+        "eps": find_row("基本每股收益"),
+        "netAssetsPerShare": find_row("每股净资产", "摊薄每股净资产_期末股数"),
+        "cashFlowPerShare": find_row("每股现金流"),
+    }
+    items = []
+    for dc in date_cols:
+        d = str(dc)
+        item = {"period": f"{d[:4]}-{d[4:6]}-{d[6:]}"}
+        for k, row in rows_map.items():
+            item[k] = "" if row is None else _cell(row, dc)
+        items.append(item)
     return items
 
 

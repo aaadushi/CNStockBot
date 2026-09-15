@@ -28,6 +28,9 @@ const skill: Skill = {
       const parts = [
         f.revenue && `营收 ${f.revenue}`,
         f.netProfit && `净利润 ${f.netProfit}`,
+        f.netAssets && `净资产 ${f.netAssets}`,
+        f.roe && `ROE ${f.roe}`,
+        f.eps && `每股收益 ${f.eps}`,
         f.totalAssets && `总资产 ${f.totalAssets}`,
         f.longTermDebt && `长期负债 ${f.longTermDebt}`,
         f.netAssetsPerShare && `每股净资产 ${f.netAssetsPerShare}`,

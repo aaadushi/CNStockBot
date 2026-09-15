@@ -71,43 +71,54 @@
 
 ## 5. 新闻查询（get_stock_news）
 
-- **实现方式**：调 `DataProvider.getNews(code, limit)` → Python 微服务 `/news/{code}`
-  → `ak.stock_news_em()`，limit 上限 20。
+- **实现方式**：调 `DataProvider.getNews(code, limit, sort)` → Python 微服务 `/news/{code}`
+  → `ak.stock_news_em()`，limit 上限 20。**排序可选**（2026-09-15）：`sort=hot`（默认）
+  保留东财相关度/热度原序；`sort=time` 按发布时间倒序（先全量排序再截 limit，
+  先截再排会漏掉更新的新闻）。浏览页详情的新闻 Tab 有"热度/最新"切换 pill，
+  走单块端点 `GET /api/stocks/:code/news?sort=`，前端按 code+sort 缓存。
 - **代码位置**：[src/skills/bundled/news/index.ts](../src/skills/bundled/news/index.ts)、
   [src/data/pythonService.ts](../src/data/pythonService.ts)、[data-service/main.py](../data-service/main.py) 的 `/news` 端点
-- **改动入口**：换新闻源/加字段 → main.py 端点 + provider.ts 的 `NewsItem` 接口 + 技能格式化
+- **改动入口**：换新闻源/加字段 → main.py 端点 + provider.ts 的 `NewsItem` 接口 + 技能格式化；
+  改排序行为 → 端点 `sort` 参数 + provider.ts 的 `NewsSort` 类型
 - **注意事项**：微服务未启动时技能报错文本含启动提示（`src/data/index.ts` CompositeProvider 包装）；
   交易所正式公告不归本技能管，见下一节 get_stock_announcements。
 
 ## 6. 公告查询（get_stock_announcements，2026-09-14 新增）
 
 - **实现方式**：调 `DataProvider.getAnnouncements(code, limit)` → Python 微服务
-  `/announcements/{code}` → `ak.stock_zh_a_disclosure_report_cninfo()`（巨潮资讯网，
-  沪深京市场，默认近 30 天）。limit 上限 20，微服务侧上限 50。
+  `/announcements/{code}`。**双源降级链**（2026-09-15 加）：首选巨潮资讯
+  `ak.stock_zh_a_disclosure_report_cninfo()`（沪深京市场，默认近 30 天）；
+  巨潮失败（非 JSON/限流/超时）自动降级东财 `ak.stock_individual_notice_report()`
+  ——该接口无日期参数、全量翻页（约 1 页/秒），超时放宽 180s + 全量结果按代码
+  缓存 6 小时，days/limit 本地过滤。limit 上限 20，微服务侧上限 50。
 - **代码位置**：[src/skills/bundled/announcement/](../src/skills/bundled/announcement/)、
   [src/data/pythonService.ts](../src/data/pythonService.ts)、
-  [data-service/main.py](../data-service/main.py) 的 `/announcements` 端点
-- **改动入口**：调查询时间窗 → main.py 端点的 `days` 参数（默认 30，上限 365）；
-  按类别筛选（年报/分红/风险提示等）→ 端点已留 `category` 参数，技能层需要时再加
-- **注意事项**：结果为空时部分 AKShare 版本抛 `KeyError`，端点已捕获并返回空列表
-  （PITFALLS.md Python 条目）；CLAUDE.md 旧版写的 `ak.stock_notice_report` 是
-  按日期查全市场公告的接口，不适合个股查询，不要误用（DATA_SOURCES.md）。
+  [data-service/main.py](../data-service/main.py) 的 `/announcements` 端点与
+  `_announcements_em_fallback()`
+- **改动入口**：调查询时间窗 → 端点 `days` 参数（默认 30，上限 365）；
+  按类别筛选 → `category` 参数（**仅巨潮源支持**，降级到东财时忽略）
+- **注意事项**：巨潮结果为空时部分 AKShare 版本抛 `KeyError`，端点已捕获返回空列表；
+  主服务侧 60s 超时下，东财降级首次未缓存的大盘股请求可能 504，缓存命中后恢复；
+  CLAUDE.md 旧版写的 `ak.stock_notice_report` 是按日期查全市场公告的接口，不要误用。
 
 ## 7. 财报查询（get_stock_financials，2026-09-14 新增）
 
 - **实现方式**：调 `DataProvider.getFinancials(code, limit)` → Python 微服务
-  `/financials/{code}` → `ak.stock_financial_abstract(stock=code)`（新浪财经财务摘要，
-  按报告期倒序，默认 4 期）。技能把各期关键指标格式化成文本回给 LLM，由 LLM 做趋势解读
+  `/financials/{code}` → `ak.stock_financial_abstract()`（新浪财经财务摘要，
+  按报告期倒序，默认 4 期）。**返回结构随 AKShare 版本分叉**（2026-09-15 兼容）：
+  旧版长表（行=报告期）按 col_map 直接取；1.18.94+ 宽表（行=指标、列=报告期）
+  走 `_financials_wide()` 透视，优先"常用指标"组取行。参数名同样分叉
+  （stock/symbol 双兼容）。技能把各期关键指标格式化成文本回给 LLM，由 LLM 做趋势解读
   （SYSTEM_PROMPT 的免责声明规则自动覆盖）。
 - **代码位置**：[src/skills/bundled/financials/](../src/skills/bundled/financials/)、
   [src/data/pythonService.ts](../src/data/pythonService.ts)、
-  [data-service/main.py](../data-service/main.py) 的 `/financials` 端点
-- **改动入口**：增删指标字段 → main.py 端点的 `col_map` + provider.ts 的
-  `FinancialReport` 接口 + 技能格式化；要数值计算（如同比）→ 先在端点里清洗掉
-  "元"后缀和千分位逗号（目前原样返回字符串，只适合 LLM 阅读）
-- **注意事项**：该接口参数名随 AKShare 版本变动（旧版 `stock`，1.18.94 起 `symbol`，
-  端点已做双兼容）；返回值全是带单位的中文字符串；
-  部分股票历史数据被新浪截断到 100 条（PITFALLS.md Python 条目）。
+  [data-service/main.py](../data-service/main.py) 的 `/financials` 端点与 `_financials_wide()`
+- **改动入口**：增删指标字段 → 端点 rows_map/col_map + provider.ts 的
+  `FinancialReport` 接口 + 技能格式化；要数值计算（如同比）→ 先做数值清洗
+  （旧版带"元"后缀+千分位逗号，新版是裸数字字符串，两者格式不同）
+- **注意事项**：新版宽表指标集**没有**"资产总计/长期负债合计/财务费用"，
+  对应新增 netAssets/roe/eps 字段；结构变更可静默全空不报错（PITFALLS 2026-09-15 条目），
+  改接口后必须抽查字段值；部分股票历史数据被新浪截断。
 
 ## 8. 自选股管理（manage_watchlist）
 
