@@ -333,7 +333,8 @@
   URL query 区分视图（`?code=` 为详情页，pushState/popstate 路由）。
   列表视图：自选股圆角卡片（一行一只）+ 顶部防抖搜索（结果同款卡片，可一键加自选）；
   详情视图：行情卡（开/高/低/昨收四格 + **估值规模第二行**：总市值/流通市值/PE(TTM)/PB，
-  PE(TTM) 缺失时降级显示 PE(动) 并标注口径，F3-1）+ 手写 SVG 收盘折线图（渐变填充、网格线、
+  PE(TTM) 缺失时降级显示 PE(动) 并标注口径，F3-1）+ **公司资料卡**（行业/上市日期/
+  总股本/流通股，F3-2，见第 26 节）+ 手写 SVG 收盘折线图（渐变填充、网格线、
   hover 十字线 + tooltip、近1月/3月/6月/1年 区间切换）+ 新闻/公告/财报 Tab。
   设计系统抽在 `public/shared/theme.css`（CSS 变量 + 通用组件类），webchat 与 stocks 共用；
   口令鉴权为卡片式浮层（localStorage `cnstockbot_token`/`cnstockbot_uid`，与 webchat 互通）。
@@ -454,3 +455,27 @@
 - **注意事项**：`fund_etf_spot_em` 耗时 30s+，主服务客户端 60s 超时，首次未缓存请求可能
   刚好踩线（缓存命中后恢复，PITFALLS 已记录）；新基金区间收益字段为 null 不是 bug；
   单只 ETF 行情不走东财 push2 复用路径（push2 对本机限流中未实测，统一走微服务）。
+
+## 26. 公司资料（F3-2，2026-09-15 新增）
+
+- **实现方式**：`DataProvider.getProfile(code)`（可选方法，返回 `CompanyProfile`：
+  code/name/industry/listingDate/totalShares/floatShares）→ 微服务 `/profile/{code}`。
+  数据源降级链：AKShare `stock_individual_info_em`（东财 push2，item/value 两列，
+  中文 key 反查回 f 编码后统一归一化）→ **push2delay 同构直连**（限流期实测字段一致；
+  公司资料是近静态信息，不受 15 分钟延时影响）。结果按代码缓存 24h。
+  字段口径：f84 总股本 / f85 流通股（单位股，不放大）/ f127 行业 / f189 上市时间
+  （yyyymmdd → YYYY-MM-DD）；`"-"`（停牌/退市/已切换代码）置 null 而非 0。
+- **落点**：详情页行情卡下方"公司资料"卡（所属行业/上市日期/总股本/流通股四格，
+  股本格式化为 亿/万股；数据与错误均无时整块隐藏）；`/api/stocks/:code` 聚合加
+  profile/profileError 块（第五块，同样 allSettled 独立降级）。
+- **代码位置**：端点 [data-service/main.py](../data-service/main.py)（"公司资料（F3-2）"节，
+  `_secid_for/_f_opt/_profile_from_fields/_profile_via_delay_host`）、
+  接口 [src/data/provider.ts](../src/data/provider.ts)（`CompanyProfile`）、
+  客户端 [src/data/pythonService.ts](../src/data/pythonService.ts)、
+  页面 [public/stocks/index.html](../public/stocks/index.html)（`renderProfile`）、
+  测试 [tests/pythonService-profile.test.ts](../tests/pythonService-profile.test.ts)
+- **改动入口**：加资料字段（如董事长/办公地址）→ main.py fields 参数 + 归一化 +
+  `CompanyProfile` + 前端 stats 数组；调缓存 → `_PROFILE_TTL`
+- **注意事项**：AKShare 主源 secid 规则只看 `6` 开头（900 开头沪 B 会被分到深市导致
+  无数据，此时自动落到 push2delay 降级，其 `_secid_for` 与主服务 toSecid 规则一致）；
+  旧北交所代码（4/8 段）切换到 920 段后旧代码返回全 `"-"`，属上游行为不是 bug。

@@ -8,7 +8,7 @@ import { config } from '../config.js';
 import { EastmoneyProvider } from './eastmoney.js';
 import { TencentProvider } from './tencent.js';
 import { PythonServiceProvider } from './pythonService.js';
-import type { Announcement, DataProvider, EtfQuote, FinancialReport, FundInfo, FundRankItem, FundSearchItem, HistoryBar, MarketMovers, MarketNewsItem, NewsItem, NewsSort, Quote } from './provider.js';
+import type { Announcement, CompanyProfile, DataProvider, EtfQuote, FinancialReport, FundInfo, FundRankItem, FundSearchItem, HistoryBar, MarketMovers, MarketNewsItem, NewsItem, NewsSort, Quote } from './provider.js';
 
 class CompositeProvider implements DataProvider {
   readonly name = 'composite(eastmoney+python)';
@@ -78,6 +78,18 @@ class CompositeProvider implements DataProvider {
     } catch (err) {
       throw new Error(
         `历史行情数据不可用：${err instanceof Error ? err.message : String(err)}\n` +
+          '提示：进入 data-service 目录运行 `pip install -r requirements.txt && uvicorn main:app` 启动数据微服务。',
+      );
+    }
+  }
+
+  /** 公司资料只能走微服务（东财个股资料，AKShare 封装 + push2delay 降级），未启动时给出带启动提示的错误 */
+  async getProfile(code: string): Promise<CompanyProfile> {
+    try {
+      return await this.python.getProfile(code);
+    } catch (err) {
+      throw new Error(
+        `公司资料不可用：${err instanceof Error ? err.message : String(err)}\n` +
           '提示：进入 data-service 目录运行 `pip install -r requirements.txt && uvicorn main:app` 启动数据微服务。',
       );
     }

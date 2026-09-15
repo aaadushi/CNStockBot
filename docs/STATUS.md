@@ -31,7 +31,7 @@
 | 大盘指数查询 `get_market_index` | `src/skills/bundled/index/` | ✅ 可用 | 8 个常用指数显式 secid 映射，不传参返回核心指数概览；名称匹配归一化（"创业板指数"等说法可识别）；2026-09-14 新增 |
 | Python 数据微服务（行情/新闻/搜索） | `data-service/main.py` | ✅ 可用 | FastAPI + AKShare；AKShare 调用统一 30s 超时（504），财报 NaN/交易日历格式已加固 |
 | 飞书渠道 | `src/channels/feishu.ts` | ✅ 可用 | 验签（含 ±5 分钟防重放）/token 缓存/回复/去重/主动推送；chat_id 映射 **kv 表持久化**（只学单聊，防持仓日报进群）；双凭据缺失时 fail-closed |
-| 股票浏览页 + 个股详情页（/stocks） | `public/stocks/` + `src/channels/webchat.ts` | ✅ 可用 | F1/F2 完成：自选股圆角卡片列表、页内搜索（同款卡片结果）、详情页行情/走势图/新闻/公告/财报；API 全部在口令鉴权后；2026-09-15 |
+| 股票浏览页 + 个股详情页（/stocks） | `public/stocks/` + `src/channels/webchat.ts` | ✅ 可用 | F1/F2 完成：自选股圆角卡片列表、页内搜索（同款卡片结果）、详情页行情/公司资料/走势图/新闻/公告/财报；API 全部在口令鉴权后；2026-09-15 |
 | 历史 K 线数据（走势图数据源） | `data-service/main.py` `/history` + `DataProvider.getHistory` | ✅ 可用 | 前复权日 K；东财 `stock_zh_a_hist` 失败自动降级新浪 `stock_zh_a_daily`（push2his 限流托底，见 PITFALLS） |
 | 前端共享设计系统 | `public/shared/theme.css` | ✅ 可用 | ShadcnUI 风格（黑白灰 + indigo CTA、圆角卡片、微阴影）；webchat 与 stocks 两页共用；2026-09-15 UI 重设计 |
 | 全市场涨跌榜（/market） | `public/market/` + `src/channels/webchat.ts` `/api/market/movers` | ✅ 可用 | 今日涨幅榜/跌幅榜/平盘三 Tab + 涨跌平家数总览（沪深京）；东财 clist/ulist 接口，push2 限流自动降级 push2delay（延时 15 分钟，页面标注）；不依赖 data-service；2026-09-15 新增 |
@@ -115,7 +115,7 @@
 | # | 信息 | 数据来源建议 | 落点 |
 |---|---|---|---|
 | ~~F3-1~~ | ~~**估值与规模**~~ | ✅ 2026-09-15 完成（见更新日志） | — |
-| F3-2 | **公司资料**：所属行业、板块、上市日期、总股本 | `ak.stock_individual_info_em(symbol=code)`（东财个股资料）；data-service 加 `/profile/{code}`，`DataProvider` 加 `getProfile` | 详情页行情卡下方加"公司资料"行/卡 |
+| ~~F3-2~~ | ~~**公司资料**：所属行业、板块、上市日期、总股本~~ | ✅ 2026-09-15 完成（见更新日志） | — |
 | F3-3 | **成交活跃度**：成交额、换手率、量比 | 实时：东财 push2 加 f47 成交量/f48 成交额/f168 换手率/f50 量比（同样抓包核对）；历史：`stock_zh_a_hist` 本就有"成交额/换手率"列，`/history` 端点 `_hist_items` 加映射即可 | Quote/HistoryBar 加可选字段；详情页统计格 + 走势图可加成交量副图 |
 | F3-4 | **资金流**：主力/超大单净流入 | `ak.stock_individual_fund_flow(stock=code, market=...)`（东财个股资金流，market 参数 sh/sz/bj 按代码前缀映射）→ data-service `/fund-flow/{code}` | 详情页新 Tab 或独立卡片 |
 | F3-5 | **分时数据**（今日分时走势） | `ak.stock_zh_a_hist_min_em(symbol=code, period="1")` 或东财 trends2 接口；注意数据量大，前端图可复用现有 SVG 折线组件 | 详情页走势图加"分时/日K"切换 |
@@ -230,6 +230,18 @@ pattern_analyzer（K 线形态识别 + 历史成绩单）、狙击手模块（�
 ---
 
 ## 更新日志
+
+- 2026-09-15（夜间批次 3）：**F3-2 公司资料完成**——data-service 新增 `GET /profile/{code}`
+  （所属行业/上市日期/总股本/流通股）：主源 AKShare `stock_individual_info_em`（东财 push2），
+  push2 限流自动降级 **push2delay 同构直连**（公司资料为近静态信息，不受 15 分钟延时影响；
+  沪深京三市实测通过，旧北交所代码切换 920 段后返回全 "-" 为上游行为），按代码缓存 24h；
+  `"-"`（停牌/退市）置 null 不补 0。主服务：`DataProvider` 加 `CompanyProfile`/`getProfile`，
+  CompositeProvider 接线；`/api/stocks/:code` 聚合扩为五块（+profile/profileError 独立降级）。
+  前端：详情页行情卡下方新增"公司资料"卡（行业/上市日期/总股本/流通股四格，股本格式化
+  亿/万股；无数据整块隐藏、失败卡内降级提示）。验证：typecheck + 106 测试全绿（profile
+  4 条新用例）+ py_compile 通过；端到端实测 /profile/600519、/profile/920799、无效代码
+  502 双源错误信息、缓存命中、/api/stocks/600519 聚合 profile 块正确、401 正常。
+  同批：重启主服务与 data-service（旧进程分别停在 F4 合并前/昨日修复前的代码上）。
 
 - 2026-09-15（夜间批次 2）：**新增 F6 路线图（形态识别与多维共振分析）**——用户指定第二个
   参考方向：小红书博主"递归熵"的个人量化系统（pattern_analyzer 形态识别+历史成绩单 /

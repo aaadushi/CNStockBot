@@ -29,6 +29,7 @@ uvicorn main:app --host 127.0.0.1 --port 8000
 | `GET /announcements/{code}` | 个股公告（巨潮资讯，近 30 天） |
 | `GET /financials/{code}` | 财报摘要（新浪，按报告期倒序） |
 | `GET /history/{code}?days=120` | 历史日 K 线（前复权；东财失败自动降级新浪） |
+| `GET /profile/{code}` | 公司资料：行业/上市日期/总股本/流通股（东财 push2，限流自动降级 push2delay 同构接口；按代码缓存 24h） |
 | `GET /trade-calendar?year=` | 交易日历（新浪，用于跳过法定节假日） |
 | `GET /funds/rank?type=&limit=` | 开放式基金排行（天天基金，按近1年收益率降序；type 白名单：全部/股票型/混合型/债券型/指数型/QDII/FOF；按类型缓存 10 分钟） |
 | `GET /funds/search?keyword=` | 基金搜索（全量代码表缓存 24h，支持名称/代码/拼音缩写） |

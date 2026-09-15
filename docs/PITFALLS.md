@@ -103,7 +103,11 @@
   f162 市盈率（动） f163 市盈率（静） f164 市盈率（TTM) f167 市净率 —— **均放大 100 倍**；
   f116 总市值 f117 流通市值 —— **单位元，不放大**（大数值，误用 ÷100 会差 100 倍）。
   腾讯侧对应下标：39=PE(TTM) 52=PE（动） 53=PE（静） 46=PB 44/45=流通/总市值（**单位亿元**，×1e8 转元）。
-- **涉及文件**：`src/data/eastmoney.ts`（FIELDS 与解析、PUSH2_HOSTS）、`src/data/tencent.ts`
+  F3-2 补充：`ak.stock_individual_info_em` 同样走 push2，限流期必挂（ConnectionError 断连，
+  无 HTTP 码）；data-service `/profile` 已内置 push2delay 同构直连降级（公司资料是静态信息，
+  不受延时影响；f189 上市时间为 yyyymmdd 整数）。
+- **涉及文件**：`src/data/eastmoney.ts`（FIELDS 与解析、PUSH2_HOSTS）、`src/data/tencent.ts`、
+  `data-service/main.py`（`/profile` 的 `_profile_via_delay_host`）
 - **预防**：东财"全挂"时先区分 push2 限流 vs 字段变更；限流期验证/调试用 push2delay；
   接新字段时市值类大数值字段先确认是否缩放。
 
