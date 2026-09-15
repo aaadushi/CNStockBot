@@ -4,12 +4,16 @@
  * 已知字段（push2 报价接口，价格类字段默认放大 100 倍）：
  *   f43 最新价  f44 最高  f45 最低  f46 今开  f57 代码  f58 名称
  *   f60 昨收    f169 涨跌额  f170 涨跌幅  f86 时间戳
+ *   估值与规模（F3-1，2026-09-15 经 push2delay 实测核对）：
+ *   f162 市盈率(动) f163 市盈率(静) f164 市盈率(TTM) f167 市净率 —— 均放大 100 倍
+ *   f116 总市值 f117 流通市值 —— 单位元，**不放大**（大数值，不能用 ÷100 的价格解析）
  * 另注意：短时间内高频请求 push2 会触发东财 IP 级断连限流（PITFALLS.md 东财条目）。
+ * 限流期间可用 push2delay.eastmoney.com 同构接口临时验证字段（延时行情，勿作数据源切换）。
  */
 import type { DataProvider, MarketMovers, MoverItem, NewsItem, Quote } from './provider.js';
 
 const PUSH2 = 'https://push2.eastmoney.com/api/qt/stock/get';
-const FIELDS = 'f43,f44,f45,f46,f57,f58,f60,f170,f86';
+const FIELDS = 'f43,f44,f45,f46,f57,f58,f60,f170,f86,f116,f117,f162,f163,f164,f167';
 /** 东财接口显式超时：防对端半挂拖住对话/调度链（审计 A-301） */
 const FETCH_TIMEOUT_MS = 10_000;
 
@@ -45,6 +49,12 @@ interface EastmoneyQuotePayload {
     f60?: number | '-';
     f170?: number | '-';
     f86?: number;
+    f116?: number | '-';
+    f117?: number | '-';
+    f162?: number | '-';
+    f163?: number | '-';
+    f164?: number | '-';
+    f167?: number | '-';
   } | null;
 }
 
@@ -89,6 +99,9 @@ export class EastmoneyProvider implements DataProvider {
     // 开盘/最高/最低同样放大 100 倍且可能为 "-"（停牌），缺失时置 undefined（可选字段）
     const priceField = (v: number | '-' | undefined) =>
       v === '-' || v === undefined ? undefined : Number(v) / 100;
+    // 估值字段：PE/PB 放大 100 倍；市值单位元不放大。缺失/"-" 置 undefined（亏损股 PE 东财返回 "-"）
+    const capField = (v: number | '-' | undefined) =>
+      v === '-' || v === undefined ? undefined : Number(v);
     return {
       code: d.f57 ?? label,
       name: d.f58 ?? label,
@@ -98,6 +111,12 @@ export class EastmoneyProvider implements DataProvider {
       open: priceField(d.f46),
       high: priceField(d.f44),
       low: priceField(d.f45),
+      peTtm: priceField(d.f164),
+      peDynamic: priceField(d.f162),
+      peStatic: priceField(d.f163),
+      pb: priceField(d.f167),
+      totalMarketCap: capField(d.f116),
+      floatMarketCap: capField(d.f117),
       time: d.f86 ? new Date(Number(d.f86) * 1000).toLocaleString('zh-CN', { timeZone: 'Asia/Shanghai' }) : undefined,
     };
   }

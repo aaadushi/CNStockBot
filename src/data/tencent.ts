@@ -6,6 +6,8 @@
  * 响应格式（GBK 编码纯文本，~ 分隔）：
  *   v_sh600519="1~名称~代码~最新价~昨收~今开~成交量~...~时间yyyyMMddHHmmss~涨跌额~涨跌幅%~最高~最低~..."
  *   索引：1=name 2=code 3=price 4=prevClose 5=open 30=time 32=changePct 33=high 34=low
+ *   估值与规模（2026-09-15 与东财 f162/f163/f164/f167/f116/f117 实测交叉核对，值完全一致）：
+ *   39=市盈率(TTM) 44=流通市值(亿元) 45=总市值(亿元) 46=市净率 52=市盈率(动) 53=市盈率(静)
  * 代码前缀规则：沪市 6/9 → sh，深市 0/3 → sz，北交所 4/8/920 → bj。
  */
 import type { DataProvider, NewsItem, Quote } from './provider.js';
@@ -54,6 +56,12 @@ export class TencentProvider implements DataProvider {
       const v = Number(f[i]);
       return Number.isFinite(v) && v > 0 ? v : undefined;
     };
+    // 估值与规模：市值字段单位是亿元（×1e8 转成元，与东财口径一致）；
+    // 亏损股 PE 可能为 0/负数（无意义），与缺失一样置 undefined 由展示层显示 —
+    const cap = (i: number) => {
+      const v = Number(f[i]);
+      return Number.isFinite(v) && v > 0 ? v * 1e8 : undefined;
+    };
     return {
       code: String(f[2] ?? label),
       name: String(f[1] ?? label),
@@ -64,6 +72,12 @@ export class TencentProvider implements DataProvider {
       open: opt(5),
       high: opt(33),
       low: opt(34),
+      peTtm: opt(39),
+      peDynamic: opt(52),
+      peStatic: opt(53),
+      pb: opt(46),
+      floatMarketCap: cap(44),
+      totalMarketCap: cap(45),
       time,
     };
   }

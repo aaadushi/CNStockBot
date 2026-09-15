@@ -239,6 +239,15 @@
       return e;
     }
     function fmtPrice(v) { return typeof v === 'number' && isFinite(v) ? v.toFixed(2) : '—'; }
+    // 市值（元）→ 亿/万亿 可读格式
+    function fmtCap(v) {
+      if (typeof v !== 'number' || !isFinite(v) || v <= 0) return '—';
+      if (v >= 1e12) return (v / 1e12).toFixed(2) + ' 万亿';
+      if (v >= 1e8) return (v / 1e8).toFixed(2) + ' 亿';
+      return (v / 1e4).toFixed(2) + ' 万';
+    }
+    // PE/PB 等比率：缺失/非正值显示 —
+    function fmtRatio(v) { return typeof v === 'number' && isFinite(v) && v > 0 ? v.toFixed(2) : '—'; }
     function fmtPct(v) {
       if (typeof v !== 'number' || !isFinite(v)) return null;
       return (v > 0 ? '+' : '') + v.toFixed(2) + '%';
@@ -445,6 +454,10 @@
       const stats = [
         ['今开', fmtPrice(q.open)], ['最高', fmtPrice(q.high)],
         ['最低', fmtPrice(q.low)], ['昨收', fmtPrice(q.prevClose)],
+        // 估值与规模（F3-1）：PE 优先 TTM，缺失时用动态 PE 并标注口径
+        ['总市值', fmtCap(q.totalMarketCap)], ['流通市值', fmtCap(q.floatMarketCap)],
+        [q.peTtm != null ? 'PE(TTM)' : 'PE(动)', fmtRatio(q.peTtm ?? q.peDynamic)],
+        ['PB', fmtRatio(q.pb)],
       ];
       const grid = $('d-stats');
       grid.replaceChildren();

@@ -14,6 +14,13 @@ export interface Quote {
   open?: number;      // 今开（部分数据源不提供）
   high?: number;      // 最高（部分数据源不提供）
   low?: number;       // 最低（部分数据源不提供）
+  // —— 估值与规模（F3-1，2026-09-15；东财/腾讯均提供，亏损股 PE 等可能缺失）——
+  peTtm?: number;         // 市盈率（TTM）
+  peDynamic?: number;     // 市盈率（动态）
+  peStatic?: number;      // 市盈率（静态）
+  pb?: number;            // 市净率
+  totalMarketCap?: number; // 总市值（元）
+  floatMarketCap?: number; // 流通市值（元）
 }
 
 export interface NewsItem {

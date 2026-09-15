@@ -62,7 +62,9 @@
 ## 4. 实时行情查询（get_stock_quote）
 
 - **实现方式**：调 `DataProvider.getQuote(code)`，默认走东财 push2 接口直连；
-  格式化为带涨跌 emoji 的多行文本。
+  格式化为带涨跌 emoji 的多行文本。**2026-09-15 起输出含估值与规模（F3-1）**：
+  总市值/流通市值（元→亿/万亿格式化）、市盈率(TTM)/市净率——字段缺失（亏损股 PE、
+  数据源降级等）时对应行整条不显示。
 - **代码位置**：[src/skills/bundled/quote/index.ts](../src/skills/bundled/quote/index.ts)、
   数据层 [src/data/eastmoney.ts](../src/data/eastmoney.ts)
 - **改动入口**：改输出格式 → 技能 `execute`；改行情字段/数据源 → eastmoney.ts
@@ -167,6 +169,9 @@
   `Referer: https://quote.eastmoney.com/` 头与 10s 显式超时；`toSecid()` 做代码→secid 转换
   （沪市 6/900 前缀 `1.`，深市 0/3 与北交所 4/8/920 前缀 `0.`）。
   昨收/涨跌幅缺失时（新股首日等）changePct/prevClose 置 NaN，展示层显示"—"（审计 A-310）。
+  **估值与规模字段（F3-1，2026-09-15）**：东财 f162/f163/f164/f167（PE 动/静/TTM、PB，
+  放大 100 倍）+ f116/f117（总/流通市值，单位元**不放大**）；腾讯下标 39/52/53/46
+  （PE TTM/动/静、PB）+ 44/45（流通/总市值，单位亿元×1e8）。缺失/`"-"`/非正值置 undefined。
   **自动降级（2026-09-15）**：东财失败（限流/接口变更）时 CompositeProvider 自动切换
   腾讯行情（`src/data/tencent.ts`，qt.gtimg.cn，GBK 文本协议、价格不放大），
   个股与指数行情都有降级，降级有 console.warn 日志。
@@ -327,7 +332,8 @@
 - **实现方式**：`/stocks` 单文件 SPA（无框架、无 CDN，原生 HTML/CSS/JS），
   URL query 区分视图（`?code=` 为详情页，pushState/popstate 路由）。
   列表视图：自选股圆角卡片（一行一只）+ 顶部防抖搜索（结果同款卡片，可一键加自选）；
-  详情视图：行情卡（开/高/低/昨收四格）+ 手写 SVG 收盘折线图（渐变填充、网格线、
+  详情视图：行情卡（开/高/低/昨收四格 + **估值规模第二行**：总市值/流通市值/PE(TTM)/PB，
+  PE(TTM) 缺失时降级显示 PE(动) 并标注口径，F3-1）+ 手写 SVG 收盘折线图（渐变填充、网格线、
   hover 十字线 + tooltip、近1月/3月/6月/1年 区间切换）+ 新闻/公告/财报 Tab。
   设计系统抽在 `public/shared/theme.css`（CSS 变量 + 通用组件类），webchat 与 stocks 共用；
   口令鉴权为卡片式浮层（localStorage `cnstockbot_token`/`cnstockbot_uid`，与 webchat 互通）。

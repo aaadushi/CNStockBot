@@ -51,7 +51,7 @@ function errText(err: unknown): string {
   return err instanceof Error ? err.message : String(err);
 }
 
-/** 从 Quote 里挑出浏览页契约字段（time/open/high/low 可选） */
+/** 从 Quote 里挑出浏览页契约字段（time/open/high/low/估值规模字段可选） */
 function pickQuote(q: Quote) {
   return {
     code: q.code,
@@ -62,6 +62,12 @@ function pickQuote(q: Quote) {
     open: q.open,
     high: q.high,
     low: q.low,
+    peTtm: q.peTtm,
+    peDynamic: q.peDynamic,
+    peStatic: q.peStatic,
+    pb: q.pb,
+    totalMarketCap: q.totalMarketCap,
+    floatMarketCap: q.floatMarketCap,
     time: q.time,
   };
 }
