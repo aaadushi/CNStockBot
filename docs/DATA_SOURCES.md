@@ -9,7 +9,10 @@ GET https://push2.eastmoney.com/api/qt/stock/get?secid=1.600519&fields=f43,f57,f
 - 需要 `Referer: https://quote.eastmoney.com/` 请求头
 - 常用字段：f43 最新价 / f44 最高 / f45 最低 / f46 今开 / f57 代码 / f58 名称 /
   f60 昨收 / f169 涨跌额 / f170 涨跌幅 / f86 时间戳（秒）
+- 估值与规模（2026-09-15 实测核对，F3-1）：f162 PE(动) / f163 PE(静) / f164 PE(TTM) /
+  f167 PB —— 放大 100 倍；f116 总市值 / f117 流通市值 —— 单位元，**不放大**
 - 价格类字段放大 100 倍；停牌返回 `"-"`
+- push2 被 IP 限流时可用 `push2delay.eastmoney.com` 同构接口（延时行情）临时验证字段/录 fixture
 
 **搜索建议（已接入：search_stock 技能的降级方案）**
 ```
@@ -30,7 +33,9 @@ GET https://qt.gtimg.cn/q=sh600519
 ```
 - **GBK 编码**纯文本（必须 `TextDecoder('gbk')` 解码，直接 text() 乱码），`~` 分隔：
   `v_sh600519="1~名称~代码~最新价~昨收~今开~...~时间yyyyMMddHHmmss~涨跌额~涨跌幅%~..."`
-  关键索引：1=name 2=code 3=price 4=prevClose 30=time 32=changePct
+  关键索引：1=name 2=code 3=price 4=prevClose 30=time 32=changePct（另 33=high 34=low）
+  估值索引（2026-09-15 与东财 f 字段交叉实测一致）：39=PE(TTM) 52=PE(动) 53=PE(静) 46=PB、
+  44=流通市值 / 45=总市值（**单位亿元**，×1e8 转元）
 - 价格**不放大**，与东财 ×100 不同；停牌/无效代码返回空串（`v_xx=""`）
 - 代码前缀：沪市 6/9→sh，深市 0/3→sz，北交所 4/8/920→bj；指数同规则（sh000001 上证指数）
 - 触发条件：东财 push2 被 IP 限流或接口变更时自动托底（见 `src/data/index.ts` CompositeProvider）

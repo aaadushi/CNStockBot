@@ -27,10 +27,20 @@ describe('东财 fixture 回放', () => {
     const q = await new EastmoneyProvider().getQuote('600519');
     expect(q.code).toBe('600519');
     expect(q.name).toBe('贵州茅台');
-    expect(q.price).toBeCloseTo(1277.96);
-    expect(q.prevClose).toBeCloseTo(1275.16);
-    expect(q.changePct).toBeCloseTo(0.22);
+    expect(q.price).toBeCloseTo(1277.03);
+    expect(q.prevClose).toBeCloseTo(1277.96);
+    expect(q.changePct).toBeCloseTo(-0.07);
+    expect(q.open).toBeCloseTo(1281.0);
+    expect(q.high).toBeCloseTo(1284.5);
+    expect(q.low).toBeCloseTo(1273.0);
     expect(q.time).toBeTruthy();
+    // 估值与规模（F3-1）：PE/PB ÷100，市值单位元不缩放
+    expect(q.peTtm).toBeCloseTo(19.6);
+    expect(q.peDynamic).toBeCloseTo(17.93);
+    expect(q.peStatic).toBeCloseTo(19.39);
+    expect(q.pb).toBeCloseTo(6.35);
+    expect(q.totalMarketCap).toBeCloseTo(1.5964e12, -8);
+    expect(q.floatMarketCap).toBeCloseTo(1.5964e12, -8);
   });
 
   it('suggest-maotai.json：搜索解析只保留 A 股个股代码', async () => {

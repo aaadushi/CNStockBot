@@ -17,7 +17,7 @@
 |---|---|---|---|
 | 对话主循环（LLM + function calling） | `src/agent/loop.ts` | ✅ 可用 | 会话历史 SQLite 持久化，**含工具调用上下文**（P3 已解决）；同用户消息串行队列防并发覆盖 |
 | 技能框架（SKILL.md + 注册表） | `src/skills/` | ✅ 可用 | 新增技能四步见 CLAUDE.md；启动检测技能重名；参数校验助手 `args.ts` |
-| 实时行情查询 `get_stock_quote` | `src/skills/bundled/quote/` | ✅ 可用 | 东财公开接口，免 key；**东财失败自动降级腾讯行情**（2026-09-15）；涨跌幅缺失显示 — 而非静默 0 |
+| 实时行情查询 `get_stock_quote` | `src/skills/bundled/quote/` | ✅ 可用 | 东财公开接口，免 key；**东财失败自动降级腾讯行情**（2026-09-15）；涨跌幅缺失显示 — 而非静默 0；2026-09-15 起输出含估值与市值（F3-1） |
 | 新闻查询 `get_stock_news` | `src/skills/bundled/news/` | ✅ 可用 | 依赖 Python data-service 运行 |
 | 自选股管理 `manage_watchlist` | `src/skills/bundled/watchlist/` | ✅ 可用 | SQLite 持久化，按 userId 隔离；停牌股可入自选（搜索降级验证）；action 白名单防误删 |
 | 股票搜索 `search_stock` | `src/skills/bundled/search/` | ✅ 可用 | Python 全量表优先，东财 suggest 降级（降级有日志）；覆盖北交所 4/8/920 |
@@ -111,7 +111,7 @@
 
 | # | 信息 | 数据来源建议 | 落点 |
 |---|---|---|---|
-| F3-1 | **估值与规模**：PE(TTM)、PB、总市值、流通市值 | 东财 push2 报价接口加字段（候选：f162 PE动/f163 PE静/f167 PB/f116 总市值/f117 流通市值——**字段编码以浏览器抓包为准**，方法见 PITFALLS 东财条目）；腾讯 qt.gtimg.cn 响应里也有（下标需抓包核对） | `Quote` 加可选字段 → 东财/腾讯两 provider 接线 → 详情页行情卡加第二行统计格 |
+| ~~F3-1~~ | ~~**估值与规模**~~ | ✅ 2026-09-15 完成（见更新日志） | — |
 | F3-2 | **公司资料**：所属行业、板块、上市日期、总股本 | `ak.stock_individual_info_em(symbol=code)`（东财个股资料）；data-service 加 `/profile/{code}`，`DataProvider` 加 `getProfile` | 详情页行情卡下方加"公司资料"行/卡 |
 | F3-3 | **成交活跃度**：成交额、换手率、量比 | 实时：东财 push2 加 f47 成交量/f48 成交额/f168 换手率/f50 量比（同样抓包核对）；历史：`stock_zh_a_hist` 本就有"成交额/换手率"列，`/history` 端点 `_hist_items` 加映射即可 | Quote/HistoryBar 加可选字段；详情页统计格 + 走势图可加成交量副图 |
 | F3-4 | **资金流**：主力/超大单净流入 | `ak.stock_individual_fund_flow(stock=code, market=...)`（东财个股资金流，market 参数 sh/sz/bj 按代码前缀映射）→ data-service `/fund-flow/{code}` | 详情页新 Tab 或独立卡片 |
@@ -136,6 +136,15 @@
 
 ## 更新日志
 
+- 2026-09-15（午后批次）：**F3-1 估值与规模完成**——`Quote` 新增 peTtm/peDynamic/peStatic/pb/
+  totalMarketCap/floatMarketCap 可选字段；东财 push2 加 f162/f163/f164/f167（PE/PB，×100）与
+  f116/f117（市值，单位元不缩放），腾讯下标 39/52/53/46/44/45（市值亿元×1e8）——两源字段编码
+  经 push2delay 同构接口 + 腾讯实时响应交叉实测一致（push2 本机限流中，验证方法见 PITFALLS）。
+  落点三处：详情页行情卡加第二行统计格（总市值/流通市值/PE(TTM)/PB，PE 缺失时降级 PE(动) 标注）、
+  `get_stock_quote` 技能输出加市值与 PE/PB 行（缺失整条不显示）、watchlist/详情 API 契约同步。
+  验证：typecheck + 70 测试全绿（新增东财估值 ÷100/缩放规则、"-" 置 undefined、腾讯估值下标 3 条用例，
+  fixture 自 push2delay 重录）；端到端 `/api/stocks/600519` 实测返回完整估值字段（腾讯降级路径；
+  东财路径因 IP 限流未实测，解析由真实结构 fixture 回放覆盖）。
 - 2026-09-15（深夜批次 3）：**新增 F3 路线图（个股信息补全）**——用户确认详情页信息缺口
   （估值/市值、公司资料、成交活跃度、资金流、分时数据等），STATUS 第四节落为
   F3-1~F3-6 排期表（含数据来源与落点建议），交给下一个 agent。
