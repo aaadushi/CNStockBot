@@ -72,7 +72,8 @@
 ## 5. 新闻查询（get_stock_news）
 
 - **实现方式**：调 `DataProvider.getNews(code, limit)` → Python 微服务 `/news/{code}`
-  → `ak.stock_news_em()`，limit 上限 20。
+  → `ak.stock_news_em()`，limit 上限 20。端点按 `publishedAt` **倒序排序后**再截 limit
+  （东财原始顺序是相关度序而非时间序，且必须先全量排序再截断，2026-09-15 修）。
 - **代码位置**：[src/skills/bundled/news/index.ts](../src/skills/bundled/news/index.ts)、
   [src/data/pythonService.ts](../src/data/pythonService.ts)、[data-service/main.py](../data-service/main.py) 的 `/news` 端点
 - **改动入口**：换新闻源/加字段 → main.py 端点 + provider.ts 的 `NewsItem` 接口 + 技能格式化

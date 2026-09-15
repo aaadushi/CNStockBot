@@ -81,11 +81,16 @@ async def quote(code: str):
 
 @app.get("/news/{code}")
 async def news(code: str, limit: int = Query(default=10, ge=1, le=50)):
-    """个股新闻（东财数据源）。返回 NewsItem[]。"""
+    """个股新闻（东财数据源）。返回 NewsItem[]，按发布时间倒序。
+
+    注意：stock_news_em 原始顺序是东财侧的相关度/热度序而非时间序（2026-09-15 用户
+    实测发现），必须先全量构建、按 publishedAt 倒序排完再截 limit——先 head 再排
+    会丢掉不在前 N 条里的更新新闻。
+    """
     try:
         df = await run_ak(ak.stock_news_em, symbol=code)
         items = []
-        for _, row in df.head(limit).iterrows():
+        for _, row in df.iterrows():
             items.append({
                 "title": str(row.get("新闻标题", "")),
                 "summary": str(row.get("新闻内容", ""))[:120],
@@ -93,7 +98,9 @@ async def news(code: str, limit: int = Query(default=10, ge=1, le=50)):
                 "url": str(row.get("新闻链接", "")),
                 "publishedAt": str(row.get("发布时间", "")),
             })
-        return items
+        # "YYYY-MM-DD HH:MM:SS" 格式可直接按字符串倒序；缺失时间的排最后
+        items.sort(key=lambda it: it["publishedAt"], reverse=True)
+        return items[:limit]
     except HTTPException:
         raise
     except Exception as e:
