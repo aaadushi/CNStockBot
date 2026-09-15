@@ -9,7 +9,7 @@
 import type { DataProvider, NewsItem, Quote } from './provider.js';
 
 const PUSH2 = 'https://push2.eastmoney.com/api/qt/stock/get';
-const FIELDS = 'f43,f57,f58,f60,f170,f86';
+const FIELDS = 'f43,f44,f45,f46,f57,f58,f60,f170,f86';
 /** 东财接口显式超时：防对端半挂拖住对话/调度链（审计 A-301） */
 const FETCH_TIMEOUT_MS = 10_000;
 
@@ -29,6 +29,9 @@ export function toSecid(code: string): string {
 interface EastmoneyQuotePayload {
   data?: {
     f43?: number | '-';
+    f44?: number | '-';
+    f45?: number | '-';
+    f46?: number | '-';
     f57?: string;
     f58?: string;
     f60?: number | '-';
@@ -59,12 +62,18 @@ export class EastmoneyProvider implements DataProvider {
     if (!Number.isFinite(changePct) && Number.isFinite(prevClose) && prevClose > 0) {
       changePct = ((Number(d.f43) / 100 - prevClose) / prevClose) * 100;
     }
+    // 开盘/最高/最低同样放大 100 倍且可能为 "-"（停牌），缺失时置 undefined（可选字段）
+    const priceField = (v: number | '-' | undefined) =>
+      v === '-' || v === undefined ? undefined : Number(v) / 100;
     return {
       code: d.f57 ?? label,
       name: d.f58 ?? label,
       price: Number(d.f43) / 100,
       changePct,
       prevClose,
+      open: priceField(d.f46),
+      high: priceField(d.f44),
+      low: priceField(d.f45),
       time: d.f86 ? new Date(Number(d.f86) * 1000).toLocaleString('zh-CN', { timeZone: 'Asia/Shanghai' }) : undefined,
     };
   }

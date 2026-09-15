@@ -57,12 +57,14 @@ src/
   storage/store.ts    SQLite 存储（node:sqlite）：自选股 + 会话历史（含工具上下文）+ 收件箱 + kv，按 userId 隔离
   channels/
     types.ts          Channel 接口：mount(app, agent) + notify(userId, text)
-    webchat.ts        网页聊天 + 离线通知收件箱（GET /api/inbox 轮询，SQLite 持久化）
+    webchat.ts        网页聊天 + 收件箱 + 股票浏览页 API（/api/watchlist、/api/stocks/:code、/api/search）
     feishu.ts         飞书渠道：验签(含防重放)/回复/主动推送，chat_id 映射 kv 持久化；默认不启用
   alerts/scheduler.ts 定时任务：收盘日报（15:30 北京时间）+ 盘中异动提醒（超阈值推送）
   alerts/healthProbe.ts 行情健康探针：定时探测常青股票，连续失败告警（P4）
-data-service/         Python FastAPI + AKShare 微服务（新闻等；AKShare 调用统一 30s 超时）
+data-service/         Python FastAPI + AKShare 微服务（新闻/公告/财报/历史K线；AKShare 调用统一 30s 超时）
 public/webchat/       内置聊天网页
+public/stocks/        股票浏览页 + 个股详情页 SPA（F1/F2，手写 SVG 走势图）
+public/shared/        前端共享设计系统 theme.css（两页共用，/shared 静态挂载）
 tests/                vitest 单测（npm test）；fixtures/eastmoney/ 为真实接口响应回放
 docs/                 文档库：STATUS（功能与问题）/ FEATURES（实现手册）/ PITFALLS（踩坑病例）/ AUDIT（代码审计）/ 架构与数据源
 ```
@@ -141,15 +143,13 @@ uvicorn main:app --host 127.0.0.1 --port 8000
 2026-09-15 环境已就绪（Kimi kimi-k3 接入，行情链路加了腾讯降级）。
 
 剩余事项（按优先级）：
-1. **F1/F2 新功能**（用户指定，见 [docs/STATUS.md](docs/STATUS.md) 第四节）：
-   F1 股票浏览页 + 个股详情页（折线图、往期数据）；F2 浏览页内搜索。需要给数据层
-   新增历史 K 线能力（data-service 加 `ak.stock_zh_a_hist` 端点）。
+1. ~~F1/F2 新功能~~ ✅ 2026-09-15 完成：股票浏览页 + 个股详情页（SVG 折线图、往期数据）
+   + 页内搜索；数据层新增历史 K 线能力（东财失败降级新浪，PITFALLS 已记录）。
 2. P8：LLM 429 重试（Kimi 低等级账号限流，用户决定暂不修，复发时做）。
 3. S3-3 多用户体系（仅公网部署前必须做，落地时一并解决 A-601 同口令无身份隔离）；
    A-508 微服务 token（仅非回环部署时需要）。
 
-后续迭代按 [docs/STATUS.md](docs/STATUS.md) 第二节**待办优先级总表**执行
-（当前仅剩：S0-1/S0-2 环境配置（需人工）、AUDIT 复核闭环、S3-3 多用户体系）。
+后续迭代按 [docs/STATUS.md](docs/STATUS.md) 第四节的候选方向执行。
 
 ## 文档维护义务（每次改动代码后对照执行）
 

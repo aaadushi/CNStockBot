@@ -11,6 +11,9 @@ export interface Quote {
   changePct: number;  // 涨跌幅（%）
   prevClose: number;  // 昨收
   time?: string;      // 行情时间
+  open?: number;      // 今开（部分数据源不提供）
+  high?: number;      // 最高（部分数据源不提供）
+  low?: number;       // 最低（部分数据源不提供）
 }
 
 export interface NewsItem {
@@ -39,6 +42,17 @@ export interface FinancialReport {
   cashFlowPerShare?: string;   // 每股现金流
 }
 
+/** 历史日 K 线（前复权），按日期升序 */
+export interface HistoryBar {
+  date: string;      // YYYY-MM-DD
+  open: number;
+  close: number;
+  high: number;
+  low: number;
+  volume: number;    // 成交量（手）
+  changePct: number; // 涨跌幅 %
+}
+
 export interface DataProvider {
   readonly name: string;
   getQuote(code: string): Promise<Quote>;
@@ -49,6 +63,8 @@ export interface DataProvider {
   getAnnouncements?(code: string, limit?: number): Promise<Announcement[]>;
   /** 财报摘要（按报告期倒序）；东财直连无此能力，仅微服务模式提供 */
   getFinancials?(code: string, limit?: number): Promise<FinancialReport[]>;
+  /** 历史日 K 线（前复权，日期升序）；东财直连无此能力，仅微服务模式提供 */
+  getHistory?(code: string, days?: number): Promise<HistoryBar[]>;
   /** 按关键词搜索股票（名称/代码），返回候选代码列表 */
   search?(keyword: string): Promise<{ code: string; name: string }[]>;
 }

@@ -8,7 +8,7 @@ import { config } from '../config.js';
 import { EastmoneyProvider } from './eastmoney.js';
 import { TencentProvider } from './tencent.js';
 import { PythonServiceProvider } from './pythonService.js';
-import type { Announcement, DataProvider, FinancialReport, NewsItem, Quote } from './provider.js';
+import type { Announcement, DataProvider, FinancialReport, HistoryBar, NewsItem, Quote } from './provider.js';
 
 class CompositeProvider implements DataProvider {
   readonly name = 'composite(eastmoney+python)';
@@ -66,6 +66,18 @@ class CompositeProvider implements DataProvider {
     } catch (err) {
       throw new Error(
         `财报数据不可用：${err instanceof Error ? err.message : String(err)}\n` +
+          '提示：进入 data-service 目录运行 `pip install -r requirements.txt && uvicorn main:app` 启动数据微服务。',
+      );
+    }
+  }
+
+  /** 历史 K 线只能走微服务（东财历史行情，AKShare 封装），未启动时给出带启动提示的错误 */
+  async getHistory(code: string, days = 120): Promise<HistoryBar[]> {
+    try {
+      return await this.python.getHistory(code, days);
+    } catch (err) {
+      throw new Error(
+        `历史行情数据不可用：${err instanceof Error ? err.message : String(err)}\n` +
           '提示：进入 data-service 目录运行 `pip install -r requirements.txt && uvicorn main:app` 启动数据微服务。',
       );
     }

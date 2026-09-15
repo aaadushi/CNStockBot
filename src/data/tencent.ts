@@ -4,8 +4,8 @@
  * 限流期间腾讯接口不受影响，可托底行情/指数查询。
  *
  * 响应格式（GBK 编码纯文本，~ 分隔）：
- *   v_sh600519="1~名称~代码~最新价~昨收~今开~成交量~...~时间yyyyMMddHHmmss~涨跌额~涨跌幅%~..."
- *   索引：1=name 2=code 3=price 4=prevClose 30=time 32=changePct
+ *   v_sh600519="1~名称~代码~最新价~昨收~今开~成交量~...~时间yyyyMMddHHmmss~涨跌额~涨跌幅%~最高~最低~..."
+ *   索引：1=name 2=code 3=price 4=prevClose 5=open 30=time 32=changePct 33=high 34=low
  * 代码前缀规则：沪市 6/9 → sh，深市 0/3 → sz，北交所 4/8/920 → bj。
  */
 import type { DataProvider, NewsItem, Quote } from './provider.js';
@@ -39,7 +39,7 @@ export class TencentProvider implements DataProvider {
     const m = /="(.*)"/.exec(text);
     const f = m?.[1]?.split('~') ?? [];
     const price = Number(f[3]);
-    if (!m || f.length < 33 || !Number.isFinite(price) || price <= 0) {
+    if (!m || f.length < 35 || !Number.isFinite(price) || price <= 0) {
       throw new Error(`未找到 ${label} 的行情（代码错误或已退市/停牌）`);
     }
     // 时间格式 20260914161450 → 可读字符串
@@ -49,6 +49,11 @@ export class TencentProvider implements DataProvider {
       : undefined;
     const prevClose = Number(f[4]);
     const changePct = Number(f[32]);
+    // 开/高/低为可选字段：非法值置 undefined，不静默取 0（与 A-310 同原则）
+    const opt = (i: number) => {
+      const v = Number(f[i]);
+      return Number.isFinite(v) && v > 0 ? v : undefined;
+    };
     return {
       code: String(f[2] ?? label),
       name: String(f[1] ?? label),
@@ -56,6 +61,9 @@ export class TencentProvider implements DataProvider {
       // 与东财口径一致：缺失置 NaN 由展示层显示 —（A-310）
       changePct: Number.isFinite(changePct) ? changePct : NaN,
       prevClose: Number.isFinite(prevClose) && prevClose > 0 ? prevClose : NaN,
+      open: opt(5),
+      high: opt(33),
+      low: opt(34),
       time,
     };
   }

@@ -30,7 +30,7 @@ process.on('uncaughtException', (err) => {
   console.error('[fatal] 未捕获异常:', err);
 });
 
-const channels: Channel[] = [new WebChatChannel(store)];
+const channels: Channel[] = [new WebChatChannel(store, data)];
 if (config.feishu.enabled) channels.push(new FeishuChannel(store));
 
 const app = express();

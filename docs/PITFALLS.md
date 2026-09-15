@@ -120,6 +120,19 @@
 
 ## 3. Python / AKShare（data-service）
 
+### [2026-09-15] `stock_zh_a_hist` 连接被掐断（东财 push2his 独立限流），需新浪源降级
+- **现象**：`GET /history/600519` 报 `AKShare 历史行情获取失败: ('Connection aborted.',
+  RemoteDisconnected('Remote end closed connection without response'))`；同一时刻
+  实时行情（push2）却正常。
+- **根因**：`ak.stock_zh_a_hist` 走的是东财 push2his（历史行情）接口，与 push2（实时）
+  限流计数独立；本机 IP 前一日录 fixture 高频请求触发的限流未完全解除，push2his 仍被掐。
+- **解法**：`/history` 端点加数据源降级链——东财 `stock_zh_a_hist` 失败（含 30s 超时 504）
+  自动降级新浪 `ak.stock_zh_a_daily(symbol=sh/sz 前缀, adjust="qfq")`；新浪无"涨跌幅"列，
+  用收盘价环比补算。两源都挂则 502 并带出两个原始错误。
+- **涉及文件**：`data-service/main.py` 的 `/history` 端点
+- **预防**：AKShare 里凡走东财的接口都要假设 push2/push2his 会分别被限流；
+  新端点设计时先想好降级源。新浪源不覆盖北交所（4/8/920）。
+
 ### [2026-09-14] `stock_financial_abstract` 参数名是 `stock`，返回值全是带单位字符串
 - **现象**：按惯例写 `symbol="600519"` 会报 TypeError（未知参数）；拿到的"净利润"是
   `"999,862,000.00元"` 这种字符串，直接 `float()` 会炸。
@@ -128,8 +141,12 @@
 - **解法**：调用写 `ak.stock_financial_abstract(stock=code)`；本项目不做数值清洗，
   原样传给 LLM 阅读（端点 `col_map` 注释有说明）。若未来要做同比/环比计算，
   先 strip "元" 和逗号再转 float。
+  **⚠️ 2026-09-15 更新**：akshare 1.18.94 已把参数名改回 `symbol`，旧调用报
+  `unexpected keyword argument 'stock'`。端点已改为 `symbol` 优先、`TypeError` 时
+  回退 `stock`，两个版本都兼容。
 - **涉及文件**：`data-service/main.py` 的 `/financials` 端点
-- **预防**：接 AKShare 新接口前先查官方文档确认参数名，不要想当然复用 `symbol`。
+- **预防**：接 AKShare 新接口前先查官方文档确认参数名，不要想当然复用 `symbol`；
+  升级 AKShare 后用 `inspect.signature` 核对存量调用的参数名。
 
 ### [2026-09-14] 巨潮公告接口查询结果为空时抛 KeyError 而非返回空表
 - **现象**：`ak.stock_zh_a_disclosure_report_cninfo` 对无公告的代码/时间范围抛 `KeyError`，

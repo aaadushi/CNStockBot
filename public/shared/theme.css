@@ -1,0 +1,193 @@
+/**
+ * CNStockBot 共享设计系统（ShadcnUI 风格：极简、黑白灰、圆角、呼吸感）
+ * - 黑白灰为主色调，仅 CTA 用强调色（indigo）
+ * - A 股语义色：红涨绿跌（仅用于行情数据，不做 UI 强调色）
+ * 被 /webchat 与 /stocks 两个页面共用，经 express.static('/shared') 提供。
+ */
+
+:root {
+  --bg: #fafafa;
+  --card: #ffffff;
+  --border: #e4e4e7;
+  --border-strong: #d4d4d8;
+  --text: #18181b;
+  --text-2: #71717a;   /* 次要文字 */
+  --text-3: #a1a1aa;   /* 弱化文字 */
+  --accent: #4f46e5;
+  --accent-hover: #4338ca;
+  --accent-soft: #eef2ff;
+  --up: #dc2626;       /* 涨（A 股红涨） */
+  --up-soft: #fef2f2;
+  --down: #16a34a;     /* 跌（绿跌） */
+  --down-soft: #f0fdf4;
+  --radius: 12px;
+  --shadow-sm: 0 1px 2px rgba(0, 0, 0, .04), 0 2px 8px rgba(0, 0, 0, .04);
+  --shadow-md: 0 2px 6px rgba(0, 0, 0, .05), 0 10px 28px rgba(0, 0, 0, .08);
+  --font: -apple-system, "PingFang SC", "Microsoft YaHei", sans-serif;
+}
+
+* { box-sizing: border-box; margin: 0; padding: 0; }
+
+body {
+  font-family: var(--font);
+  background: var(--bg);
+  color: var(--text);
+  font-size: 14px;
+  line-height: 1.6;
+  -webkit-font-smoothing: antialiased;
+}
+
+/* ---- 布局 ---- */
+.page {
+  max-width: 720px;
+  margin: 0 auto;
+  padding: 24px 20px 48px;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.page-header {
+  background: var(--card);
+  border-bottom: 1px solid var(--border);
+  padding: 0 20px;
+}
+.page-header .inner {
+  max-width: 720px;
+  margin: 0 auto;
+  height: 56px;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+.page-header .brand { font-size: 16px; font-weight: 600; }
+.page-header .sub { font-size: 12px; color: var(--text-3); }
+.page-header .spacer { flex: 1; }
+.page-header a.nav {
+  font-size: 13px;
+  color: var(--text-2);
+  text-decoration: none;
+  padding: 6px 12px;
+  border-radius: 8px;
+  transition: background 150ms ease, color 150ms ease;
+}
+.page-header a.nav:hover { background: var(--bg); color: var(--text); }
+
+/* ---- 卡片 ---- */
+.card {
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow-sm);
+  padding: 20px;
+}
+
+/* ---- 按钮 ---- */
+.btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  font-family: var(--font);
+  font-size: 13px;
+  font-weight: 500;
+  border-radius: 10px;
+  padding: 8px 16px;
+  cursor: pointer;
+  border: 1px solid transparent;
+  transition: background 150ms ease, border-color 150ms ease, color 150ms ease, opacity 150ms ease;
+  white-space: nowrap;
+}
+.btn:disabled { opacity: .5; cursor: not-allowed; }
+.btn-primary { background: var(--accent); color: #fff; }
+.btn-primary:hover:not(:disabled) { background: var(--accent-hover); }
+.btn-ghost { background: var(--card); border-color: var(--border); color: var(--text); }
+.btn-ghost:hover:not(:disabled) { background: var(--bg); border-color: var(--border-strong); }
+.btn-sm { padding: 5px 12px; font-size: 12px; border-radius: 8px; }
+
+/* ---- 输入框 ---- */
+.input {
+  width: 100%;
+  font-family: var(--font);
+  font-size: 14px;
+  color: var(--text);
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 10px 14px;
+  outline: none;
+  transition: border-color 150ms ease, box-shadow 150ms ease;
+}
+.input::placeholder { color: var(--text-3); }
+.input:focus { border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-soft); }
+
+/* ---- 涨跌徽章 ---- */
+.badge {
+  display: inline-flex;
+  align-items: center;
+  font-size: 12px;
+  font-weight: 600;
+  border-radius: 999px;
+  padding: 2px 10px;
+  font-variant-numeric: tabular-nums;
+}
+.badge-up { color: var(--up); background: var(--up-soft); }
+.badge-down { color: var(--down); background: var(--down-soft); }
+.badge-flat { color: var(--text-2); background: var(--bg); }
+.text-up { color: var(--up); }
+.text-down { color: var(--down); }
+.text-2 { color: var(--text-2); }
+.text-3 { color: var(--text-3); }
+
+/* ---- 骨架屏 ---- */
+@keyframes skeleton-pulse { 0%, 100% { opacity: 1; } 50% { opacity: .45; } }
+.skeleton {
+  background: var(--border);
+  border-radius: var(--radius);
+  animation: skeleton-pulse 1.4s ease-in-out infinite;
+}
+
+/* ---- 口令鉴权浮层（两个页面共用） ---- */
+.auth-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(250, 250, 250, .92);
+  backdrop-filter: blur(4px);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 20px;
+  z-index: 100;
+}
+.auth-overlay[hidden] { display: none; }
+.auth-card {
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: 16px;
+  box-shadow: var(--shadow-md);
+  padding: 32px;
+  width: 100%;
+  max-width: 360px;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+.auth-card h2 { font-size: 18px; font-weight: 600; }
+.auth-card p { font-size: 13px; color: var(--text-2); }
+.auth-card .error { font-size: 12px; color: var(--up); min-height: 16px; }
+
+/* ---- 空状态 / 免责声明 ---- */
+.empty-state {
+  text-align: center;
+  padding: 56px 20px;
+  color: var(--text-3);
+}
+.empty-state .icon { font-size: 40px; margin-bottom: 12px; }
+.empty-state .title { font-size: 15px; color: var(--text-2); margin-bottom: 4px; }
+.empty-state .desc { font-size: 13px; }
+.disclaimer {
+  text-align: center;
+  font-size: 12px;
+  color: var(--text-3);
+  padding: 8px 0 16px;
+}

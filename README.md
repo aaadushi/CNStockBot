@@ -16,6 +16,7 @@
 - 🚨 异动提醒：盘中自选股涨跌幅超阈值（默认 ±5%）主动推送
 - 🩺 行情健康探针：定时探测行情链路，接口失效主动告警
 - 🌐 内置网页聊天界面（WebChat，API 访问口令保护）；飞书渠道已实现（验签/回复/主动推送），默认关闭
+- 📊 股票浏览页（/stocks）：自选股卡片列表 + 页内搜索 + 个股详情页（历史走势折线图、新闻/公告/财报）
 
 ## 快速开始
 
@@ -27,10 +28,10 @@ cp .env.example .env   # 填入 LLM_API_KEY（推荐 DeepSeek，国内直连且�
 npm run dev
 ```
 
-打开 http://localhost:18790/webchat ，按提示输入访问口令
+打开 http://localhost:18790/webchat 或 http://localhost:18790/stocks ，按提示输入访问口令
 （口令 = `.env` 的 `ACCESS_TOKEN`；未配置时启动日志会打印一个随机口令）。
 
-**启用新闻/公告/财报/搜索功能**（需要 Python ≥ 3.10）：
+**启用新闻/公告/财报/历史走势/搜索功能**（需要 Python ≥ 3.10）：
 
 ```bash
 cd data-service
@@ -49,7 +50,7 @@ agent/loop.ts      Agent 循环：LLM function calling 调度技能
    │
 skills/bundled/    技能（quote / search / news / announcement / financials / watchlist / index），每个含 SKILL.md 说明
    │
-data/              数据源抽象：东财直连（行情/指数）+ Python AKShare 微服务（新闻/公告/财报/搜索/交易日历）
+data/              数据源抽象：东财直连（行情/指数）+ Python AKShare 微服务（新闻/公告/财报/搜索/历史K线/交易日历）
    │
 storage/store.ts   SQLite 存储（node:sqlite）：自选股 + 会话历史 + 离线收件箱 + kv，按 userId 隔离
 ```
