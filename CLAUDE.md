@@ -64,7 +64,8 @@ src/
 data-service/         Python FastAPI + AKShare 微服务（新闻/公告/财报/历史K线；AKShare 调用统一 30s 超时）
 public/webchat/       内置聊天网页
 public/stocks/        股票浏览页 + 个股详情页 SPA（F1/F2，手写 SVG 走势图）
-public/shared/        前端共享设计系统 theme.css（两页共用，/shared 静态挂载）
+public/market/        全市场涨跌榜页（涨幅/跌幅/平盘三 Tab + 家数总览，东财 clist/ulist）
+public/shared/        前端共享设计系统 theme.css（各页面共用，/shared 静态挂载）
 tests/                vitest 单测（npm test）；fixtures/eastmoney/ 为真实接口响应回放
 docs/                 文档库：STATUS（功能与问题）/ FEATURES（实现手册）/ PITFALLS（踩坑病例）/ AUDIT（代码审计）/ 架构与数据源
 ```

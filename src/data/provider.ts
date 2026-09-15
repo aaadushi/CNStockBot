@@ -67,6 +67,26 @@ export interface HistoryBar {
   changePct: number; // 涨跌幅 %
 }
 
+/** 涨跌榜条目（全市场涨跌浏览页用） */
+export interface MoverItem {
+  code: string;
+  name: string;
+  price: number;
+  changePct: number; // 涨跌幅 %
+}
+
+/** 全市场今日涨跌：三个榜单 + 涨跌平家数统计（2026-09-15 新增，涨跌浏览页） */
+export interface MarketMovers {
+  up: MoverItem[];   // 涨幅榜（按涨跌幅降序）
+  down: MoverItem[]; // 跌幅榜（按涨跌幅升序，即跌得多的在前）
+  flat: MoverItem[]; // 平盘（涨跌幅恰为 0）
+  upCount: number;   // 全市场上涨家数
+  downCount: number;
+  flatCount: number;
+  time?: string;     // 数据生成时间（北京时间）
+  delayed?: boolean; // true = 数据来自延时宿主（push2delay，约延时 15 分钟）
+}
+
 export interface DataProvider {
   readonly name: string;
   getQuote(code: string): Promise<Quote>;
@@ -79,6 +99,8 @@ export interface DataProvider {
   getFinancials?(code: string, limit?: number): Promise<FinancialReport[]>;
   /** 历史日 K 线（前复权，日期升序）；东财直连无此能力，仅微服务模式提供 */
   getHistory?(code: string, days?: number): Promise<HistoryBar[]>;
+  /** 全市场今日涨跌榜（上涨/下跌/平盘 + 家数统计）；仅东财系接口提供 */
+  getMovers?(limit?: number): Promise<MarketMovers>;
   /** 按关键词搜索股票（名称/代码），返回候选代码列表 */
   search?(keyword: string): Promise<{ code: string; name: string }[]>;
 }

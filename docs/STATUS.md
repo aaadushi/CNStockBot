@@ -34,6 +34,7 @@
 | 股票浏览页 + 个股详情页（/stocks） | `public/stocks/` + `src/channels/webchat.ts` | ✅ 可用 | F1/F2 完成：自选股圆角卡片列表、页内搜索（同款卡片结果）、详情页行情/走势图/新闻/公告/财报；API 全部在口令鉴权后；2026-09-15 |
 | 历史 K 线数据（走势图数据源） | `data-service/main.py` `/history` + `DataProvider.getHistory` | ✅ 可用 | 前复权日 K；东财 `stock_zh_a_hist` 失败自动降级新浪 `stock_zh_a_daily`（push2his 限流托底，见 PITFALLS） |
 | 前端共享设计系统 | `public/shared/theme.css` | ✅ 可用 | ShadcnUI 风格（黑白灰 + indigo CTA、圆角卡片、微阴影）；webchat 与 stocks 两页共用；2026-09-15 UI 重设计 |
+| 全市场涨跌榜（/market） | `public/market/` + `src/channels/webchat.ts` `/api/market/movers` | ✅ 可用 | 今日涨幅榜/跌幅榜/平盘三 Tab + 涨跌平家数总览（沪深京）；东财 clist/ulist 接口，push2 限流自动降级 push2delay（延时 15 分钟，页面标注）；不依赖 data-service；2026-09-15 新增 |
 
 ## 二、待办优先级总表（下一个 agent 从这里开始）
 
@@ -136,6 +137,16 @@
 
 ## 更新日志
 
+- 2026-09-15（午后批次 3）：**全市场涨跌浏览页（/market）上线**——用户指定需求：与自选股页
+  区分开的全市场今日涨跌浏览。后端：`DataProvider.getMovers()` 新能力，东财 clist 排行榜
+  （fltt=2 不缩放）+ ulist 涨跌平家数（沪深京三市 secid 求和）；停牌股与平盘**混排在零区**
+  导致"按上涨家数算页码"定位失效，改为二分查找零区起点再扫描（PITFALLS 已记录）；
+  push2 限流自动降级 push2delay 同构接口（返回 `delayed: true`，页面标注"延时约 15 分钟"）；
+  结果缓存 60s 防刷新触发限流。前端：新增 `public/market/`（涨跌平家数总览卡 +
+  涨幅/跌幅/平盘三 Tab 同款圆角卡片，点卡片跳详情页），复用 theme.css 与口令鉴权；
+  /stocks 页头加"📊 涨跌榜"导航。验证：typecheck + 73 测试全绿（movers 7 条新用例：
+  合成全市场 mock 二分定位/停牌过滤/宿主降级/缓存 + 真实 fixture 回放）；端到端实测
+  /api/market/movers 三榜与家数正确（含北交所），401 与 /market 静态页正常。
 - 2026-09-15（午后批次 2）：**运行环境核实**——发现 data-service 在跑的是昨日修复前的旧进程
   （公告/财报报旧错），重启后详情页四块全链路实测通过：行情含估值字段（腾讯降级路径）、
   新闻 10 条、财报 4 期、公告链路正常（茅台近 30 天无公告返回 0 条是正确行为，120 天窗口有数据；

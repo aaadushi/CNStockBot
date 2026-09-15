@@ -8,7 +8,7 @@ import { config } from '../config.js';
 import { EastmoneyProvider } from './eastmoney.js';
 import { TencentProvider } from './tencent.js';
 import { PythonServiceProvider } from './pythonService.js';
-import type { Announcement, DataProvider, FinancialReport, HistoryBar, NewsItem, NewsSort, Quote } from './provider.js';
+import type { Announcement, DataProvider, FinancialReport, HistoryBar, MarketMovers, NewsItem, NewsSort, Quote } from './provider.js';
 
 class CompositeProvider implements DataProvider {
   readonly name = 'composite(eastmoney+python)';
@@ -81,6 +81,12 @@ class CompositeProvider implements DataProvider {
           '提示：进入 data-service 目录运行 `pip install -r requirements.txt && uvicorn main:app` 启动数据微服务。',
       );
     }
+  }
+
+  /** 全市场涨跌榜：走东财 clist（内部 push2 → push2delay 宿主降级 + 60s 缓存）。
+   *  腾讯无对应榜单接口，故不走腾讯降级；不依赖 data-service。 */
+  async getMovers(limit = 50): Promise<MarketMovers> {
+    return this.quote.getMovers(limit);
   }
 
   /** 搜索优先走 Python 微服务（全量代码表，匹配更准）；未启动时降级到东财搜索建议接口 */

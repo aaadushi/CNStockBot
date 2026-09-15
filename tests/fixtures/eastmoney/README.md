@@ -7,6 +7,8 @@
 |---|---|
 | `quote-600519.json` | 2026-09-15 重录：`GET https://push2delay.eastmoney.com/api/qt/stock/get?secid=1.600519&fields=f43,f44,f45,f46,f57,f58,f60,f170,f86,f116,f117,f162,f163,f164,f167`（带 Referer 头）。**用 push2delay 是因为当日 push2 对本机 IP 限流未解除**；两者响应结构同构（延时行情，数值是延时的不影响解析验证）。首录于 2026-09-14（push2，仅旧字段） |
 | `suggest-maotai.json` | `GET https://searchapi.eastmoney.com/api/suggest/get?input=茅台&type=14&count=10`（带 Referer 头），2026-09-14 录制 |
+| `clist-gainers-5.json` | 2026-09-15 录：`GET https://push2delay.eastmoney.com/api/qt/clist/get?pn=1&pz=5&po=1&np=1&fltt=2&invt=2&fid=f3&fs=m:0+t:6,m:0+t:80,m:1+t:2,m:1+t:23,m:0+t:81+s:2048&fields=f12,f14,f2,f3`（涨幅榜首页；当日 push2 限流，用同构延时宿主录制） |
+| `ulist-mover-counts.json` | 2026-09-15 录：`GET https://push2delay.eastmoney.com/api/qt/ulist.np/get?secids=1.000001,0.399001,0.899050&fields=f104,f105,f106`（沪深京涨跌平家数） |
 
 重新录制：用 curl 带 `Referer: https://quote.eastmoney.com/` 请求上述 URL 覆盖对应文件即可
 （push2 可用时优先用 push2，fields 参数保持一致）。
