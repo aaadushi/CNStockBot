@@ -35,6 +35,7 @@
 | 历史 K 线数据（走势图数据源） | `data-service/main.py` `/history` + `DataProvider.getHistory` | ✅ 可用 | 前复权日 K；东财 `stock_zh_a_hist` 失败自动降级新浪 `stock_zh_a_daily`（push2his 限流托底，见 PITFALLS） |
 | 前端共享设计系统 | `public/shared/theme.css` | ✅ 可用 | ShadcnUI 风格（黑白灰 + indigo CTA、圆角卡片、微阴影）；webchat 与 stocks 两页共用；2026-09-15 UI 重设计 |
 | 全市场涨跌榜（/market） | `public/market/` + `src/channels/webchat.ts` `/api/market/movers` | ✅ 可用 | 今日涨幅榜/跌幅榜/平盘三 Tab + 涨跌平家数总览（沪深京）；东财 clist/ulist 接口，push2 限流自动降级 push2delay（延时 15 分钟，页面标注）；不依赖 data-service；2026-09-15 新增 |
+| 基金版块（/funds + 基金技能，F4-B） | `public/funds/` + `src/skills/bundled/fundrank/`、`fundinfo/` + data-service `/funds/*` | ✅ 可用 | 开放式基金排行（按类型）/基金搜索/基金详情净值走势/场内 ETF 实时榜；天天基金数据（支付宝同源）经微服务，依赖 data-service 运行；2026-09-15 新增 |
 
 ## 二、待办优先级总表（下一个 agent 从这里开始）
 
@@ -144,10 +145,10 @@
 
 | # | 事项 | 数据来源建议 | 落点 |
 |---|---|---|---|
-| F4-B1 | 开放式基金排行/净值 | data-service：`GET /funds/rank?type=&limit=`（`ak.fund_open_fund_rank_em()` 天天基金开放式基金排行——与支付宝同源）；`GET /funds/{code}` 基金详情 + 净值走势（`ak.fund_open_fund_info_em()`）；`GET /funds/search?keyword=`（`ak.fund_name_em()` 全量基金代码表，参照 /search 缓存模式） | 数据层 |
-| F4-B2 | 场内 ETF 行情 | `ak.fund_etf_spot_em()` 全量 ETF 实时行情 → `GET /funds/etf?limit=`；单只 ETF 行情评估能否复用东财 push2（基金代码前缀 51/15/16/58 等的 secid 规则需抓包实测，未确认前走微服务） | 数据层 |
-| F4-B3 | 聊天技能 | `get_fund_rank`（基金排行，可按类型）、`get_fund_info`（单只基金净值/详情，LLM 不认识基金名时引导先用基金搜索） | 对话 |
-| F4-B4 | 网页 | 新页面 `/funds`：基金排行 Tab（股票型/混合型/债券型/指数型等）+ 页内基金搜索 + 基金详情（净值走势图复用现有手写 SVG 折线组件）；API 全部在口令鉴权后 | 前端 |
+| ~~F4-B1~~ | ~~开放式基金排行/净值~~ | ✅ 2026-09-15 完成（见更新日志） | — |
+| ~~F4-B2~~ | ~~场内 ETF 行情~~ | ✅ 2026-09-15 完成（push2 复用路径放弃，统一走微服务，理由见 PITFALLS/DATA_SOURCES） | — |
+| ~~F4-B3~~ | ~~聊天技能 `get_fund_rank` / `get_fund_info`~~ | ✅ 2026-09-15 完成 | — |
+| ~~F4-B4~~ | ~~网页 `/funds`（排行/ETF Tab + 搜索 + 净值走势图）~~ | ✅ 2026-09-15 完成 | — |
 
 **通用注意**（沿用 F3 约定）：
 - data-service 新端点必须走 `run_ak()`（30s 超时）；耗时接口配进程内缓存（参考公告 `_notice_cache` 与搜索代码表缓存）
@@ -167,6 +168,21 @@
 
 ## 更新日志
 
+- 2026-09-15（傍晚批次 2）：**F4-B 基金版块上线**——对标支付宝财富页的基金内容。
+  后端：data-service 新增 4 端点（均经 akshare 1.18.94 实测选型）：`/funds/rank?type=&limit=`
+  （`fund_open_fund_rank_em` 天天基金开放式排行，按类型缓存 10 分钟）、`/funds/search?keyword=`
+  （`fund_name_em` 全量基金表约 2.8 万行，缓存 24h + 打分排序）、`/funds/{code}?days=`
+  （`fund_open_fund_info_em` 单位净值走势，按代码缓存 6h）、`/funds/etf?limit=`
+  （`fund_etf_spot_em` 全量场内 ETF 实时快照，全量翻页 30s+ 故超时放宽 120s + 缓存 60s）；
+  `DataProvider` 加 `FundRankItem/FundSearchItem/FundInfo/EtfQuote` 与对应方法，
+  CompositeProvider 接线。技能：`get_fund_rank`（按类型排行）、`get_fund_info`
+  （单只基金净值/走势，支持代码或名称——名称先走基金搜索解析）。前端：新增
+  `public/funds/` SPA（排行类型 Tab + 场内 ETF Tab + 防抖搜索 + 详情净值走势图，
+  复用 theme.css 与手写 SVG 折线组件）；webchat.ts 加 `/api/funds/*` 系列端点
+  （全部在口令鉴权后）；/stocks 与 /market 页头加"💰 基金"导航。
+  验证：typecheck + 94 测试全绿（funds 9 条新用例）+ py_compile 通过；端到端实测
+  四个微服务端点与主服务 API 均返回真实数据、无 token 401、/funds 静态页 200
+  （验证端口 8102/18802，验后已停）。
 - 2026-09-15（傍晚批次）：**新增 F4 路线图（基金与财经资讯版块）**——用户要求项目内
   可查看"支付宝相关版块"与"财经相关内容"，经确认范围为股票+基金相关内容：
   基金（净值/排行/场内 ETF，对标支付宝财富页基金版块）与全市场财经快讯；

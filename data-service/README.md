@@ -30,6 +30,10 @@ uvicorn main:app --host 127.0.0.1 --port 8000
 | `GET /financials/{code}` | 财报摘要（新浪，按报告期倒序） |
 | `GET /history/{code}?days=120` | 历史日 K 线（前复权；东财失败自动降级新浪） |
 | `GET /trade-calendar?year=` | 交易日历（新浪，用于跳过法定节假日） |
+| `GET /funds/rank?type=&limit=` | 开放式基金排行（天天基金，按近1年收益率降序；type 白名单：全部/股票型/混合型/债券型/指数型/QDII/FOF；按类型缓存 10 分钟） |
+| `GET /funds/search?keyword=` | 基金搜索（全量代码表缓存 24h，支持名称/代码/拼音缩写） |
+| `GET /funds/etf?limit=` | 场内 ETF 实时行情榜（东财全量快照，翻页 30s+ 故超时 120s + 缓存 60s） |
+| `GET /funds/{code}?days=` | 单只基金详情 + 单位净值走势（按代码缓存 6h；须声明在 rank/search/etf 之后） |
 
 ## 注意
 

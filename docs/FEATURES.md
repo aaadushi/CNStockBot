@@ -397,3 +397,34 @@
 - **注意事项**：clist 的 f2/f3 在 `fltt=2` 下不缩放，与报价接口 ×100 规则相反，别混用；
   停牌股混排零区是实测行为（PITFALLS 东财条目），改平盘定位逻辑前先读；
   测试用合成全市场 mock（`tests/movers.test.ts` 的 `clistHandler`），改请求模式要同步改。
+
+## 24. 基金版块（F4-B，2026-09-15 新增）
+
+- **实现方式**：对标支付宝财富页的基金内容，数据源为天天基金（东财系，与支付宝同源），
+  全部经 data-service（AKShare）暴露，列结构均经 akshare 1.18.94 实测。四个端点：
+  `/funds/rank?type=&limit=`（`fund_open_fund_rank_em` 开放式基金排行，按近1年收益率降序，
+  type 白名单：全部/股票型/混合型/债券型/指数型/QDII/FOF，按类型缓存 10 分钟）；
+  `/funds/search?keyword=`（`fund_name_em` 全量基金代码表约 2.8 万行，缓存 24h，
+  支持名称/代码/拼音缩写打分排序，复用股票搜索模式）；
+  `/funds/{code}?days=`（`fund_open_fund_info_em` 单位净值走势，日期升序，按代码缓存 6h，
+  名称/类型从全量代码表解析）；`/funds/etf?limit=`（`fund_etf_spot_em` 场内 ETF 全量
+  实时快照，全量翻页 30s+ 故 run_ak 超时放宽 120s + 结果缓存 60s）。
+  **FastAPI 路由顺序注意**：`/funds/{code}` 必须声明在 rank/search/etf 之后，否则被当 code 匹配。
+  主服务侧 `DataProvider` 加 `FundRankItem/FundSearchItem/FundInfo/EtfQuote`（区间收益缺失
+  为 null，展示为 —），CompositeProvider 接线（微服务未启动时技能返回带启动提示的文本）。
+- **聊天技能**：`get_fund_rank`（按类型排行，limit 归一化 ≤50）、`get_fund_info`
+  （参数支持 6 位代码或名称关键词——名称先走 `/funds/search` 解析再查详情）。
+- **网页**：`public/funds/` 单文件 SPA——基金排行类型 Tab + 场内 ETF Tab + 防抖搜索
+  （同款卡片结果）+ `?code=` 详情视图（净值信息 + 单位净值走势图，复用 stocks 页手写
+  SVG 折线组件带区间切换与 hover tooltip）；复用 theme.css 与口令鉴权浮层；
+  API 走 `GET /api/funds/*`（webchat.ts，全部在口令鉴权后）；/stocks 与 /market 页头互加导航。
+- **代码位置**：端点 [data-service/main.py](../data-service/main.py)（"基金版块（F4-B）"节）、
+  接口 [src/data/provider.ts](../src/data/provider.ts)、客户端 [src/data/pythonService.ts](../src/data/pythonService.ts)、
+  技能 [src/skills/bundled/fundrank/](../src/skills/bundled/fundrank/) 与
+  [fundinfo/](../src/skills/bundled/fundinfo/)、页面 [public/funds/](../public/funds/)、
+  API [src/channels/webchat.ts](../src/channels/webchat.ts)、测试 [tests/funds.test.ts](../tests/funds.test.ts)
+- **改动入口**：加基金类型 → 端点白名单 + 技能 `FUND_TYPES` 同步；加排行字段 → 端点映射 +
+  `FundRankItem` + 前端卡片；调缓存时长 → main.py 各 `_FUND_*_TTL` 常量
+- **注意事项**：`fund_etf_spot_em` 耗时 30s+，主服务客户端 60s 超时，首次未缓存请求可能
+  刚好踩线（缓存命中后恢复，PITFALLS 已记录）；新基金区间收益字段为 null 不是 bug；
+  单只 ETF 行情不走东财 push2 复用路径（push2 对本机限流中未实测，统一走微服务）。
