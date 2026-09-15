@@ -23,6 +23,19 @@ GET https://searchapi.eastmoney.com/api/suggest/get?input=茅台&type=14&count=1
   创业板指 `0.399006`、沪深300 `1.000300`、北证50 `0.899050`
 - **不能复用个股 `toSecid()` 规则**；技能内置显式映射表，新增指数先查东财行情页确认 secid
 
+## 腾讯行情（免 key，已接入：东财的自动降级备份）
+
+```
+GET https://qt.gtimg.cn/q=sh600519
+```
+- **GBK 编码**纯文本（必须 `TextDecoder('gbk')` 解码，直接 text() 乱码），`~` 分隔：
+  `v_sh600519="1~名称~代码~最新价~昨收~今开~...~时间yyyyMMddHHmmss~涨跌额~涨跌幅%~..."`
+  关键索引：1=name 2=code 3=price 4=prevClose 30=time 32=changePct
+- 价格**不放大**，与东财 ×100 不同；停牌/无效代码返回空串（`v_xx=""`）
+- 代码前缀：沪市 6/9→sh，深市 0/3→sz，北交所 4/8/920→bj；指数同规则（sh000001 上证指数）
+- 触发条件：东财 push2 被 IP 限流或接口变更时自动托底（见 `src/data/index.ts` CompositeProvider）
+- 实测 fixture：`tests/fixtures/tencent/quote-600519.txt`
+
 ## AKShare（Python，经 data-service 暴露）
 
 | 函数 | 用途 |
@@ -40,7 +53,6 @@ AKShare 文档：https://akshare.akfamily.xyz/
 ## 备用/付费选项
 
 - Tushare（积分制，数据规整）：https://tushare.pro
-- 腾讯行情：`qt.gtimg.cn/q=sh600519`（纯文本，适合极简行情，未接入）
 - 聚宽 / Wind / iFinD：商业化后再考虑
 
 ## 合规红线

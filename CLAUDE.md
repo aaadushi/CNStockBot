@@ -28,7 +28,7 @@
 | 主服务 | TypeScript + Node.js 22.13+ + Express | 与 CloddsBot 一致；22.13 起 `node:sqlite` 免 flag |
 | LLM | OpenAI 兼容协议，纯 fetch 实现（`src/llm/client.ts`） | DeepSeek/通义/Kimi/智谱都兼容，国内可直连，免 SDK 依赖 |
 | 默认模型 | DeepSeek（`deepseek-chat`） | 国内直连、便宜、function calling 稳定 |
-| 行情数据 | 东方财富公开接口直连（`src/data/eastmoney.ts`） | 免 key、实时、够用 |
+| 行情数据 | 东方财富公开接口直连（`src/data/eastmoney.ts`），失败自动降级腾讯行情（`src/data/tencent.ts`） | 免 key、实时；东财会 IP 限流，腾讯托底 |
 | 新闻/公告数据 | Python 微服务 + AKShare（`data-service/`） | A 股免费数据生态在 Python 侧，包 HTTP 比 Node 逆向更稳 |
 | 存储 | SQLite（`node:sqlite` 内置模块，`src/storage/store.ts`） | 免原生编译、零依赖；旧 JSON 自动迁移 |
 | 调度 | 手写 setTimeout 调度器（`src/alerts/scheduler.ts`） | 收盘日报 + 异动提醒两个任务；任务再多换 node-cron |
@@ -50,8 +50,9 @@ src/
   data/
     provider.ts       DataProvider 接口：getQuote / getNews / search
     eastmoney.ts      东财公开接口（行情）；secid 规则：沪市 6/900→"1."，深市 0/3 与北交所 4/8/920→"0."
+    tencent.ts        腾讯行情（东财的自动降级备份；GBK 文本协议，价格不放大）
     pythonService.ts  AKShare 微服务客户端 + TradeCalendar（交易日历，按年缓存+格式校验）
-    index.ts          createProvider()：默认组合（行情东财 + 新闻微服务）
+    index.ts          createProvider()：默认组合（行情东财+腾讯降级 + 新闻微服务）
   storage/store.ts    SQLite 存储（node:sqlite）：自选股 + 会话历史（含工具上下文）+ 收件箱 + kv，按 userId 隔离
   channels/
     types.ts          Channel 接口：mount(app, agent) + notify(userId, text)

@@ -69,6 +69,16 @@
 
 ## 2. 东方财富接口（行情数据源）
 
+### [2026-09-15] 腾讯行情接口是 GBK 编码 + 字段下标无任何文档
+- **现象**：直接 `res.text()` 得到乱码（如 `ę́`）；按 JSON 解析会炸。
+- **根因**：`qt.gtimg.cn` 返回 GBK 编码的纯文本 `v_sh600519="1~名称~代码~..."`（~ 分隔），
+  无官方文档，字段只能靠下标。
+- **解法**：`new TextDecoder('gbk').decode(await res.arrayBuffer())`；关键下标
+  1=name 2=code 3=price 4=prevClose 30=time 32=changePct（见 src/data/tencent.ts 与
+  DATA_SOURCES.md）。**价格不放大**（与东财 ×100 不同），停牌返回空串。
+- **涉及文件**：`src/data/tencent.ts`
+- **预防**：接新数据源先录 fixture（tests/fixtures/）再写解析，编码问题 fixture 回放立刻暴露。
+
 ### [2026-09-14] 高频请求 push2 触发 IP 级断连限流（连接被直接掐断，无 HTTP 错误码）
 - **现象**：curl 请求 `push2.eastmoney.com` 突然报 `exit 56`（Recv failure），
   详细日志显示 TLS 握手正常、请求发出后 `schannel: server closed abruptly (missing close_notify)`；

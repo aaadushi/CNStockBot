@@ -1,25 +1,39 @@
 /**
- * 组合数据源：行情走东财直连（免 key、实时），
+ * 组合数据源：行情走东财直连（免 key、实时），**东财失败时自动降级腾讯行情**
+ * （防东财 IP 限流导致行情全挂，2026-09-15 加）；
  * 新闻/公告走 Python AKShare 微服务（如果已启动，否则给出友好提示）。
  * DATA_PROVIDER=python 时全部走微服务。
  */
 import { config } from '../config.js';
 import { EastmoneyProvider } from './eastmoney.js';
+import { TencentProvider } from './tencent.js';
 import { PythonServiceProvider } from './pythonService.js';
 import type { Announcement, DataProvider, FinancialReport, NewsItem, Quote } from './provider.js';
 
 class CompositeProvider implements DataProvider {
   readonly name = 'composite(eastmoney+python)';
   private quote = new EastmoneyProvider();
+  private fallback = new TencentProvider();
   private python = new PythonServiceProvider();
 
-  getQuote(code: string): Promise<Quote> {
-    return this.quote.getQuote(code);
+  /** 行情：东财优先，失败（限流/接口变更等）自动降级腾讯，降级有日志 */
+  async getQuote(code: string): Promise<Quote> {
+    try {
+      return await this.quote.getQuote(code);
+    } catch (err) {
+      console.warn('[data] 东财行情失败，降级腾讯行情:', err instanceof Error ? err.message : err);
+      return this.fallback.getQuote(code);
+    }
   }
 
-  /** 指数行情走东财直连（secid 由技能层显式给出） */
-  getIndexQuote(secid: string): Promise<Quote> {
-    return this.quote.getIndexQuote(secid);
+  /** 指数行情：东财直连优先（secid 由技能层显式给出），失败降级腾讯 */
+  async getIndexQuote(secid: string): Promise<Quote> {
+    try {
+      return await this.quote.getIndexQuote(secid);
+    } catch (err) {
+      console.warn('[data] 东财指数行情失败，降级腾讯行情:', err instanceof Error ? err.message : err);
+      return this.fallback.getIndexQuote(secid);
+    }
   }
 
   async getNews(code: string, limit = 10): Promise<NewsItem[]> {

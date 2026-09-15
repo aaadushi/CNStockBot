@@ -149,18 +149,23 @@
   指数点位同样放大 100 倍返回（fetchQuote 已统一除 100）。
   名称匹配先归一化（去空白/去"指数"后缀/转小写）再全等 + 双向包含兜底（审计 A-205）。
 
-## 11. 行情数据源（东财直连）
+## 11. 行情数据源（东财直连 + 腾讯降级）
 
-- **实现方式**：`fetch` 调 `push2.eastmoney.com/api/qt/stock/get`，带
+- **实现方式**：主源 `fetch` 调 `push2.eastmoney.com/api/qt/stock/get`，带
   `Referer: https://quote.eastmoney.com/` 头与 10s 显式超时；`toSecid()` 做代码→secid 转换
   （沪市 6/900 前缀 `1.`，深市 0/3 与北交所 4/8/920 前缀 `0.`）。
   昨收/涨跌幅缺失时（新股首日等）changePct/prevClose 置 NaN，展示层显示"—"（审计 A-310）。
-- **代码位置**：[src/data/eastmoney.ts](../src/data/eastmoney.ts)（顶部注释列了全部已知字段编码）
-- **改动入口**：加行情字段 → `FIELDS` 常量 + 接口类型 + 解析；接口失效排查 →
-  PITFALLS.md 东财条目（浏览器抓包对比）
+  **自动降级（2026-09-15）**：东财失败（限流/接口变更）时 CompositeProvider 自动切换
+  腾讯行情（`src/data/tencent.ts`，qt.gtimg.cn，GBK 文本协议、价格不放大），
+  个股与指数行情都有降级，降级有 console.warn 日志。
+- **代码位置**：[src/data/eastmoney.ts](../src/data/eastmoney.ts)（顶部注释列了全部已知字段编码）、
+  [src/data/tencent.ts](../src/data/tencent.ts)、降级逻辑 [src/data/index.ts](../src/data/index.ts)
+- **改动入口**：加行情字段 → `FIELDS` 常量 + 接口类型 + 解析（东财）/ 下标解析（腾讯）；
+  接口失效排查 → PITFALLS.md 东财/腾讯条目
 - **注意事项**：secid 规则对指数不通用（000001 股票=平安银行 vs 指数=上证指数），
   指数查询走 `getIndexQuote(secid)` + 技能层显式映射表（见上一节），不要改 `toSecid()`。
-  **高频请求 push2 会触发东财 IP 级断连限流**（PITFALLS.md 东财条目，2026-09-14 实测）。
+  **高频请求 push2 会触发东财 IP 级断连限流**（PITFALLS.md 东财条目，2026-09-14 实测）；
+  限流期间健康探针走组合链路（腾讯托底成功则探测为健康），东财故障从降级日志观察。
 
 ## 12. Python 数据微服务（data-service）
 
