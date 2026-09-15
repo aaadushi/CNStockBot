@@ -135,6 +135,34 @@ describe('EastmoneyProvider.getQuote 行情解析', () => {
     expect(q.floatMarketCap).toBe(3e10);
   });
 
+  it('成交活跃度字段：f47 手/f48 元不缩放，f168 换手率/f50 量比 ÷100（F3-3）', async () => {
+    mockFetchWith({
+      data: {
+        f43: 127275, f57: '600519', f58: '贵州茅台', f60: 127796, f170: -41,
+        f47: 13762, f48: 1756915149.0, f168: 11, f50: 57,
+      },
+    });
+    const q = await new EastmoneyProvider().getQuote('600519');
+    expect(q.volume).toBe(13762); // 手，不缩放
+    expect(q.amount).toBeCloseTo(1756915149, -4); // 元，不缩放
+    expect(q.turnover).toBeCloseTo(0.11); // ÷100
+    expect(q.volumeRatio).toBeCloseTo(0.57); // ÷100
+  });
+
+  it('成交活跃度字段为 "-"（停牌等）时置 undefined 而非抛错（F3-3）', async () => {
+    mockFetchWith({
+      data: {
+        f43: 1000, f57: '600000', f58: '浦发银行', f60: 990, f170: 101,
+        f47: '-', f48: '-', f168: '-', f50: '-',
+      },
+    });
+    const q = await new EastmoneyProvider().getQuote('600000');
+    expect(q.volume).toBeUndefined();
+    expect(q.amount).toBeUndefined();
+    expect(q.turnover).toBeUndefined();
+    expect(q.volumeRatio).toBeUndefined();
+  });
+
   it('HTTP 非 2xx 抛错并带状态码', async () => {
     mockFetchWith({}, false, 503);
     await expect(new EastmoneyProvider().getQuote('600519')).rejects.toThrow('503');

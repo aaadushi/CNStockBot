@@ -11,6 +11,8 @@ GET https://push2.eastmoney.com/api/qt/stock/get?secid=1.600519&fields=f43,f57,f
   f60 昨收 / f169 涨跌额 / f170 涨跌幅 / f86 时间戳（秒）
 - 估值与规模（2026-09-15 实测核对，F3-1）：f162 PE(动) / f163 PE(静) / f164 PE(TTM) /
   f167 PB —— 放大 100 倍；f116 总市值 / f117 流通市值 —— 单位元，**不放大**
+- 成交活跃度（2026-09-15 与腾讯接口交叉实测核对，F3-3）：f47 成交量（**手，不放大**）/
+  f48 成交额（**元，不放大**，浮点）/ f168 换手率(%) / f50 量比 —— 后两个放大 100 倍
 - 公司资料（2026-09-15 实测核对，F3-2，`stock_individual_info_em` / `/profile` 端点）：
   f84 总股本 / f85 流通股（单位股，不放大）/ f127 所属行业 / f189 上市时间（yyyymmdd 整数）；
   停牌/退市/已切换代码返回 `"-"`
@@ -52,6 +54,9 @@ GET https://qt.gtimg.cn/q=sh600519
   关键索引：1=name 2=code 3=price 4=prevClose 30=time 32=changePct（另 33=high 34=low）
   估值索引（2026-09-15 与东财 f 字段交叉实测一致）：39=PE(TTM) 52=PE(动) 53=PE(静) 46=PB、
   44=流通市值 / 45=总市值（**单位亿元**，×1e8 转元）
+  成交活跃度索引（2026-09-15 与东财交叉实测一致，F3-3）：6=成交量(手) /
+  37=成交额（**万元**，×1e4 转元）/ 38=换手率(%) / 49=量比 —— 均不缩放；空串=缺失（注意
+  `Number('') === 0` 的坑，解析前要先判空串）
 - 价格**不放大**，与东财 ×100 不同；停牌/无效代码返回空串（`v_xx=""`）
 - 代码前缀：沪市 6/9→sh，深市 0/3→sz，北交所 4/8/920→bj；指数同规则（sh000001 上证指数）
 - 触发条件：东财 push2 被 IP 限流或接口变更时自动托底（见 `src/data/index.ts` CompositeProvider）
@@ -74,6 +79,8 @@ GET https://qt.gtimg.cn/q=sh600519
 | `ak.fund_etf_spot_em()` | 场内 ETF 全量实时快照，东财（已接入 /funds/etf；全量翻页 30s+，run_ak 超时放宽 120s + 缓存 60s；含 IOPV/溢价率列） |
 | `ak.stock_info_global_em()` | 东财全球财经快讯，约 200 条（已接入 /market-news 主源；列：标题/摘要/发布时间/链接，含 URL） |
 | `ak.stock_info_global_cls()` | 财联社电报，约 20 条（已接入 /market-news 降级源；列：标题/内容/发布日期/发布时间，无 URL；短快讯"标题"常为空，端点取"内容"前 60 字充任） |
+| `ak.stock_zh_a_hist(symbol, period, start_date, end_date, adjust)` | 个股历史日 K，东财 push2his（已接入 /history 主源；列：日期/开盘/收盘/最高/最低/成交量（**手**）/成交额（元）/涨跌幅/换手率，成交额与换手率 F3-3 起透出） |
+| `ak.stock_zh_a_daily(symbol, start_date, end_date, adjust)` | 个股历史日 K，新浪（已接入 /history 降级源；**成交量单位是股**，端点 ÷100 归一到手；无成交额/换手率/涨跌幅列，涨跌幅由收盘价比算，不覆盖北交所） |
 
 AKShare 文档：https://akshare.akfamily.xyz/
 

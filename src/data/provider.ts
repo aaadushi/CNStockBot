@@ -21,6 +21,11 @@ export interface Quote {
   pb?: number;            // 市净率
   totalMarketCap?: number; // 总市值（元）
   floatMarketCap?: number; // 流通市值（元）
+  // —— 成交活跃度（F3-3，2026-09-15；东财/腾讯均提供，停牌股可能缺失）——
+  volume?: number;      // 成交量（手）
+  amount?: number;      // 成交额（元）
+  turnover?: number;    // 换手率（%）
+  volumeRatio?: number; // 量比
 }
 
 export interface NewsItem {
@@ -74,6 +79,8 @@ export interface HistoryBar {
   low: number;
   volume: number;    // 成交量（手）
   changePct: number; // 涨跌幅 %
+  amount?: number;   // 成交额（元）；仅东财源提供（F3-3），新浪降级源无此列
+  turnover?: number; // 换手率（%）；仅东财源提供（F3-3）
 }
 
 /** 公司资料（F3-2）：近静态信息，字段缺失（停牌/退市）时为 undefined 而非 0 */

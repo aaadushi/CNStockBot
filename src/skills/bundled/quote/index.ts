@@ -3,7 +3,7 @@ import { invalidCodeMessage } from '../../args.js';
 
 const skill: Skill = {
   name: 'get_stock_quote',
-  description: '查询单只 A 股股票的实时行情（最新价、涨跌幅、估值与市值）。用户提到某只股票现状时使用。',
+  description: '查询单只 A 股股票的实时行情（最新价、涨跌幅、估值与市值、成交额/换手率/量比）。用户提到某只股票现状时使用。',
   parameters: {
     type: 'object',
     properties: {
@@ -35,6 +35,12 @@ const skill: Skill = {
       q.peTtm !== undefined ? `市盈率(TTM)：${ratioText(q.peTtm) ?? '—'}` : null,
       q.pb !== undefined ? `市净率：${ratioText(q.pb) ?? '—'}` : null,
     ].filter(Boolean);
+    // 成交活跃度（F3-3）：成交额（元）→ 亿/万；换手率/量比缺失整条不显示
+    const activity = [
+      q.amount !== undefined ? `成交额：${capText(q.amount) ?? '—'}` : null,
+      q.turnover !== undefined ? `换手率：${q.turnover.toFixed(2)}%` : null,
+      q.volumeRatio !== undefined ? `量比：${q.volumeRatio.toFixed(2)}` : null,
+    ].filter(Boolean);
     return [
       `${q.name}（${q.code}）${arrow}`,
       `最新价：${q.price.toFixed(2)} 元`,
@@ -43,6 +49,7 @@ const skill: Skill = {
       `昨收：${Number.isFinite(q.prevClose) && q.prevClose > 0 ? `${q.prevClose.toFixed(2)} 元` : '—'}`,
       caps.length ? caps.join('，') : '',
       valuations.length ? valuations.join('，') : '',
+      activity.length ? activity.join('，') : '',
       q.time ? `行情时间：${q.time}` : '',
     ]
       .filter(Boolean)

@@ -261,6 +261,13 @@
       if (v >= 1e8) return (v / 1e8).toFixed(2) + ' 亿股';
       return (v / 1e4).toFixed(2) + ' 万股';
     }
+    // 成交量（手）→ 万手/亿手 可读格式
+    function fmtVol(v) {
+      if (typeof v !== 'number' || !isFinite(v) || v < 0) return '—';
+      if (v >= 1e8) return (v / 1e8).toFixed(2) + ' 亿手';
+      if (v >= 1e4) return (v / 1e4).toFixed(2) + ' 万手';
+      return v + ' 手';
+    }
     function fmtPct(v) {
       if (typeof v !== 'number' || !isFinite(v)) return null;
       return (v > 0 ? '+' : '') + v.toFixed(2) + '%';
@@ -473,6 +480,10 @@
         ['总市值', fmtCap(q.totalMarketCap)], ['流通市值', fmtCap(q.floatMarketCap)],
         [q.peTtm != null ? 'PE(TTM)' : 'PE(动)', fmtRatio(q.peTtm ?? q.peDynamic)],
         ['PB', fmtRatio(q.pb)],
+        // 成交活跃度（F3-3）：0 是合法值，不能用 fmtRatio（>0 判定）
+        ['成交额', fmtCap(q.amount)],
+        ['换手率', typeof q.turnover === 'number' && isFinite(q.turnover) ? q.turnover.toFixed(2) + '%' : '—'],
+        ['量比', typeof q.volumeRatio === 'number' && isFinite(q.volumeRatio) ? q.volumeRatio.toFixed(2) : '—'],
       ];
       const grid = $('d-stats');
       grid.replaceChildren();
@@ -672,7 +683,7 @@
       const box = $('chart-box');
       box.querySelectorAll('svg, .block-error, .skeleton').forEach((n) => n.remove());
       $('chart-tip').style.display = 'none';
-      const sk = el('div', 'skeleton'); sk.style.height = '260px';
+      const sk = el('div', 'skeleton'); sk.style.height = '320px';
       box.appendChild(sk);
       try {
         const res = await apiFetch(`/api/stocks/${currentCode}/history?days=${currentDays}`);
@@ -692,14 +703,20 @@
     }
 
     function drawChart(box, bars) {
-      const W = 680, H = 260, padL = 52, padR = 12, padT = 14, padB = 26;
-      const iw = W - padL - padR, ih = H - padT - padB;
+      // 布局：上部价格折线区 + 下部成交量副图（F3-3）
+      const W = 680, H = 320, padL = 52, padR = 12, padT = 14, padB = 26;
+      const iw = W - padL - padR;
+      const priceB = 226;               // 价格区底
+      const ih = priceB - padT;
+      const volT = 238, volB = H - padB; // 成交量副图区域
       const closes = bars.map((b) => b.close);
       let min = Math.min(...closes), max = Math.max(...closes);
       if (min === max) { min *= 0.99; max *= 1.01; }
       const pad = (max - min) * 0.08; min -= pad; max += pad;
       const x = (i) => padL + (bars.length === 1 ? iw / 2 : (i / (bars.length - 1)) * iw);
       const y = (v) => padT + (1 - (v - min) / (max - min)) * ih;
+      const vols = bars.map((b) => (typeof b.volume === 'number' && isFinite(b.volume) ? b.volume : 0));
+      const vmax = Math.max(...vols);
 
       const up = closes[closes.length - 1] >= closes[0];
       const lineColor = up ? '#dc2626' : '#16a34a';
@@ -707,7 +724,7 @@
       const svg = document.createElementNS(ns, 'svg');
       svg.setAttribute('viewBox', `0 0 ${W} ${H}`);
       svg.setAttribute('preserveAspectRatio', 'none');
-      svg.style.height = '260px';
+      svg.style.height = '320px';
 
       // 渐变填充
       const defs = document.createElementNS(ns, 'defs');
@@ -762,10 +779,27 @@
       path.setAttribute('vector-effect', 'non-scaling-stroke');
       svg.appendChild(path);
 
-      // hover：竖线 + 圆点 + tooltip
+      // 成交量副图：柱高按最大成交量归一，红涨绿跌（收≥开为涨）
+      if (vmax > 0) {
+        const bw = Math.max(1, iw / bars.length - 1);
+        for (let i = 0; i < bars.length; i++) {
+          if (vols[i] <= 0) continue;
+          const bh = (vols[i] / vmax) * (volB - volT);
+          const rect = document.createElementNS(ns, 'rect');
+          rect.setAttribute('x', x(i) - bw / 2);
+          rect.setAttribute('y', volB - bh);
+          rect.setAttribute('width', bw);
+          rect.setAttribute('height', bh);
+          rect.setAttribute('fill', bars[i].close >= bars[i].open ? '#dc2626' : '#16a34a');
+          rect.setAttribute('fill-opacity', '0.55');
+          svg.appendChild(rect);
+        }
+      }
+
+      // hover：竖线 + 圆点 + tooltip（竖线贯穿价格区与成交量副图）
       const vline = document.createElementNS(ns, 'line');
       vline.setAttribute('stroke', '#a1a1aa'); vline.setAttribute('stroke-dasharray', '3 3');
-      vline.setAttribute('y1', padT); vline.setAttribute('y2', H - padB);
+      vline.setAttribute('y1', padT); vline.setAttribute('y2', volB);
       vline.style.display = 'none';
       svg.appendChild(vline);
       const dot = document.createElementNS(ns, 'circle');
@@ -777,7 +811,7 @@
       const tip = $('chart-tip');
       const overlay = document.createElementNS(ns, 'rect');
       overlay.setAttribute('x', padL); overlay.setAttribute('y', padT);
-      overlay.setAttribute('width', iw); overlay.setAttribute('height', ih);
+      overlay.setAttribute('width', iw); overlay.setAttribute('height', volB - padT);
       overlay.setAttribute('fill', 'transparent');
       overlay.addEventListener('mousemove', (e) => {
         const rect = svg.getBoundingClientRect();
@@ -792,6 +826,10 @@
         tip.appendChild(el('div', '', b.date));
         const pct = fmtPct(b.changePct);
         tip.appendChild(el('div', '', `收盘 ${fmtPrice(b.close)}${pct ? '  ' + pct : ''}`));
+        tip.appendChild(el('div', '', `成交量 ${fmtVol(b.volume)}`));
+        // 成交额/换手率仅东财源提供（新浪降级源无此列，HistoryBar 可选字段）
+        if (typeof b.amount === 'number') tip.appendChild(el('div', '', `成交额 ${fmtCap(b.amount)}`));
+        if (typeof b.turnover === 'number') tip.appendChild(el('div', '', `换手率 ${b.turnover.toFixed(2)}%`));
         tip.style.display = 'block';
         const px = (x(i) / W) * rect.width;
         const py = (y(b.close) / H) * rect.height;

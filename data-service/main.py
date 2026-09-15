@@ -437,26 +437,34 @@ def _financials_wide(df, limit: int):
     return items
 
 
-def _hist_items(df, days: int, cols: dict):
+def _hist_items(df, days: int, cols: dict, volume_div: float = 1):
     """历史 K 线归一化输出（日期升序，尾部 days 条）。
 
     cols 为输出字段 → 数据源列名映射；无 changePct 列（新浪源）时用收盘价环比计算
     （窗口首条无昨收，置 0.0——只影响图表 tooltip 的首条，不影响折线本身）。
+    amount/turnover（成交额/换手率，F3-3）为可选列：cols 里没有（新浪源）则字段不输出。
+    volume_div：成交量单位换算除数——新浪源按"股"返回，÷100 归一到"手"与东财源口径一致
+    （2026-09-15 实测 600519：新浪 1376172 股 vs 东财 f47 13762 手）。
     """
     if df is None or df.empty:
         return []
     rows = []
     for _, row in df.tail(days).iterrows():
-        rows.append({
+        item = {
             # pd.to_datetime 转换，防范列类型漂移（同 trade-calendar，审计 A-505）
             "date": pd.to_datetime(row[cols["date"]]).strftime("%Y-%m-%d"),
             "open": _num(row.get(cols["open"])),
             "close": _num(row.get(cols["close"])),
             "high": _num(row.get(cols["high"])),
             "low": _num(row.get(cols["low"])),
-            "volume": _num(row.get(cols["volume"])),
+            "volume": _num(row.get(cols["volume"])) / volume_div,
             "changePct": _num(row.get(cols["changePct"])) if "changePct" in cols else 0.0,
-        })
+        }
+        for opt_key in ("amount", "turnover"):
+            # 列存在性也校验：列名漂移时宁可不输出该字段，也不要静默发 0.0（A-310 同原则）
+            if opt_key in cols and cols[opt_key] in df.columns:
+                item[opt_key] = _num(row.get(cols[opt_key]))
+        rows.append(item)
     if "changePct" not in cols:
         prev = None
         for r in rows:
@@ -478,7 +486,8 @@ async def history(code: str, days: int = Query(default=120, ge=1, le=1500)):
     end = datetime.now().strftime("%Y%m%d")
     start = (datetime.now() - timedelta(days=days * 2)).strftime("%Y%m%d")
     em_cols = {"date": "日期", "open": "开盘", "close": "收盘",
-               "high": "最高", "low": "最低", "volume": "成交量", "changePct": "涨跌幅"}
+               "high": "最高", "low": "最低", "volume": "成交量", "changePct": "涨跌幅",
+               "amount": "成交额", "turnover": "换手率"}  # 成交额/换手率（F3-3）仅东财源有列
     sina_cols = {"date": "date", "open": "open", "close": "close",
                  "high": "high", "low": "low", "volume": "volume"}
     em_err = None
@@ -506,7 +515,7 @@ async def history(code: str, days: int = Query(default=120, ge=1, le=1500)):
             end_date=end,
             adjust="qfq",
         )
-        return _hist_items(df, days, sina_cols)
+        return _hist_items(df, days, sina_cols, volume_div=100)  # 新浪成交量单位是股，÷100 归一到手
     except Exception as e:
         raise HTTPException(
             status_code=502,

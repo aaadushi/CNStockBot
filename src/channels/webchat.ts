@@ -77,6 +77,10 @@ function pickQuote(q: Quote) {
     pb: q.pb,
     totalMarketCap: q.totalMarketCap,
     floatMarketCap: q.floatMarketCap,
+    volume: q.volume,
+    amount: q.amount,
+    turnover: q.turnover,
+    volumeRatio: q.volumeRatio,
     time: q.time,
   };
 }

@@ -72,6 +72,29 @@ describe('TencentProvider.getQuote', () => {
     expect(q.floatMarketCap).toBeUndefined();
   });
 
+  it('fixture 回放：成交活跃度字段（6=手 37=万元→元 38=换手率% 49=量比，F3-3）', async () => {
+    mockFetchWith(readFileSync(path.join(FIXTURES, 'quote-600519.txt')));
+    const q = await new TencentProvider().getQuote('600519');
+    expect(q.volume).toBe(16571); // 手
+    expect(q.amount).toBeCloseTo(211662e4, -2); // 万元 ×1e4 → 元
+    expect(q.turnover).toBeCloseTo(0.13);
+    expect(q.volumeRatio).toBeCloseTo(0.64);
+  });
+
+  it('成交活跃度字段为空串（缺失）时置 undefined，0 为合法值不吞掉', async () => {
+    // 名称必须用 ASCII：UTF-8 中文末字节是合法 GBK 前导字节，GBK 解码会把紧随其后的
+    // '~' 分隔符吃掉导致后续下标整体偏移（真实响应本身是 GBK 编码，无此问题）
+    const f = new Array(60).fill('0');
+    f[1] = 'TEST'; f[2] = '000001'; f[3] = '10.00'; f[4] = '9.90'; f[32] = '1.01';
+    f[6] = '0'; f[37] = '0'; f[38] = '0'; f[49] = ''; // 量比缺失，其余为合法 0
+    mockFetchWith(Buffer.from(`v_sz000001="${f.join('~')}";`, 'utf-8'));
+    const q = await new TencentProvider().getQuote('000001');
+    expect(q.volume).toBe(0);
+    expect(q.amount).toBe(0);
+    expect(q.turnover).toBe(0);
+    expect(q.volumeRatio).toBeUndefined(); // 空串不能静默变 0（Number('') === 0 的坑）
+  });
+
   it('无效代码/停牌（价格为 0 或空）抛错，错误信息包含代码', async () => {
     mockFetchWith(Buffer.from('v_xx999999="";', 'utf-8'));
     await expect(new TencentProvider().getQuote('999999')).rejects.toThrow('999999');
