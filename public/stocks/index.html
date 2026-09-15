@@ -403,6 +403,8 @@
 
     async function loadDetail(code) {
       currentCode = code;
+      newsSort = 'hot';
+      newsCache = {};
       $('d-code').textContent = code;
       $('d-name').textContent = currentName || code;
       renderWatchToggle();
@@ -467,6 +469,67 @@
     }
 
     /* ---- Tab：新闻 / 公告 / 财报 ---- */
+    // 新闻排序：hot=东财相关度/热度序（默认），time=时间倒序；每种排序的结果按 code 缓存
+    let newsSort = 'hot';
+    let newsCache = {};
+
+    function renderNewsList(box, items, err) {
+      if (!items) { box.appendChild(el('div', 'block-error', '暂不可用：' + (err || '未知原因'))); return; }
+      if (items.length === 0) { box.appendChild(el('div', 'block-error', '暂无内容')); return; }
+      const list = el('div', 'tab-list');
+      for (const it of items) {
+        const row = el('div', 'tab-item');
+        if (it.url) {
+          const a = el('a', '', it.title);
+          a.href = it.url; a.target = '_blank'; a.rel = 'noopener noreferrer';
+          row.appendChild(a);
+        } else {
+          row.appendChild(el('div', '', it.title));
+        }
+        const sub = [it.source, it.publishedAt].filter(Boolean).join(' · ');
+        if (sub) row.appendChild(el('div', 'sub', sub));
+        list.appendChild(row);
+      }
+      box.appendChild(list);
+    }
+
+    function renderNews(box) {
+      // 排序切换 pill
+      const pills = el('div', 'range-pills');
+      pills.style.marginBottom = '12px';
+      for (const [key, label] of [['hot', '热度'], ['time', '最新']]) {
+        const b = el('button', newsSort === key ? 'active' : '', label);
+        b.onclick = () => {
+          if (newsSort === key) return;
+          newsSort = key;
+          renderTab();
+        };
+        pills.appendChild(b);
+      }
+      box.appendChild(pills);
+
+      const cached = newsCache[newsSort];
+      if (cached) { renderNewsList(box, cached.items, cached.err); return; }
+      if (newsSort === 'hot' && detailData) {
+        // 详情聚合里已带热度序新闻，直接用，不重复请求
+        newsCache.hot = { items: detailData.news, err: detailData.newsError };
+        renderNewsList(box, detailData.news, detailData.newsError);
+        return;
+      }
+      const sk = el('div', 'skeleton'); sk.style.height = '120px';
+      box.appendChild(sk);
+      apiFetch(`/api/stocks/${currentCode}/news?sort=${newsSort}`)
+        .then((r) => r.json())
+        .then((d) => {
+          newsCache[newsSort] = d.error ? { items: null, err: d.error } : { items: d.news, err: null };
+          if (activeTab === 'news') renderTab();
+        })
+        .catch((e) => {
+          newsCache[newsSort] = { items: null, err: e.message };
+          if (activeTab === 'news') renderTab();
+        });
+    }
+
     // 财报金额展示格式化：新版数据源返回无单位原始数值（元），大额转 亿/万 便于阅读
     function fmtMoney(s) {
       const v = Number(String(s).replace(/[,\s元]/g, ''));
@@ -496,9 +559,9 @@
         return;
       }
       if (activeTab === 'financials') return renderFinancials(box, detailData.financials, detailData.financialsError);
-      const key = activeTab; // news | announcements
-      const items = detailData[key];
-      const err = detailData[key + 'Error'];
+      if (activeTab === 'news') return renderNews(box);
+      const items = detailData.announcements;
+      const err = detailData.announcementsError;
       if (!items) { box.appendChild(el('div', 'block-error', '暂不可用：' + (err || '未知原因'))); return; }
       if (items.length === 0) { box.appendChild(el('div', 'block-error', '暂无内容')); return; }
       const list = el('div', 'tab-list');

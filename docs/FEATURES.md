@@ -71,12 +71,15 @@
 
 ## 5. 新闻查询（get_stock_news）
 
-- **实现方式**：调 `DataProvider.getNews(code, limit)` → Python 微服务 `/news/{code}`
-  → `ak.stock_news_em()`，limit 上限 20。端点按 `publishedAt` **倒序排序后**再截 limit
-  （东财原始顺序是相关度序而非时间序，且必须先全量排序再截断，2026-09-15 修）。
+- **实现方式**：调 `DataProvider.getNews(code, limit, sort)` → Python 微服务 `/news/{code}`
+  → `ak.stock_news_em()`，limit 上限 20。**排序可选**（2026-09-15）：`sort=hot`（默认）
+  保留东财相关度/热度原序；`sort=time` 按发布时间倒序（先全量排序再截 limit，
+  先截再排会漏掉更新的新闻）。浏览页详情的新闻 Tab 有"热度/最新"切换 pill，
+  走单块端点 `GET /api/stocks/:code/news?sort=`，前端按 code+sort 缓存。
 - **代码位置**：[src/skills/bundled/news/index.ts](../src/skills/bundled/news/index.ts)、
   [src/data/pythonService.ts](../src/data/pythonService.ts)、[data-service/main.py](../data-service/main.py) 的 `/news` 端点
-- **改动入口**：换新闻源/加字段 → main.py 端点 + provider.ts 的 `NewsItem` 接口 + 技能格式化
+- **改动入口**：换新闻源/加字段 → main.py 端点 + provider.ts 的 `NewsItem` 接口 + 技能格式化；
+  改排序行为 → 端点 `sort` 参数 + provider.ts 的 `NewsSort` 类型
 - **注意事项**：微服务未启动时技能报错文本含启动提示（`src/data/index.ts` CompositeProvider 包装）；
   交易所正式公告不归本技能管，见下一节 get_stock_announcements。
 

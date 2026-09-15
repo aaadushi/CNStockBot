@@ -24,6 +24,9 @@ export interface NewsItem {
   summary?: string;
 }
 
+/** 新闻排序：hot=数据源原始相关度/热度序（默认），time=发布时间倒序 */
+export type NewsSort = 'hot' | 'time';
+
 export interface Announcement {
   title: string;
   url?: string;
@@ -60,7 +63,7 @@ export interface HistoryBar {
 export interface DataProvider {
   readonly name: string;
   getQuote(code: string): Promise<Quote>;
-  getNews(code: string, limit?: number): Promise<NewsItem[]>;
+  getNews(code: string, limit?: number, sort?: NewsSort): Promise<NewsItem[]>;
   /** 大盘指数行情；secid 需调用方显式给出（指数与个股 secid 规则不同，见 PITFALLS 东财条目） */
   getIndexQuote?(secid: string): Promise<Quote>;
   /** 个股公告（交易所正式披露）；东财直连无此能力，仅微服务模式提供 */

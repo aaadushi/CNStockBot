@@ -8,7 +8,7 @@ import { config } from '../config.js';
 import { EastmoneyProvider } from './eastmoney.js';
 import { TencentProvider } from './tencent.js';
 import { PythonServiceProvider } from './pythonService.js';
-import type { Announcement, DataProvider, FinancialReport, HistoryBar, NewsItem, Quote } from './provider.js';
+import type { Announcement, DataProvider, FinancialReport, HistoryBar, NewsItem, NewsSort, Quote } from './provider.js';
 
 class CompositeProvider implements DataProvider {
   readonly name = 'composite(eastmoney+python)';
@@ -36,9 +36,9 @@ class CompositeProvider implements DataProvider {
     }
   }
 
-  async getNews(code: string, limit = 10): Promise<NewsItem[]> {
+  async getNews(code: string, limit = 10, sort: NewsSort = 'hot'): Promise<NewsItem[]> {
     try {
-      return await this.python.getNews(code, limit);
+      return await this.python.getNews(code, limit, sort);
     } catch (err) {
       throw new Error(
         `新闻数据不可用：${err instanceof Error ? err.message : String(err)}\n` +

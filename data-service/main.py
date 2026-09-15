@@ -80,12 +80,16 @@ async def quote(code: str):
 
 
 @app.get("/news/{code}")
-async def news(code: str, limit: int = Query(default=10, ge=1, le=50)):
-    """个股新闻（东财数据源）。返回 NewsItem[]，按发布时间倒序。
+async def news(
+    code: str,
+    limit: int = Query(default=10, ge=1, le=50),
+    sort: str = Query(default="hot", pattern="^(hot|time)$"),
+):
+    """个股新闻（东财数据源）。返回 NewsItem[]。
 
-    注意：stock_news_em 原始顺序是东财侧的相关度/热度序而非时间序（2026-09-15 用户
-    实测发现），必须先全量构建、按 publishedAt 倒序排完再截 limit——先 head 再排
-    会丢掉不在前 N 条里的更新新闻。
+    sort=hot（默认）：东财原始相关度/热度序；sort=time：按发布时间倒序。
+    时间序必须先全量构建、排序后再截 limit——先 head 再排会丢掉不在前 N 条里的
+    更新新闻（2026-09-15 用户实测发现）。
     """
     try:
         df = await run_ak(ak.stock_news_em, symbol=code)
@@ -98,8 +102,9 @@ async def news(code: str, limit: int = Query(default=10, ge=1, le=50)):
                 "url": str(row.get("新闻链接", "")),
                 "publishedAt": str(row.get("发布时间", "")),
             })
-        # "YYYY-MM-DD HH:MM:SS" 格式可直接按字符串倒序；缺失时间的排最后
-        items.sort(key=lambda it: it["publishedAt"], reverse=True)
+        if sort == "time":
+            # "YYYY-MM-DD HH:MM:SS" 格式可直接按字符串倒序；缺失时间的排最后
+            items.sort(key=lambda it: it["publishedAt"], reverse=True)
         return items[:limit]
     except HTTPException:
         raise

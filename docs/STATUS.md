@@ -113,6 +113,10 @@
 
 ## 更新日志
 
+- 2026-09-15（深夜批次 2）：**新闻排序可切换**——`/news` 端点加 `sort` 参数：
+  `hot`（默认，东财相关度/热度原序）/ `time`（发布时间倒序）；`DataProvider.getNews`
+  加可选 sort 透传；新增单块端点 `GET /api/stocks/:code/news?sort=`；浏览页新闻 Tab
+  加"热度/最新"切换 pill（按 code+sort 前端缓存）。实测两种排序与非法参数 400 均正确。
 - 2026-09-15（深夜批次）：**修复 akshare 1.18.94 引发的公告/财报双故障**（用户浏览详情页发现）。
   财报：`stock_financial_abstract` 返回结构从长表变宽表（行=指标、列=报告期），旧映射静默全空
   ——端点按 `"指标" in df.columns` 分流，宽表走 `_financials_wide()` 透视；FinancialReport

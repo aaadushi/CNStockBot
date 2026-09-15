@@ -9,6 +9,7 @@
  * - POST /api/watchlist           { userId, code } -> { ok, added }
  * - DELETE /api/watchlist         { userId, code } -> { ok, removed }
  * - GET  /api/stocks/:code        个股详情聚合（行情/新闻/公告/财报，各板块独立降级）
+ * - GET  /api/stocks/:code/news?sort=hot|time  单块新闻（浏览页排序切换用）
  * - GET  /api/stocks/:code/history?days=  历史 K 线（需 data-service 提供 getHistory）
  * - GET  /api/search?keyword=     股票搜索（薄封装 provider.search，上限 20 条）
  *
@@ -203,6 +204,27 @@ export class WebChatChannel implements Channel {
         financials: financials.status === 'fulfilled' ? financials.value : null,
         financialsError: financials.status === 'rejected' ? errText(financials.reason) : null,
       });
+    });
+
+    // 单块新闻（浏览页"热度/时间"排序切换用，避免重拉详情聚合四块）
+    app.get('/api/stocks/:code/news', async (req, res) => {
+      const code = req.params.code;
+      if (!CODE_RE.test(code)) {
+        res.status(400).json({ error: 'code 必须是 6 位数字' });
+        return;
+      }
+      const sort = String(req.query.sort ?? 'hot');
+      if (sort !== 'hot' && sort !== 'time') {
+        res.status(400).json({ error: 'sort 只能是 hot 或 time' });
+        return;
+      }
+      const parsed = Number.parseInt(String(req.query.limit ?? ''), 10);
+      const limit = Number.isNaN(parsed) ? 10 : Math.min(20, Math.max(1, parsed));
+      try {
+        res.json({ news: await this.data.getNews(code, limit, sort) });
+      } catch (err) {
+        res.status(500).json({ error: errText(err) });
+      }
     });
 
     // 历史 K 线：依赖可选方法 getHistory（仅 data-service 模式提供）
