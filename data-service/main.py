@@ -733,6 +733,100 @@ async def fund_flow(code: str, days: int = Query(default=30, ge=1, le=100)):
     return {"code": code, "source": d["source"], "items": d["items"][-days:]}
 
 
+# ================= 分时数据（F3-5，2026-09-16） =================
+# 主源 AKShare stock_zh_a_hist_min_em（东财 push2his 分钟 K，period="1" 当日 1 分钟线）；
+# push2his 被 IP 限流时（见 PITFALLS 东财条目）降级新浪 stock_zh_a_minute——该接口返回
+# 近约 8 个交易日的 1 分钟数据（约 1970 行），端点只取最近一个交易日。
+# 单位口径：新浪分钟成交量是"股"（与日 K 一致，2026-09-16 实测 600519 验证），÷100 归一到
+# "手"与东财一致；两源都有成交额列（元），据此累计算出分时均价 VWAP。
+# 按代码缓存 60s（分时盘中实时变动；与资金流/涨跌榜同级，防刷新打爆上游）。
+
+_intraday_cache: dict = {}  # code -> {"ts": float, "data": dict}
+_INTRADAY_TTL = 60
+
+
+def _intraday_from_df(df, code: str, source: str, cols: dict, vol_div: float = 1) -> dict:
+    """分钟数据归一化：只保留最近一个交易日，输出 time/price/volume(手) 序列。
+
+    cols 为输出字段 → 数据源列名映射。amount（成交额）为可选列：两源当前都有，
+    列名漂移时整条不输出 amount/avgPrice，不静默发错值（同 A-310 原则）。
+    avgPrice（分时均价线）= 累计成交额 / 累计成交量（换算成股），即 VWAP。
+    vol_div：成交量单位换算除数——新浪源按"股"返回，÷100 归一到"手"（同 /history）。
+    """
+    if df is None or df.empty:
+        raise ValueError("分钟数据为空")
+    # pd.to_datetime 转换，防范列类型漂移（同 trade-calendar，审计 A-505）
+    times = pd.to_datetime(df[cols["time"]], errors="coerce")
+    latest = times.dt.strftime("%Y-%m-%d").max()
+    if not isinstance(latest, str) or latest == "NaT":
+        raise ValueError("分钟数据时间列解析失败")
+    has_amount = "amount" in cols and cols["amount"] in df.columns
+    points = []
+    cum_amount = 0.0
+    cum_shares = 0.0
+    for (_, row), ts in zip(df.iterrows(), times):
+        if pd.isna(ts) or ts.strftime("%Y-%m-%d") != latest:
+            continue
+        price = _fnum(row.get(cols["price"]))
+        vol = _fnum(row.get(cols["volume"]))
+        if price is None or vol is None:
+            continue  # 缺价/缺量的行直接跳过（不补 0 伪装成交）
+        vol_hand = vol / vol_div
+        item = {"time": ts.strftime("%H:%M"), "price": price, "volume": vol_hand}
+        if has_amount:
+            amt = _fnum(row.get(cols["amount"])) or 0.0  # 单分钟成交额为 0 是合法值
+            cum_amount += amt
+            cum_shares += vol_hand * 100
+            item["amount"] = amt
+            if cum_shares > 0:
+                item["avgPrice"] = round(cum_amount / cum_shares, 3)
+        points.append(item)
+    if not points:
+        raise ValueError("分钟数据为空（最近交易日无数据）")
+    return {"code": code, "date": latest, "source": source, "points": points}
+
+
+@app.get("/intraday/{code}")
+async def intraday(code: str):
+    """个股分时（1 分钟线，最近一个交易日）。返回 {code, date, source, points: IntradayPoint[]}，
+    points 含 time(HH:MM)/price/volume(手)，有成交额列时附 amount 与 avgPrice（VWAP 均价）。
+    source 标注口径：eastmoney=东财分钟 K；sina=新浪降级源。
+    降级链：东财 stock_zh_a_hist_min_em → 新浪 stock_zh_a_minute；按代码缓存 60s。"""
+    hit = _intraday_cache.get(code)
+    if hit is None or time.time() - hit["ts"] > _INTRADAY_TTL:
+        em_err = None
+        try:
+            df = await run_ak(ak.stock_zh_a_hist_min_em, symbol=code, period="1", adjust="")
+            data = _intraday_from_df(
+                df, code, "eastmoney",
+                {"time": "时间", "price": "收盘", "volume": "成交量", "amount": "成交额"},
+            )
+        except Exception as e:
+            # 含 HTTPException（超时 504）：上游源失败都应尝试降级而非直接失败（同 /history）
+            em_err = e
+            logger.warning("intraday 东财源失败，降级新浪: code=%s err=%s", code, e)
+            try:
+                # 新浪代码带市场前缀；北交所（4/8/920）实测覆盖（2026-09-16 bj920799 验证）
+                if code.startswith(("4", "8", "920")):
+                    sina_symbol = f"bj{code}"
+                else:
+                    sina_symbol = f"sh{code}" if code.startswith(("6", "9")) else f"sz{code}"
+                df = await run_ak(ak.stock_zh_a_minute, symbol=sina_symbol, period="1", adjust="")
+                data = _intraday_from_df(
+                    df, code, "sina",
+                    {"time": "day", "price": "close", "volume": "volume", "amount": "amount"},
+                    vol_div=100,  # 新浪成交量单位是股，÷100 归一到手
+                )
+            except Exception as e2:
+                raise HTTPException(
+                    status_code=502,
+                    detail=f"分时数据获取失败（东财: {em_err}；新浪降级: {e2}）",
+                )
+        hit = {"ts": time.time(), "data": data}
+        _intraday_cache[code] = hit
+    return hit["data"]
+
+
 # ================= 基金版块（F4-B，2026-09-15） =================
 # 开放式基金数据来自天天基金（东财系，与支付宝财富页同源）；场内 ETF 为东财全量实时快照。
 # 列结构均经 akshare 1.18.94 实测（见 docs/DATA_SOURCES.md）。
