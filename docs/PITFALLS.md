@@ -158,6 +158,24 @@
 
 ## 3. Python / AKShare（data-service）
 
+### [2026-09-15] `fund_etf_spot_em` 全量翻页 30s+，默认 run_ak 30s 超时刚好踩线
+- **现象**：接入场内 ETF 实时榜时，akshare 1.18.94 实测 `ak.fund_etf_spot_em()` 需翻页
+  约 16 页、耗时 30s 以上，按统一 30s 超时直接 504
+- **根因**：该接口无分页参数，AKShare 内部串行翻全量页
+- **解法**：该端点单独放宽 run_ak 超时到 120s + 结果缓存 60s（防刷新打爆上游）；
+  主服务客户端超时 60s，首次未缓存请求可能仍踩线，缓存命中后恢复
+- **涉及文件**：`data-service/main.py`（/funds/etf 端点）
+- **预防**：接入 AKShare 全量快照类接口（无分页参数的榜单/代码表）先实测耗时，
+  超 10s 的一律配进程内缓存；`fund_open_fund_rank_em` 同样按类型返回全量（千只级），
+  已按类型缓存 10 分钟
+
+### [2026-09-15] FastAPI 中 `/funds/{code}` 路径参数路由会吞掉 `/funds/rank` 等固定路径
+- **现象**：若 `/funds/{code}` 声明在 `/funds/rank`、`/funds/search`、`/funds/etf` 之前，
+  访问 /funds/rank 会被当作 code="rank" 匹配，报"基金不存在"类错误
+- **根因**：FastAPI/Starlette 按声明顺序匹配路由，路径参数路由优先即遮蔽固定路径
+- **解法**：`/funds/{code}` 一律声明在同前缀固定路径之后（main.py 基金版块节有注释）
+- **涉及文件**：`data-service/main.py`
+- **预防**：新增 `/xxx/{param}` 型端点时检查同前缀固定路径的声明顺序
 ### [2026-09-15] 财联社快讯 `stock_info_global_cls` 的"标题"列常为空串，且无链接
 - **现象**：接入财经快讯降级源时发现返回 DataFrame 约半数行"标题"为空（短电报只有"内容"），
   且全表无 URL 列；直接按"标题"渲染会出现一批空白条目。

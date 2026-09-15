@@ -510,3 +510,220 @@ async def history(code: str, days: int = Query(default=120, ge=1, le=1500)):
             status_code=502,
             detail=f"AKShare 历史行情获取失败（东财: {em_err}；新浪降级: {e}）",
         )
+
+
+# ================= 基金版块（F4-B，2026-09-15） =================
+# 开放式基金数据来自天天基金（东财系，与支付宝财富页同源）；场内 ETF 为东财全量实时快照。
+# 列结构均经 akshare 1.18.94 实测（见 docs/DATA_SOURCES.md）。
+
+def _fnum(v):
+    """安全转 float，None/NaN/非法 -> None。
+    基金百分比列（新基金的近1年等）大量缺失，不能用 0 顶替（会伪装成真实收益）。"""
+    try:
+        if v is None or pd.isna(v):
+            return None
+        return float(v)
+    except (TypeError, ValueError):
+        return None
+
+
+# --- 全量基金代码表（基金搜索 + 基金详情名称/类型解析共用，约 2.8 万行，缓存 24h） ---
+_fund_name_cache: dict = {"df": None, "ts": 0.0}
+_FUND_NAME_TTL = 24 * 3600
+
+
+def _load_fund_name_table():
+    now = time.time()
+    if _fund_name_cache["df"] is None or now - _fund_name_cache["ts"] > _FUND_NAME_TTL:
+        _fund_name_cache["df"] = ak.fund_name_em()
+        _fund_name_cache["ts"] = now
+    return _fund_name_cache["df"]
+
+
+# --- 开放式基金排行 ---
+# ak.fund_open_fund_rank_em(symbol) 按近1年收益率降序返回该类型全量（股票型千只以上），
+# 耗时数秒，按类型缓存 10 分钟。
+_FUND_RANK_TYPES = ("全部", "股票型", "混合型", "债券型", "指数型", "QDII", "FOF")
+_fund_rank_cache: dict = {}  # type -> {"ts": float, "items": list}
+_FUND_RANK_TTL = 10 * 60
+
+
+async def _load_fund_rank(symbol: str):
+    now = time.time()
+    hit = _fund_rank_cache.get(symbol)
+    if hit is None or now - hit["ts"] > _FUND_RANK_TTL:
+        df = await run_ak(ak.fund_open_fund_rank_em, symbol=symbol)
+        items = []
+        for _, row in df.iterrows():
+            items.append({
+                "code": str(row.get("基金代码", "")),
+                "name": str(row.get("基金简称", "")),
+                "date": str(row.get("日期", "")),
+                "unitNav": _fnum(row.get("单位净值")),
+                "accumNav": _fnum(row.get("累计净值")),
+                "dayPct": _fnum(row.get("日增长率")),
+                "week1": _fnum(row.get("近1周")),
+                "month1": _fnum(row.get("近1月")),
+                "month3": _fnum(row.get("近3月")),
+                "month6": _fnum(row.get("近6月")),
+                "year1": _fnum(row.get("近1年")),
+                "thisYear": _fnum(row.get("今年来")),
+                "sinceInception": _fnum(row.get("成立来")),
+                "fee": str(row.get("手续费", "")),
+            })
+        hit = {"ts": now, "items": items}
+        _fund_rank_cache[symbol] = hit
+    return hit["items"]
+
+
+@app.get("/funds/rank")
+async def fund_rank(type: str = Query(default="全部"), limit: int = Query(default=50, ge=1, le=100)):
+    """开放式基金排行（天天基金）。按近1年收益率降序，返回 FundRankItem[]。
+    type 支持：全部/股票型/混合型/债券型/指数型/QDII/FOF。"""
+    if type not in _FUND_RANK_TYPES:
+        raise HTTPException(status_code=400, detail=f"type 只能是：{'/'.join(_FUND_RANK_TYPES)}")
+    try:
+        items = await _load_fund_rank(type)
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=502, detail=f"AKShare 基金排行获取失败: {e}")
+    return items[:limit]
+
+
+@app.get("/funds/search")
+async def fund_search(keyword: str = Query(min_length=1), limit: int = Query(default=10, ge=1, le=50)):
+    """基金搜索（名称/代码/拼音缩写），返回 [{code, name, type}]，按匹配程度排序。
+    打分规则与 /search 一致：完全 > 前缀 > 包含，拼音缩写兜底（如 "YFD"）。"""
+    kw = keyword.strip()
+    if not kw:
+        raise HTTPException(status_code=400, detail="keyword 不能为空")
+    try:
+        df = await run_ak(_load_fund_name_table)
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=502, detail=f"AKShare 基金代码表获取失败: {e}")
+
+    def score(code: str, name: str, abbr: str) -> int:
+        if name == kw or code == kw:
+            return 0  # 完全匹配
+        if name.startswith(kw) or code.startswith(kw):
+            return 1  # 前缀匹配
+        if kw in name:
+            return 2  # 包含匹配
+        if kw.upper() in abbr:
+            return 3  # 拼音缩写匹配
+        return -1
+
+    matches = []
+    for _, row in df.iterrows():
+        code = str(row["基金代码"]).zfill(6)
+        name = str(row["基金简称"])
+        s = score(code, name, str(row["拼音缩写"]))
+        if s >= 0:
+            matches.append((s, code, name, str(row["基金类型"])))
+    matches.sort(key=lambda m: (m[0], m[1]))
+    return [{"code": c, "name": n, "type": t} for _, c, n, t in matches[:limit]]
+
+
+# --- 场内 ETF 实时行情 ---
+# ak.fund_etf_spot_em() 全量翻页约 16 页、耗时 30s+（2026-09-15 实测），
+# 超时放宽到 120s + 结果缓存 60s（与涨跌榜同级，防刷新触发上游限流）。
+_etf_cache: dict = {"ts": 0.0, "items": []}
+_ETF_TTL = 60
+_ETF_TIMEOUT = 120
+
+
+@app.get("/funds/etf")
+async def fund_etf(limit: int = Query(default=50, ge=1, le=500)):
+    """场内 ETF 实时行情榜（东财全量快照），按涨跌幅降序，返回 EtfQuote[]。"""
+    now = time.time()
+    if now - _etf_cache["ts"] > _ETF_TTL:
+        try:
+            df = await run_ak(ak.fund_etf_spot_em, timeout=_ETF_TIMEOUT)
+        except HTTPException:
+            raise
+        except Exception as e:
+            raise HTTPException(status_code=502, detail=f"AKShare ETF 行情获取失败: {e}")
+        items = []
+        for _, row in df.iterrows():
+            items.append({
+                "code": str(row.get("代码", "")),
+                "name": str(row.get("名称", "")),
+                "price": _fnum(row.get("最新价")),
+                "changePct": _fnum(row.get("涨跌幅")),
+                "change": _fnum(row.get("涨跌额")),
+                "volume": _fnum(row.get("成交量")),
+                "amount": _fnum(row.get("成交额")),
+                "turnover": _fnum(row.get("换手率")),
+                "iopv": _fnum(row.get("IOPV实时估值")),
+                "discountRate": _fnum(row.get("基金折价率")),
+                "time": str(row.get("更新时间", "")),
+            })
+        # 涨跌幅降序，缺失值（None）排最后
+        items.sort(key=lambda it: (it["changePct"] is None, -(it["changePct"] or 0)))
+        _etf_cache["ts"] = now
+        _etf_cache["items"] = items
+    return _etf_cache["items"][:limit]
+
+
+# --- 单只基金详情 + 单位净值走势 ---
+# ak.fund_open_fund_info_em(symbol, indicator="单位净值走势") 返回全量历史
+# （列：净值日期/单位净值/日增长率，日期升序），按代码缓存 6 小时（净值每日只更新一次）。
+# 注意：必须声明在 /funds/rank、/funds/search、/funds/etf 之后，否则它们会被当 code 匹配。
+_fund_info_cache: dict = {}  # code -> {"ts": float, "points": list}
+_FUND_INFO_TTL = 6 * 3600
+
+
+@app.get("/funds/{code}")
+async def fund_info(code: str, days: int = Query(default=250, ge=1, le=2000)):
+    """单只开放式基金详情：名称/类型 + 单位净值走势（日期升序，尾部 days 条）。
+    返回 {code, name, type, latest, history: FundNavPoint[]}。"""
+    import re
+
+    if not re.fullmatch(r"\d{6}", code):
+        raise HTTPException(status_code=400, detail="基金代码必须是 6 位数字")
+    now = time.time()
+    hit = _fund_info_cache.get(code)
+    if hit is None or now - hit["ts"] > _FUND_INFO_TTL:
+        try:
+            df = await run_ak(
+                ak.fund_open_fund_info_em, symbol=code, indicator="单位净值走势"
+            )
+        except HTTPException:
+            raise
+        except Exception as e:
+            raise HTTPException(status_code=502, detail=f"AKShare 基金净值获取失败: {e}")
+        if df is None or df.empty:
+            raise HTTPException(
+                status_code=404, detail=f"未找到基金 {code} 的净值数据（请核对 6 位基金代码）"
+            )
+        points = []
+        for _, row in df.iterrows():
+            points.append({
+                # pd.to_datetime 转换，防范列类型漂移（同 trade-calendar，审计 A-505）
+                "date": pd.to_datetime(row["净值日期"]).strftime("%Y-%m-%d"),
+                "nav": _fnum(row.get("单位净值")),
+                "changePct": _fnum(row.get("日增长率")),
+            })
+        hit = {"ts": now, "points": points}
+        _fund_info_cache[code] = hit
+    # 名称/类型来自全量代码表（缓存 24h）；代码表失败降级为空串，不阻塞净值返回
+    name, ftype = "", ""
+    try:
+        table = await run_ak(_load_fund_name_table)
+        m = table[table["基金代码"].astype(str).str.zfill(6) == code]
+        if not m.empty:
+            name = str(m.iloc[0]["基金简称"])
+            ftype = str(m.iloc[0]["基金类型"])
+    except Exception as e:
+        logger.warning("fund_info 名称表查询失败（不影响净值返回）: code=%s err=%s", code, e)
+    points = hit["points"][-days:]
+    return {
+        "code": code,
+        "name": name,
+        "type": ftype,
+        "latest": points[-1] if points else None,
+        "history": points,
+    }

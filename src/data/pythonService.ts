@@ -4,7 +4,7 @@
  */
 import { config } from '../config.js';
 import { EastmoneyProvider } from './eastmoney.js';
-import type { Announcement, DataProvider, FinancialReport, HistoryBar, MarketNewsItem, NewsItem, NewsSort, Quote } from './provider.js';
+import type { Announcement, DataProvider, EtfQuote, FinancialReport, FundInfo, FundRankItem, FundSearchItem, HistoryBar, MarketNewsItem, NewsItem, NewsSort, Quote } from './provider.js';
 
 /** 微服务显式超时：AKShare 爬网页较慢，放宽到 60s；防上游挂起拖死调度链（审计 A-301/A-506） */
 const FETCH_TIMEOUT_MS = 60_000;
@@ -65,6 +65,24 @@ export class PythonServiceProvider implements DataProvider {
 
   async search(keyword: string): Promise<{ code: string; name: string }[]> {
     return this.get<{ code: string; name: string }[]>(`/search?keyword=${encodeURIComponent(keyword)}`);
+  }
+
+  async getFundRank(type = '全部', limit = 50): Promise<FundRankItem[]> {
+    return this.get<FundRankItem[]>(`/funds/rank?type=${encodeURIComponent(type)}&limit=${limit}`);
+  }
+
+  async getFundInfo(code: string, days = 250): Promise<FundInfo> {
+    return this.get<FundInfo>(`/funds/${encodeURIComponent(code)}?days=${days}`);
+  }
+
+  async searchFunds(keyword: string, limit = 10): Promise<FundSearchItem[]> {
+    return this.get<FundSearchItem[]>(
+      `/funds/search?keyword=${encodeURIComponent(keyword)}&limit=${limit}`,
+    );
+  }
+
+  async getEtfRank(limit = 50): Promise<EtfQuote[]> {
+    return this.get<EtfQuote[]>(`/funds/etf?limit=${limit}`);
   }
 }
 
