@@ -108,6 +108,16 @@
     .flow-note { font-size: 12px; color: var(--text-3); margin-top: 10px; }
     .flow-chart-box { position: relative; margin-top: 16px; }
     .flow-chart-box svg { display: block; width: 100%; height: auto; }
+    /* ---- 技术指标面板与均线图例（F5-1） ---- */
+    .ma-legend { display: flex; gap: 10px; align-items: center; font-size: 11px; color: var(--text-3); }
+    .ma-legend b { font-weight: 600; }
+    .ind-group { font-size: 13px; font-weight: 600; color: var(--text-2); margin: 14px 0 8px; }
+    .ind-group:first-child { margin-top: 0; }
+    .sig-list { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 14px; }
+    .sig-chip {
+      font-size: 12px; font-weight: 500; padding: 4px 10px; border-radius: 999px;
+      background: var(--accent-soft); color: var(--accent);
+    }
     [hidden] { display: none !important; }
   </style>
 </head>
@@ -174,6 +184,7 @@
       <div class="card">
         <div class="chart-head">
           <h3 id="chart-title">分时走势</h3>
+          <span class="ma-legend" id="ma-legend" hidden></span>
           <div class="chart-controls">
             <div class="range-pills" id="mode-pills">
               <button data-mode="intraday" class="active">分时</button>
@@ -190,6 +201,11 @@
         <div class="chart-box" id="chart-box">
           <div class="chart-tip" id="chart-tip"></div>
         </div>
+      </div>
+
+      <div class="card" id="indicator-card" hidden>
+        <h3 style="margin-top: 0;">技术指标</h3>
+        <div id="d-indicators"></div>
       </div>
 
       <div class="card">
@@ -436,6 +452,9 @@
     let currentName = '';
     let currentDays = 120;
     let detailData = null;
+    let indicatorData = null;   // 技术指标（F5-1）；null=未加载/失败
+    let indicatorError = null;
+    let cachedBars = null;      // 日 K 数据缓存（指标后到时补画均线用）
 
     function goDetail(code, name) {
       history.pushState({}, '', '/stocks?code=' + encodeURIComponent(code));
@@ -476,6 +495,8 @@
       $('profile-card').hidden = true;
       $('fundflow-card').hidden = true;
       $('dividend-card').hidden = true;
+      $('indicator-card').hidden = true;
+      indicatorData = null; indicatorError = null; cachedBars = null;
       renderTab();
       try {
         const res = await apiFetch('/api/stocks/' + code);
@@ -490,6 +511,72 @@
         $('d-stats').replaceChildren(el('div', 'block-error', '详情加载失败：' + e.message));
       }
       loadHistory();
+      loadIndicators();
+    }
+
+    /* ---- 技术指标（F5-1）：独立于详情聚合拉取，失败只影响指标卡与均线叠加 ---- */
+    async function loadIndicators() {
+      try {
+        const res = await apiFetch(`/api/stocks/${currentCode}/indicators?days=250`);
+        const data = await res.json();
+        if (currentCode !== new URLSearchParams(location.search).get('code')) return; // 已切换
+        indicatorData = data.indicators || null;
+        indicatorError = data.error || null;
+      } catch (e) {
+        indicatorData = null;
+        indicatorError = e.message;
+      }
+      renderIndicators();
+      redrawDailyChart(); // 日 K 已先画好：补画均线叠加
+    }
+
+    // 技术指标面板：均线/MACD/RSI/KDJ/BOLL/关键价位分组格 + 客观信号 chips。
+    // 数据缺失整块隐藏，失败时卡内降级提示（同公司资料卡模式）。
+    function renderIndicators() {
+      const card = $('indicator-card');
+      const box = $('d-indicators');
+      box.replaceChildren();
+      if (!indicatorData && !indicatorError) { card.hidden = true; return; }
+      card.hidden = false;
+      if (!indicatorData) {
+        box.appendChild(el('div', 'block-error', '技术指标暂不可用：' + (indicatorError || '未知原因')));
+        return;
+      }
+      const t = indicatorData.latest;
+      const fmtN = (v, d) => (typeof v === 'number' && isFinite(v) ? v.toFixed(d) : '—');
+      const fmtLv = (arr) => (arr && arr.length ? arr.map((v) => fmtPrice(v)).join(' / ') : '—');
+      const groups = [
+        ['均线', [['MA5', fmtPrice(t.ma.ma5)], ['MA10', fmtPrice(t.ma.ma10)], ['MA20', fmtPrice(t.ma.ma20)], ['MA60', fmtPrice(t.ma.ma60)]]],
+        ['MACD（12,26,9）', [['DIF', fmtN(t.macd.dif, 3)], ['DEA', fmtN(t.macd.dea, 3)], ['MACD柱', fmtN(t.macd.macd, 3)]]],
+        ['RSI', [['RSI6', fmtN(t.rsi.rsi6, 1)], ['RSI12', fmtN(t.rsi.rsi12, 1)], ['RSI24', fmtN(t.rsi.rsi24, 1)]]],
+        ['KDJ（9,3,3）', [['K', fmtN(t.kdj.k, 2)], ['D', fmtN(t.kdj.d, 2)], ['J', fmtN(t.kdj.j, 2)]]],
+        ['BOLL（20,2）', [['上轨', fmtPrice(t.boll.upper)], ['中轨', fmtPrice(t.boll.mid)], ['下轨', fmtPrice(t.boll.lower)]]],
+        ['关键价位', [
+          ['支撑位', fmtLv(indicatorData.keyLevels && indicatorData.keyLevels.support)],
+          ['压力位', fmtLv(indicatorData.keyLevels && indicatorData.keyLevels.resistance)],
+        ]],
+      ];
+      for (const [title, cells] of groups) {
+        box.appendChild(el('div', 'ind-group', title));
+        const grid = el('div', 'stat-grid');
+        for (const [label, value] of cells) {
+          const cell = el('div');
+          cell.appendChild(el('div', 'label', label));
+          cell.appendChild(el('div', 'value', value));
+          grid.appendChild(cell);
+        }
+        box.appendChild(grid);
+      }
+      // 客观信号（仅描述当前状态，非买卖建议——故统一中性配色，不用红涨绿跌）
+      const sigs = indicatorData.signals || [];
+      if (sigs.length) {
+        const list = el('div', 'sig-list');
+        for (const s of sigs) list.appendChild(el('span', 'sig-chip', s.text));
+        box.appendChild(list);
+      }
+      const srcLabel = indicatorData.source === 'sina' ? '新浪财经（降级源）' : '东方财富';
+      box.appendChild(el('div', 'flow-note',
+        `数据截至 ${indicatorData.asOf} · 数据源：${srcLabel} · 指标为历史行情的客观统计计算，信号仅描述当前状态。仅供参考，不构成投资建议。`));
     }
 
     function renderQuote(d) {
@@ -904,9 +991,31 @@
       const box = $('chart-box');
       box.querySelectorAll('svg, .block-error, .skeleton, .flow-note').forEach((n) => n.remove());
       $('chart-tip').style.display = 'none';
+      $('ma-legend').hidden = true;
       const sk = el('div', 'skeleton'); sk.style.height = '320px';
       box.appendChild(sk);
       return sk;
+    }
+
+    // 日 K 均线叠加（F5-1）：指标 series 按日期对齐到 bars，得逐 bar 的 {ma5..ma60}|null
+    const MA_DEFS = [['ma5', '#f59e0b', 'MA5'], ['ma10', '#8b5cf6', 'MA10'], ['ma20', '#3b82f6', 'MA20'], ['ma60', '#71717a', 'MA60']];
+    function maOverlayFor(bars) {
+      if (!indicatorData || !indicatorData.series || !indicatorData.series.dates) return null;
+      const s = indicatorData.series;
+      const byDate = new Map();
+      for (let i = 0; i < s.dates.length; i++) {
+        byDate.set(s.dates[i], { ma5: s.ma5[i], ma10: s.ma10[i], ma20: s.ma20[i], ma60: s.ma60[i] });
+      }
+      const out = bars.map((b) => byDate.get(b.date) || null);
+      return out.some((r) => r) ? out : null;
+    }
+
+    // 指标数据后到时重画日 K（补均线叠加）
+    function redrawDailyChart() {
+      if (chartMode !== 'daily' || !cachedBars) return;
+      const box = $('chart-box');
+      box.querySelectorAll('svg, .block-error, .skeleton, .flow-note').forEach((n) => n.remove());
+      drawChart(box, cachedBars);
     }
 
     async function loadHistory() {
@@ -923,6 +1032,7 @@
           box.appendChild(el('div', 'block-error', '暂无历史数据（股票可能停牌或数据源不可用）'));
           return;
         }
+        cachedBars = bars;
         drawChart(box, bars);
       } catch (e) {
         sk.remove();
@@ -1136,6 +1246,17 @@
       const volT = 238, volB = H - padB; // 成交量副图区域
       const closes = bars.map((b) => b.close);
       let min = Math.min(...closes), max = Math.max(...closes);
+      // 均线叠加（F5-1）：MA 值纳入值域，避免被裁剪
+      const mas = maOverlayFor(bars);
+      if (mas) {
+        for (const row of mas) {
+          if (!row) continue;
+          for (const [key] of MA_DEFS) {
+            const v = row[key];
+            if (typeof v === 'number' && isFinite(v)) { min = Math.min(min, v); max = Math.max(max, v); }
+          }
+        }
+      }
       if (min === max) { min *= 0.99; max *= 1.01; }
       const pad = (max - min) * 0.08; min -= pad; max += pad;
       const x = (i) => padL + (bars.length === 1 ? iw / 2 : (i / (bars.length - 1)) * iw);
@@ -1204,6 +1325,36 @@
       path.setAttribute('vector-effect', 'non-scaling-stroke');
       svg.appendChild(path);
 
+      // 均线叠加折线（F5-1）：跳过 null（前导不足周期），细线不抢价格主线
+      if (mas) {
+        for (const [key, color] of MA_DEFS) {
+          const ptsMa = [];
+          for (let i = 0; i < bars.length; i++) {
+            const row = mas[i];
+            const v = row ? row[key] : null;
+            if (typeof v === 'number' && isFinite(v)) ptsMa.push(`${x(i).toFixed(1)},${y(v).toFixed(1)}`);
+          }
+          if (ptsMa.length < 2) continue;
+          const mp = document.createElementNS(ns, 'path');
+          mp.setAttribute('d', `M${ptsMa.join(' L')}`);
+          mp.setAttribute('fill', 'none');
+          mp.setAttribute('stroke', color);
+          mp.setAttribute('stroke-width', '1.2');
+          mp.setAttribute('stroke-linejoin', 'round');
+          mp.setAttribute('vector-effect', 'non-scaling-stroke');
+          svg.appendChild(mp);
+        }
+        // 图例（chart-head 区）
+        const legend = $('ma-legend');
+        legend.replaceChildren();
+        for (const [, color, label] of MA_DEFS) {
+          const b = el('b', '', label);
+          b.style.color = color;
+          legend.appendChild(b);
+        }
+        legend.hidden = false;
+      }
+
       // 成交量副图：柱高按最大成交量归一，红涨绿跌（收≥开为涨）
       if (vmax > 0) {
         const bw = Math.max(1, iw / bars.length - 1);
@@ -1251,6 +1402,13 @@
         tip.appendChild(el('div', '', b.date));
         const pct = fmtPct(b.changePct);
         tip.appendChild(el('div', '', `收盘 ${fmtPrice(b.close)}${pct ? '  ' + pct : ''}`));
+        // 均线值（F5-1 叠加开启时）
+        const maRow = mas && mas[i];
+        if (maRow) {
+          const parts = MA_DEFS.filter(([k]) => typeof maRow[k] === 'number')
+            .map(([k, , label]) => `${label} ${maRow[k].toFixed(2)}`);
+          if (parts.length) tip.appendChild(el('div', '', parts.join('  ')));
+        }
         tip.appendChild(el('div', '', `成交量 ${fmtVol(b.volume)}`));
         // 成交额/换手率仅东财源提供（新浪降级源无此列，HistoryBar 可选字段）
         if (typeof b.amount === 'number') tip.appendChild(el('div', '', `成交额 ${fmtCap(b.amount)}`));

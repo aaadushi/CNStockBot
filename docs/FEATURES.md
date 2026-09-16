@@ -579,3 +579,39 @@
   + eastmoney/tencent/fixtures 三处新用例（fixture 自 push2delay 重录含新字段）
 - **改动入口**：调缓存 → `_DIVIDEND_TTL`；加送配字段 → 端点 items 映射 + `DividendRecord`
   + 前端表格列；东财字段编码变动 → eastmoney.ts 顶部注释清单先核对 push2delay
+
+## 30. 技术指标分析（F5-1，2026-09-16 新增）
+
+- **数据层（纯本地计算，无新外部依赖）**：data-service `GET /indicators/{code}?days=`
+  （默认 250、上限 1500）。先把原 `/history` 的取数降级链抽成共用函数 `_load_bars(code, days)`
+  （东财 stock_zh_a_hist → 新浪 stock_zh_a_daily，返回 `(bars, source)`），`/history` 与
+  `/indicators` 同源同降级。指标全部由 pandas 在归一化日 K 上计算：MA(5/10/20/60)、
+  EMA(12/26)、MACD（柱 = 2×(DIF−DEA)，国内惯例）、RSI(6/12/24，Wilder 平滑）、
+  KDJ(9,3,3 递推平滑）、BOLL(20,2，总体标准差 ddof=0）——完整口径见 DATA_SOURCES.md
+  "技术指标本地计算"节。响应四块：`latest`（最新交易日各指标值，周期不足为 null）、
+  `keyLevels`（支撑/压力位：近 120 日分形高低点 + 区间极值，3% 容差聚类，收盘下/上方
+  最近各至多 2 档）、`signals`（客观状态信号：MA/MACD 金叉死叉、站上/跌破 MA60、
+  突破布林轨、RSI6 超买超卖——**仅状态描述，不含买卖建议**）、`series`（与 dates 对齐的
+  MA 序列，走势图叠加用）。NaN/Inf 经 `_f3` 一律置 null（防非法 JSON）；历史为空 502。
+- **主服务**：`DataProvider` 加 `TechnicalIndicators` 系列类型与 `getIndicators`，
+  PythonServiceProvider/CompositeProvider 接线（未启动微服务给带启动提示的错误）；
+  新增 `GET /api/stocks/:code/indicators?days=`（口令鉴权后，days 上限 1500）。
+  **不进详情聚合七块**——指标面板与均线叠加由前端独立拉取，失败只影响自己（同 history/intraday 模式）。
+- **落点（详情页两处）**：① 走势图卡下方新增"技术指标"卡——均线/MACD/RSI/KDJ/BOLL/
+  关键价位六个分组格 + 客观信号 chips（统一中性配色，不用红涨绿跌，避免暗示买卖方向）
+  + 卡下注明数据日期/数据源/口径与免责声明；② 日 K 走势图叠加 MA5/10/20/60 四条均线
+  （琥珀/紫/蓝/灰细线，chart-head 彩色图例，tooltip 附均线值）——指标 series 与 bars
+  **按日期对齐**（区间切换不用重拉指标）；指标后到或失败时日 K 图照常画价格线，不阻塞。
+  分时模式不叠加均线（均线是日级指标）。
+- **代码位置**：端点与计算 [data-service/main.py](../data-service/main.py)（"技术指标（F5-1）"节
+  + `_load_bars` 抽取）、接口 [src/data/provider.ts](../src/data/provider.ts)、
+  客户端 [src/data/pythonService.ts](../src/data/pythonService.ts)、
+  组合源 [src/data/index.ts](../src/data/index.ts)、
+  API [src/channels/webchat.ts](../src/channels/webchat.ts)、
+  页面 [public/stocks/index.html](../public/stocks/index.html)（indicator-card /
+  renderIndicators / maOverlayFor / drawChart MA 叠加）、
+  测试 [tests/pythonService-indicators.test.ts](../tests/pythonService-indicators.test.ts)
+- **改动入口**：改指标口径 → `_compute_indicators` + DATA_SOURCES.md 同步；改关键价位算法 →
+  `_key_levels`（lookback/tol 参数）；加信号 → `_ind_signals`；加均线叠加线 →
+  端点 ma 周期集合 + 前端 `MA_DEFS`；F5-2（AI 多维分析）/F5-3（盘后复盘信号摘要）/
+  F6-1（形态识别底座）直接复用本端点

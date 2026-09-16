@@ -90,6 +90,30 @@ GET https://qt.gtimg.cn/q=sh600519
 | `ak.stock_zh_a_minute(symbol, period, adjust)` | 个股分钟 K，新浪（已接入 /intraday 降级源；symbol 带市场前缀 sh/sz/bj——**bj 北交所实测覆盖**，与日 K 降级源不同；返回近约 8 个交易日约 1970 行，端点只取最近一日；**成交量单位是股**，端点 ÷100 归一到手；列：day/open/high/low/close/volume/amount） |
 | `ak.stock_history_dividend_detail(symbol, indicator)` | 个股分红送配明细，东财（已接入 /dividends；indicator="分红"，按公告日期倒序，列：公告日期/送股/转增/派息/进度/除权除息日/股权登记日/红股上市日——送股/转增/派息均**每 10 股**口径，派息为元、税前；日期列为 date 对象或 NaT；**无效代码返回空表不报错**，与"从未分红"无法区分；按代码缓存 6h） |
 
+**技术指标本地计算（/indicators，F5-1，2026-09-16；非外部接口，无新依赖）**
+
+输入是与 /history 同源的前复权日 K（`_load_bars`：东财 stock_zh_a_hist → 新浪降级），
+全部指标由 pandas 本地计算，响应 `source` 字段标注日 K 数据源。口径：
+
+- **MA(N)** = 收盘价 N 日简单移动平均（N=5/10/20/60）
+- **EMA(N)** = `ewm(span=N, adjust=False)`（N=12/26，为 MACD 中间量，latest 里也透出）
+- **MACD**：DIF = EMA12 − EMA26；DEA = DIF 的 EMA9；**MACD柱 = 2×(DIF−DEA)**（国内软件惯例，
+  比国外口径多 ×2）
+- **RSI(N)**（N=6/12/24）：Wilder 平滑 `ewm(alpha=1/N, adjust=False, min_periods=N)`，
+  RSI = 100×avgGain/(avgGain+avgLoss)；长期零波动分母为 0 → NaN → null
+- **KDJ(9,3,3)**：RSV = (C−LLV9)/(HHV9−LLV9)×100；K = SMA(RSV,3,1) 递推平滑
+  （`ewm(alpha=1/3, adjust=False)`），D = K 的同口径平滑，J = 3K−2D；
+  9 日最高=最低（极端横盘）RSV → NaN
+- **BOLL(20,2)**：中轨 = MA20；上/下轨 = 中轨 ± 2×20 日**总体标准差**（`std(ddof=0)`，通达信口径）
+- **关键价位**：近 120 根日 K 的分形高/低点（±2 窗口局部极值）+ 区间最高/最低，
+  按 3% 容差聚类取簇均值（密集多底/多顶合并为一档）；最新收盘之下最近 2 档为支撑位、
+  之上最近 2 档为压力位。属客观统计口径，非预测
+- **signals**：最新一根 K 线的客观状态信号——MA5/MA20 金叉死叉、MACD DIF/DEA 金叉死叉、
+  收盘价站上/跌破 MA60、收盘价突破/跌破布林上下轨、RSI6 ≥80 超买 / ≤20 超卖；
+  仅状态描述，**不含买卖建议**（项目红线）
+- 周期不足的值一律为 null（不补 0）；数值统一 round 3 位小数；交叉验证：18 项指标
+  与朴素循环参考实现逐值核对一致（2026-09-16，容差 0.01）
+
 **新浪 MoneyFlow（直连 requests，非 AKShare，已接入 /fund-flow 降级源）**
 ```
 GET https://vip.stock.finance.sina.com.cn/quotes_service/api/json_v2.php/MoneyFlow.ssl_qsfx_zjlrqs?page=1&num=100&sort=opendate&asc=0&daima=sh600519

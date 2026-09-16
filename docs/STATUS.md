@@ -32,7 +32,8 @@
 | Python 数据微服务（行情/新闻/搜索） | `data-service/main.py` | ✅ 可用 | FastAPI + AKShare；AKShare 调用统一 30s 超时（504），财报 NaN/交易日历格式已加固 |
 | 飞书渠道 | `src/channels/feishu.ts` | ✅ 可用 | 验签（含 ±5 分钟防重放）/token 缓存/回复/去重/主动推送；chat_id 映射 **kv 表持久化**（只学单聊，防持仓日报进群）；双凭据缺失时 fail-closed |
 | 股票浏览页 + 个股详情页（/stocks） | `public/stocks/` + `src/channels/webchat.ts` | ✅ 可用 | F1/F2 完成：自选股圆角卡片列表、页内搜索（同款卡片结果）、详情页行情（含涨跌停价/52 周高低，F3-6）/公司资料/资金流/分红送配（F3-6）/走势图（分时/日K 切换，F3-5）/新闻/公告/财报；API 全部在口令鉴权后；2026-09-15 |
-| 历史 K 线数据（走势图数据源） | `data-service/main.py` `/history` + `DataProvider.getHistory` | ✅ 可用 | 前复权日 K；东财 `stock_zh_a_hist` 失败自动降级新浪 `stock_zh_a_daily`（push2his 限流托底，见 PITFALLS）；2026-09-15 起东财源透出成交额/换手率（F3-3），新浪降级源无此列、成交量已归一（股→手） |
+| 历史 K 线数据（走势图数据源） | `data-service/main.py` `/history` + `DataProvider.getHistory` | ✅ 可用 | 前复权日 K；东财 `stock_zh_a_hist` 失败自动降级新浪 `stock_zh_a_daily`（push2his 限流托底，见 PITFALLS）；2026-09-15 起东财源透出成交额/换手率（F3-3），新浪降级源无此列、成交量已归一（股→手）；2026-09-16 起取数链抽为 `_load_bars` 与 /indicators 共用（F5-1） |
+| 技术指标分析（F5-1） | `data-service/main.py` `/indicators` + 详情页技术指标卡/均线叠加 | ✅ 可用 | MA/EMA/MACD/RSI/KDJ/BOLL + 支撑/压力关键价位 + 客观信号（金叉/超买等状态描述，非买卖建议），与 /history 同源纯本地 pandas 计算（口径见 DATA_SOURCES）；详情页日 K 叠加 MA5/10/20/60 均线；依赖 data-service 运行；2026-09-16 新增 |
 | 前端共享设计系统 | `public/shared/theme.css` | ✅ 可用 | ShadcnUI 风格（黑白灰 + indigo CTA、圆角卡片、微阴影）；webchat 与 stocks 两页共用；2026-09-15 UI 重设计 |
 | 全市场涨跌榜（/market） | `public/market/` + `src/channels/webchat.ts` `/api/market/movers` | ✅ 可用 | 今日涨幅榜/跌幅榜/平盘三 Tab + 涨跌平家数总览（沪深京）；东财 clist/ulist 接口，push2 限流自动降级 push2delay（延时 15 分钟，页面标注）；不依赖 data-service；2026-09-15 新增 |
 | 基金版块（/funds + 基金技能，F4-B） | `public/funds/` + `src/skills/bundled/fundrank/`、`fundinfo/` + data-service `/funds/*` | ✅ 可用 | 开放式基金排行（按类型）/基金搜索/基金详情净值走势/场内 ETF 实时榜；天天基金数据（支付宝同源）经微服务，依赖 data-service 运行；2026-09-15 新增 |
@@ -170,7 +171,7 @@
 
 | # | 功能 | 实现要点 | 落点 |
 |---|---|---|---|
-| F5-1 | **技术指标分析**：MA/EMA/MACD/RSI/KDJ/BOLL + 关键价位（支撑/压力） | data-service 基于现有 `/history` 前复权日 K **纯本地计算**（pandas，无新外部依赖），新增如 `/indicators/{code}` 端点；关键价位可用近 N 日高低点 + 均线簇等客观方法，算法选定后在 DATA_SOURCES 记录口径 | 数据层 + 详情页（走势图叠加均线 + 指标面板） |
+| ~~F5-1~~ | ~~**技术指标分析**：MA/EMA/MACD/RSI/KDJ/BOLL + 关键价位（支撑/压力）~~ | ✅ 2026-09-16 完成（见更新日志） | — |
 | F5-2 | **AI 个股多维分析** | 新聊天技能 `analyze_stock`：一次聚合行情/估值/财报/新闻/技术面（F5-1）结构化数据，交 LLM 生成多维度解读；详情页加"AI 分析"入口（复用 /api/chat 链路） | 对话 + 详情页 |
 | F5-3 | **盘后复盘推送** | 收盘日报（15:30）升级：附加自选股技术面信号摘要（如 MA 金叉/死叉、RSI 超买超卖、突破关键价位），走现有 notify 链路；信号口径与 F5-1 一致 | alerts/scheduler |
 | F5-4 | **多条件监控提醒** | 异动提醒从单一涨跌幅阈值升级为**可配置多条件**（价格上下限 / 涨跌幅 / 指标信号），AND/OR 组合；沿用"每股每条件每日一次"去重与推送失败补报机制；条件配置存 SQLite | alerts/scheduler + storage |
@@ -229,6 +230,27 @@ pattern_analyzer（K 线形态识别 + 历史成绩单）、狙击手模块（�
 
 ## 更新日志
 
+- 2026-09-16（批次 2）：**F5-1 技术指标分析完成（F5 路线图启动）**——data-service 新增
+  `GET /indicators/{code}?days=`（默认 250、上限 1500）：原 `/history` 取数降级链抽为共用
+  `_load_bars`（东财→新浪，返回 `(bars, source)`），指标在与 /history 同源的前复权日 K 上
+  **纯本地 pandas 计算**（无新外部依赖）：MA(5/10/20/60)、EMA(12/26)、MACD（柱=2×(DIF−DEA)，
+  国内惯例）、RSI(6/12/24，Wilder 平滑）、KDJ(9,3,3 递推平滑）、BOLL(20,2，总体标准差
+  ddof=0）——口径全文见 DATA_SOURCES.md"技术指标本地计算"节。响应四块：latest（周期不足
+  为 null，NaN/Inf 经 `_f3` 置 null）/ keyLevels（近 120 日分形高低点+区间极值 3% 聚类，
+  收盘下/上方最近各至多 2 档）/ signals（金叉死叉/站上跌破 MA60/突破布林轨/RSI6 超买超卖，
+  **仅客观状态描述，不含买卖建议**）/ series（按 dates 对齐的 MA 序列）。主服务：
+  `DataProvider` 加 `TechnicalIndicators` 系列类型与 `getIndicators`，CompositeProvider
+  接线；新增 `GET /api/stocks/:code/indicators?days=`（口令鉴权后；**不进详情聚合七块**，
+  前端独立拉取、失败只影响自己）。前端详情页两处落点：走势图卡下方新增"技术指标"卡
+  （六个分组格 + 信号 chips **中性配色** + 口径与免责声明脚注）；日 K 走势图叠加
+  MA5/10/20/60 均线（琥珀/紫/蓝/灰，彩色图例，tooltip 附均线值，series 与 bars 按日期
+  对齐故区间切换免重拉；指标后到/失败不阻塞价格线）。验证：typecheck + 136 测试全绿
+  （indicators 5 条新用例）+ py_compile 通过；指标数学经**朴素循环参考实现交叉核对 18 项
+  一致**（容差 0.01，含短序列/恒定价格边界）；端到端实测 /indicators 真实数据（sina 降级
+  路径，MA20 与 BOLL 中轨一致、KDJ/RSI 低位与"跌破 MA60"信号互证）、无效代码 502、
+  days 上限 422、主服务 API 401/400/200、详情聚合七块无回归、内联 JS node --check 通过
+  （验证端口 8107/18807，验后已停）。**未覆盖**：东财主源路径未实测（push2his 对本机
+  限流中，与 /history 同链路由既有逻辑托底）。
 - 2026-09-16：**F3-6 完成（F3 个股信息补全收官）**——涨跌停价/52 周高低/分红送配。
   涨跌停与 52 周高低走 Quote：`Quote` 新增 limitUp/limitDown/week52High/week52Low；
   东财 push2 加 f51/f52（涨跌停）/f174/f175（52 周高低）——**均放大 100 倍**（push2delay

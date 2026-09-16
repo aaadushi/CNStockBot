@@ -474,10 +474,10 @@ def _hist_items(df, days: int, cols: dict, volume_div: float = 1):
     return rows
 
 
-@app.get("/history/{code}")
-async def history(code: str, days: int = Query(default=120, ge=1, le=1500)):
-    """个股历史日 K 线（前复权）。按日期升序返回最近 days 个交易日。
-
+async def _load_bars(code: str, days: int):
+    """历史日 K 归一化加载（/history 与 /indicators 共用的取数降级链）。
+    返回 (bars, source)：bars 见 _hist_items 输出（日期升序、尾部 days 条）；
+    source 标注口径：eastmoney=东财 stock_zh_a_hist，sina=新浪降级源。
     数据源降级链：东财 stock_zh_a_hist → 新浪 stock_zh_a_daily。
     东财 push2his 接口被 IP 限流时（见 PITFALLS 东财条目）新浪可托底（2026-09-15 实测）。
     start_date 按日历日约 2*days 往前推（覆盖周末/节假日），拿到后取尾部
@@ -500,7 +500,7 @@ async def history(code: str, days: int = Query(default=120, ge=1, le=1500)):
             end_date=end,
             adjust="qfq",
         )
-        return _hist_items(df, days, em_cols)
+        return _hist_items(df, days, em_cols), "eastmoney"
     except Exception as e:
         # 含 HTTPException（超时 504）：上游源失败都应尝试降级而非直接失败
         em_err = e
@@ -515,12 +515,20 @@ async def history(code: str, days: int = Query(default=120, ge=1, le=1500)):
             end_date=end,
             adjust="qfq",
         )
-        return _hist_items(df, days, sina_cols, volume_div=100)  # 新浪成交量单位是股，÷100 归一到手
+        return _hist_items(df, days, sina_cols, volume_div=100), "sina"  # 新浪成交量单位是股，÷100 归一到手
     except Exception as e:
         raise HTTPException(
             status_code=502,
             detail=f"AKShare 历史行情获取失败（东财: {em_err}；新浪降级: {e}）",
         )
+
+
+@app.get("/history/{code}")
+async def history(code: str, days: int = Query(default=120, ge=1, le=1500)):
+    """个股历史日 K 线（前复权）。按日期升序返回最近 days 个交易日。
+    取数与降级链见 _load_bars（东财 → 新浪）。"""
+    bars, _source = await _load_bars(code, days)
+    return bars
 
 
 # ================= 公司资料（F3-2，2026-09-15） =================
@@ -871,6 +879,185 @@ async def dividends(code: str, limit: int = Query(default=10, ge=1, le=50)):
         hit = {"ts": time.time(), "data": items}
         _dividend_cache[code] = hit
     return hit["data"][:limit]
+
+
+# ================= 技术指标（F5-1，2026-09-16） =================
+# 纯本地 pandas 计算（无新外部依赖），输入为与 /history 同源的前复权日 K（_load_bars）。
+# 指标口径（已记录到 docs/DATA_SOURCES.md）：
+#   MA(N)     = 收盘价 N 日简单移动平均
+#   EMA(N)    = ewm(span=N, adjust=False)
+#   MACD      ：DIF = EMA12 - EMA26；DEA = DIF 的 EMA9；MACD柱 = 2×(DIF-DEA)（国内软件惯例）
+#   RSI(N)    ：Wilder 平滑（ewm alpha=1/N, min_periods=N），RSI = 100×avgGain/(avgGain+avgLoss)
+#   KDJ(9,3,3)：RSV = (C-LLV9)/(HHV9-LLV9)×100；K = SMA(RSV,3,1) 递推平滑（ewm alpha=1/3）；
+#               D = K 的同口径平滑；J = 3K-2D
+#   BOLL(20,2)：中轨 = MA20；上/下轨 = 中轨 ± 2×20 日总体标准差（ddof=0，通达信口径）
+# 关键价位：近 120 根 K 线的分形高/低点（±2 窗口局部极值）+ 区间最高/最低，
+#   按 3% 容差聚类取簇均值；最新收盘之下最近 2 档为支撑位、之上最近 2 档为压力位。
+# 信号为客观状态描述（如"MA5 上穿 MA20"），不含任何买卖建议（项目红线）。
+
+
+def _f3(v):
+    """指标值输出：None/NaN/Inf/非法 -> None，否则 round(v, 3)（防 pandas NaN 泄漏成非法 JSON）。"""
+    try:
+        if v is None or pd.isna(v):
+            return None
+        f = float(v)
+        if f != f or f in (float("inf"), float("-inf")):
+            return None
+        return round(f, 3)
+    except (TypeError, ValueError):
+        return None
+
+
+def _key_levels(bars: list, lookback: int = 120) -> dict:
+    """近 lookback 根 K 线分形高低点 + 区间极值，3% 容差聚类；收盘下/上方最近各至多 2 档。"""
+    seg = bars[-lookback:]
+    highs = [b["high"] for b in seg]
+    lows = [b["low"] for b in seg]
+    cand_high, cand_low = [max(highs)], [min(lows)]
+    for i in range(2, len(seg) - 2):
+        if highs[i] >= max(highs[i - 2:i + 3]):
+            cand_high.append(highs[i])
+        if lows[i] <= min(lows[i - 2:i + 3]):
+            cand_low.append(lows[i])
+
+    def cluster(vals: list, tol: float = 0.03) -> list:
+        """按价格升序扫描，相邻差 ≤3% 的聚成一簇，簇内取均值（密集多底/多顶合并为一档）。"""
+        groups = []
+        for v in sorted(vals):
+            if groups and v - groups[-1][-1] <= tol * v:
+                groups[-1].append(v)
+            else:
+                groups.append([v])
+        return [sum(g) / len(g) for g in groups]
+
+    close = bars[-1]["close"]
+    support = sorted((c for c in cluster(cand_low) if c < close), key=lambda c: close - c)
+    resistance = sorted((c for c in cluster(cand_high) if c > close), key=lambda c: c - close)
+    return {
+        "support": [round(v, 3) for v in support[:2]],
+        "resistance": [round(v, 3) for v in resistance[:2]],
+    }
+
+
+def _ind_signals(bars: list, ma: dict, dif, dea, rsi6, boll_up, boll_dn) -> list:
+    """最新一根 K 线的客观技术信号（状态描述，非买卖建议）。数据不足时对应信号不出现。"""
+
+    def last2(s):
+        """序列最后两个值 (prev, cur)；不足两个或含 NaN 返回 None。"""
+        if len(s) < 2:
+            return None
+        a, b = _f3(s.iloc[-2]), _f3(s.iloc[-1])
+        return (a, b) if a is not None and b is not None else None
+
+    sigs = []
+    r6 = _f3(rsi6.iloc[-1]) if len(rsi6) else None
+    if r6 is not None:
+        if r6 >= 80:
+            sigs.append({"type": "rsi_overbought", "text": f"RSI6={r6:.1f}，处于超买区间（≥80）"})
+        elif r6 <= 20:
+            sigs.append({"type": "rsi_oversold", "text": f"RSI6={r6:.1f}，处于超卖区间（≤20）"})
+    if len(bars) < 2:
+        return sigs
+    c_prev, c_cur = bars[-2]["close"], bars[-1]["close"]
+    m5, m20, m60 = last2(ma[5]), last2(ma[20]), last2(ma[60])
+    if m5 and m20:
+        if m5[0] <= m20[0] and m5[1] > m20[1]:
+            sigs.append({"type": "ma_cross_up", "text": "MA5 上穿 MA20（金叉）"})
+        elif m5[0] >= m20[0] and m5[1] < m20[1]:
+            sigs.append({"type": "ma_cross_down", "text": "MA5 下穿 MA20（死叉）"})
+    dd, de = last2(dif), last2(dea)
+    if dd and de:
+        if dd[0] <= de[0] and dd[1] > de[1]:
+            sigs.append({"type": "macd_cross_up", "text": "MACD DIF 上穿 DEA（金叉）"})
+        elif dd[0] >= de[0] and dd[1] < de[1]:
+            sigs.append({"type": "macd_cross_down", "text": "MACD DIF 下穿 DEA（死叉）"})
+    if m60:
+        if c_prev <= m60[0] and c_cur > m60[1]:
+            sigs.append({"type": "close_above_ma60", "text": "收盘价站上 MA60"})
+        elif c_prev >= m60[0] and c_cur < m60[1]:
+            sigs.append({"type": "close_below_ma60", "text": "收盘价跌破 MA60"})
+    up, dn = _f3(boll_up.iloc[-1]), _f3(boll_dn.iloc[-1])
+    if up is not None and c_cur > up:
+        sigs.append({"type": "boll_break_up", "text": "收盘价突破布林上轨"})
+    if dn is not None and c_cur < dn:
+        sigs.append({"type": "boll_break_down", "text": "收盘价跌破布林下轨"})
+    return sigs
+
+
+def _compute_indicators(code: str, source: str, bars: list) -> dict:
+    """由归一化日 K bars 计算全部指标，组装 TechnicalIndicators 响应结构。"""
+    close = pd.Series([b["close"] for b in bars], dtype="float64")
+    high = pd.Series([b["high"] for b in bars], dtype="float64")
+    low = pd.Series([b["low"] for b in bars], dtype="float64")
+
+    ma = {n: close.rolling(n).mean() for n in (5, 10, 20, 60)}
+    ema12 = close.ewm(span=12, adjust=False).mean()
+    ema26 = close.ewm(span=26, adjust=False).mean()
+    dif = ema12 - ema26
+    dea = dif.ewm(span=9, adjust=False).mean()
+    macd_bar = 2 * (dif - dea)
+
+    delta = close.diff()
+    gain = delta.clip(lower=0)
+    loss = -delta.clip(upper=0)
+    rsi = {}
+    for n in (6, 12, 24):
+        avg_gain = gain.ewm(alpha=1 / n, adjust=False, min_periods=n).mean()
+        avg_loss = loss.ewm(alpha=1 / n, adjust=False, min_periods=n).mean()
+        rsi[n] = 100 * avg_gain / (avg_gain + avg_loss)  # 分母为 0（长期零波动）→ NaN → null
+
+    llv9 = low.rolling(9).min()
+    hhv9 = high.rolling(9).max()
+    rsv = (close - llv9) / (hhv9 - llv9) * 100  # 9 日最高=最低（极端横盘）→ NaN
+    kdj_k = rsv.ewm(alpha=1 / 3, adjust=False).mean()
+    kdj_d = kdj_k.ewm(alpha=1 / 3, adjust=False).mean()
+    kdj_j = 3 * kdj_k - 2 * kdj_d
+
+    boll_mid = close.rolling(20).mean()
+    boll_std = close.rolling(20).std(ddof=0)
+    boll_up = boll_mid + 2 * boll_std
+    boll_dn = boll_mid - 2 * boll_std
+
+    i = len(bars) - 1
+    return {
+        "code": code,
+        "source": source,
+        "asOf": bars[-1]["date"],
+        "latest": {
+            "close": bars[-1]["close"],
+            "ma": {f"ma{n}": _f3(ma[n].iloc[i]) for n in (5, 10, 20, 60)},
+            "ema": {"ema12": _f3(ema12.iloc[i]), "ema26": _f3(ema26.iloc[i])},
+            "macd": {"dif": _f3(dif.iloc[i]), "dea": _f3(dea.iloc[i]), "macd": _f3(macd_bar.iloc[i])},
+            "rsi": {f"rsi{n}": _f3(rsi[n].iloc[i]) for n in (6, 12, 24)},
+            "kdj": {"k": _f3(kdj_k.iloc[i]), "d": _f3(kdj_d.iloc[i]), "j": _f3(kdj_j.iloc[i])},
+            "boll": {"upper": _f3(boll_up.iloc[i]), "mid": _f3(boll_mid.iloc[i]), "lower": _f3(boll_dn.iloc[i])},
+        },
+        "keyLevels": _key_levels(bars),
+        "signals": _ind_signals(bars, ma, dif, dea, rsi[6], boll_up, boll_dn),
+        "series": {
+            "dates": [b["date"] for b in bars],
+            **{f"ma{n}": [_f3(v) for v in ma[n]] for n in (5, 10, 20, 60)},
+        },
+    }
+
+
+@app.get("/indicators/{code}")
+async def indicators(code: str, days: int = Query(default=250, ge=1, le=1500)):
+    """个股技术指标（F5-1）：MA/EMA/MACD/RSI/KDJ/BOLL + 关键价位 + 客观信号。
+    基于与 /history 同源的前复权日 K 纯本地计算（无新外部依赖，降级链一致）。
+    latest=最新交易日指标值（周期不足为 null）；series=与 dates 对齐的 MA 序列
+    （走势图叠加用，前导不足周期为 null）；keyLevels=支撑/压力位（口径见文件头注释）；
+    signals=客观状态信号，不含买卖建议。days 默认 250（够 MA60/MACD 收敛），上限 1500。"""
+    bars, source = await _load_bars(code, days)
+    if not bars:
+        raise HTTPException(
+            status_code=502, detail=f"历史行情为空，无法计算技术指标（代码错误或数据源不可用）: {code}"
+        )
+    try:
+        return _compute_indicators(code, source, bars)
+    except Exception as e:
+        raise HTTPException(status_code=502, detail=f"技术指标计算失败: {e}")
 
 
 # ================= 基金版块（F4-B，2026-09-15） =================

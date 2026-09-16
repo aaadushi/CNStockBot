@@ -231,6 +231,82 @@ export interface EtfQuote {
   time?: string;               // 更新时间
 }
 
+// ---- 技术指标（F5-1，2026-09-16 新增；仅微服务模式提供） ----
+
+/** MA 均线族（周期不足为 null） */
+export interface MaValues {
+  ma5: number | null;
+  ma10: number | null;
+  ma20: number | null;
+  ma60: number | null;
+}
+
+/** MACD：DIF=EMA12-EMA26，DEA=DIF 的 EMA9，macd=2×(DIF-DEA)（国内软件柱值惯例） */
+export interface MacdValues {
+  dif: number | null;
+  dea: number | null;
+  macd: number | null;
+}
+
+/** RSI（Wilder 平滑，周期不足为 null） */
+export interface RsiValues {
+  rsi6: number | null;
+  rsi12: number | null;
+  rsi24: number | null;
+}
+
+/** KDJ（9,3,3 递推平滑口径，周期不足为 null） */
+export interface KdjValues {
+  k: number | null;
+  d: number | null;
+  j: number | null;
+}
+
+/** 布林带（20,2，总体标准差口径，周期不足为 null） */
+export interface BollValues {
+  upper: number | null;
+  mid: number | null;
+  lower: number | null;
+}
+
+/** 客观技术信号（如 MA 金叉、RSI 超买）；仅状态描述，不含买卖建议（项目红线） */
+export interface IndicatorSignal {
+  type: string;
+  text: string;
+}
+
+/** 关键价位：近 120 日分形高低点 3% 容差聚类，最新收盘下/上方最近各至多 2 档 */
+export interface KeyLevels {
+  support: number[];
+  resistance: number[];
+}
+
+/** 技术指标汇总（F5-1）；source 标注日 K 数据源（与 /history 降级链一致：eastmoney/sina） */
+export interface TechnicalIndicators {
+  code: string;
+  source: 'eastmoney' | 'sina';
+  asOf: string; // 最后一根日 K 日期 YYYY-MM-DD
+  latest: {
+    close: number;
+    ma: MaValues;
+    ema: { ema12: number | null; ema26: number | null };
+    macd: MacdValues;
+    rsi: RsiValues;
+    kdj: KdjValues;
+    boll: BollValues;
+  };
+  keyLevels: KeyLevels;
+  signals: IndicatorSignal[];
+  /** 与 dates 对齐的 MA 序列（走势图叠加用）；前导不足周期为 null */
+  series: {
+    dates: string[];
+    ma5: (number | null)[];
+    ma10: (number | null)[];
+    ma20: (number | null)[];
+    ma60: (number | null)[];
+  };
+}
+
 export interface DataProvider {
   readonly name: string;
   getQuote(code: string): Promise<Quote>;
@@ -251,6 +327,8 @@ export interface DataProvider {
   getIntraday?(code: string): Promise<Intraday>;
   /** 分红送配记录（按公告日期倒序，F3-6）；东财直连无此能力，仅微服务模式提供 */
   getDividends?(code: string, limit?: number): Promise<DividendRecord[]>;
+  /** 技术指标（MA/EMA/MACD/RSI/KDJ/BOLL + 关键价位，F5-1）；东财直连无此能力，仅微服务模式提供 */
+  getIndicators?(code: string, days?: number): Promise<TechnicalIndicators>;
   /** 全市场今日涨跌榜（上涨/下跌/平盘 + 家数统计）；仅东财系接口提供 */
   getMovers?(limit?: number): Promise<MarketMovers>;
   /** 全市场财经快讯（区别于个股新闻）；东财直连无此能力，仅微服务模式提供 */
