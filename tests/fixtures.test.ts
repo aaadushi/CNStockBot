@@ -46,6 +46,11 @@ describe('东财 fixture 回放', () => {
     expect(q.amount).toBeCloseTo(1756915149, -4);
     expect(q.turnover).toBeCloseTo(0.11);
     expect(q.volumeRatio).toBeCloseTo(0.57);
+    // 涨跌停与 52 周高低（F3-6）：f51/f52/f174/f175 ÷100
+    expect(q.limitUp).toBeCloseTo(1405.76);
+    expect(q.limitDown).toBeCloseTo(1150.16);
+    expect(q.week52High).toBeCloseTo(1539.98);
+    expect(q.week52Low).toBeCloseTo(1151.01);
   });
 
   it('suggest-maotai.json：搜索解析只保留 A 股个股代码', async () => {

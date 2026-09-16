@@ -10,6 +10,8 @@
  *   39=市盈率(TTM) 44=流通市值(亿元) 45=总市值(亿元) 46=市净率 52=市盈率(动) 53=市盈率(静)
  *   成交活跃度（F3-3，2026-09-15 与东财 f47/f48/f168/f50 交叉核对一致）：
  *   6=成交量(手) 37=成交额(万元) 38=换手率(%) 49=量比 —— 成交额 ×1e4 转元，其余不缩放
+ *   涨跌停（F3-6，2026-09-16 与东财 f51/f52 实测一致）：47=涨停价 48=跌停价（不缩放）；
+ *   腾讯无 52 周高低字段，降级时 week52High/week52Low 缺失
  * 代码前缀规则：沪市 6/9 → sh，深市 0/3 → sz，北交所 4/8/920 → bj。
  */
 import type { DataProvider, NewsItem, Quote } from './provider.js';
@@ -92,6 +94,8 @@ export class TencentProvider implements DataProvider {
       amount: (() => { const v = act(37); return v === undefined ? undefined : v * 1e4; })(), // 万元→元
       turnover: act(38),        // %
       volumeRatio: act(49),
+      limitUp: opt(47),         // 涨停价（F3-6，不缩放；0/缺失置 undefined）
+      limitDown: opt(48),       // 跌停价
       time,
     };
   }

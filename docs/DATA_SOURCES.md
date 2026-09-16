@@ -13,6 +13,8 @@ GET https://push2.eastmoney.com/api/qt/stock/get?secid=1.600519&fields=f43,f57,f
   f167 PB —— 放大 100 倍；f116 总市值 / f117 流通市值 —— 单位元，**不放大**
 - 成交活跃度（2026-09-15 与腾讯接口交叉实测核对，F3-3）：f47 成交量（**手，不放大**）/
   f48 成交额（**元，不放大**，浮点）/ f168 换手率(%) / f50 量比 —— 后两个放大 100 倍
+- 涨跌停与 52 周高低（2026-09-16 经 push2delay fltt=2 与缩放响应交叉实测核对，F3-6）：
+  f51 涨停价 / f52 跌停价 / f174 52周最高 / f175 52周最低 —— 均放大 100 倍
 - 公司资料（2026-09-15 实测核对，F3-2，`stock_individual_info_em` / `/profile` 端点）：
   f84 总股本 / f85 流通股（单位股，不放大）/ f127 所属行业 / f189 上市时间（yyyymmdd 整数）；
   停牌/退市/已切换代码返回 `"-"`
@@ -57,6 +59,8 @@ GET https://qt.gtimg.cn/q=sh600519
   成交活跃度索引（2026-09-15 与东财交叉实测一致，F3-3）：6=成交量(手) /
   37=成交额（**万元**，×1e4 转元）/ 38=换手率(%) / 49=量比 —— 均不缩放；空串=缺失（注意
   `Number('') === 0` 的坑，解析前要先判空串）
+  涨跌停索引（2026-09-16 与东财 f51/f52 实测一致，F3-6）：47=涨停价 / 48=跌停价（不缩放）；
+  **腾讯无 52 周高低字段**，降级时 Quote.week52High/week52Low 缺失
 - 价格**不放大**，与东财 ×100 不同；停牌/无效代码返回空串（`v_xx=""`）
 - 代码前缀：沪市 6/9→sh，深市 0/3→sz，北交所 4/8/920→bj；指数同规则（sh000001 上证指数）
 - 触发条件：东财 push2 被 IP 限流或接口变更时自动托底（见 `src/data/index.ts` CompositeProvider）
@@ -84,6 +88,7 @@ GET https://qt.gtimg.cn/q=sh600519
 | `ak.stock_individual_fund_flow(stock, market)` | 个股资金流向，东财 push2his fflow/daykline（已接入 /fund-flow 主源；market=sh/sz/bj 按代码前缀映射——920 段属北交所须先于 "9" 判断；列：日期/收盘价/涨跌幅/主力·超大单·大单·中单·小单净流入-净额与净占比，百分数字段已是 % 单位） |
 | `ak.stock_zh_a_hist_min_em(symbol, period, adjust)` | 个股分钟 K，东财 push2his（已接入 /intraday 主源；period="1" 当日 1 分钟线仅支持 adjust=""；列：时间/开盘/收盘/最高/最低/涨跌幅/涨跌额/成交量（手）/成交额（元）/振幅/换手率——列名为 AKShare 文档口径，主源限流中未实测） |
 | `ak.stock_zh_a_minute(symbol, period, adjust)` | 个股分钟 K，新浪（已接入 /intraday 降级源；symbol 带市场前缀 sh/sz/bj——**bj 北交所实测覆盖**，与日 K 降级源不同；返回近约 8 个交易日约 1970 行，端点只取最近一日；**成交量单位是股**，端点 ÷100 归一到手；列：day/open/high/low/close/volume/amount） |
+| `ak.stock_history_dividend_detail(symbol, indicator)` | 个股分红送配明细，东财（已接入 /dividends；indicator="分红"，按公告日期倒序，列：公告日期/送股/转增/派息/进度/除权除息日/股权登记日/红股上市日——送股/转增/派息均**每 10 股**口径，派息为元、税前；日期列为 date 对象或 NaT；**无效代码返回空表不报错**，与"从未分红"无法区分；按代码缓存 6h） |
 
 **新浪 MoneyFlow（直连 requests，非 AKShare，已接入 /fund-flow 降级源）**
 ```

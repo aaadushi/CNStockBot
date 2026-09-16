@@ -95,6 +95,15 @@ describe('TencentProvider.getQuote', () => {
     expect(q.volumeRatio).toBeUndefined(); // 空串不能静默变 0（Number('') === 0 的坑）
   });
 
+  it('fixture 回放：涨跌停字段（47=涨停价 48=跌停价，不缩放；无 52 周字段，F3-6）', async () => {
+    mockFetchWith(readFileSync(path.join(FIXTURES, 'quote-600519.txt')));
+    const q = await new TencentProvider().getQuote('600519');
+    expect(q.limitUp).toBeCloseTo(1402.68);
+    expect(q.limitDown).toBeCloseTo(1147.64);
+    expect(q.week52High).toBeUndefined(); // 腾讯无此字段，降级时缺失由展示层显示 —
+    expect(q.week52Low).toBeUndefined();
+  });
+
   it('无效代码/停牌（价格为 0 或空）抛错，错误信息包含代码', async () => {
     mockFetchWith(Buffer.from('v_xx999999="";', 'utf-8'));
     await expect(new TencentProvider().getQuote('999999')).rejects.toThrow('999999');
