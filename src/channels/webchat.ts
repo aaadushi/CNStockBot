@@ -11,7 +11,7 @@
  * - GET  /api/watchlist?userId=   自选股列表 + 批量行情（单只失败降级为 {code, error}）
  * - POST /api/watchlist           { userId, code } -> { ok, added }
  * - DELETE /api/watchlist         { userId, code } -> { ok, removed }
- * - GET  /api/stocks/:code        个股详情聚合（行情/新闻/公告/财报/公司资料/资金流，各板块独立降级）
+ * - GET  /api/stocks/:code        个股详情聚合（行情/新闻/公告/财报/公司资料/资金流/分红送配，各板块独立降级）
  * - GET  /api/stocks/:code/news?sort=hot|time  单块新闻（浏览页排序切换用）
  * - GET  /api/stocks/:code/history?days=  历史 K 线（需 data-service 提供 getHistory）
  * - GET  /api/stocks/:code/intraday       今日分时 1 分钟线（需 data-service 提供 getIntraday，F3-5）
@@ -82,6 +82,10 @@ function pickQuote(q: Quote) {
     amount: q.amount,
     turnover: q.turnover,
     volumeRatio: q.volumeRatio,
+    limitUp: q.limitUp,
+    limitDown: q.limitDown,
+    week52High: q.week52High,
+    week52Low: q.week52Low,
     time: q.time,
   };
 }
@@ -204,7 +208,7 @@ export class WebChatChannel implements Channel {
       res.json({ ok: true, removed });
     });
 
-    // 个股详情聚合：行情/新闻/公告/财报/公司资料/资金流六块并发，任一失败只影响自己那块（xxxError + null）
+    // 个股详情聚合：行情/新闻/公告/财报/公司资料/资金流/分红送配七块并发，任一失败只影响自己那块（xxxError + null）
     app.get('/api/stocks/:code', async (req, res) => {
       const code = req.params.code;
       if (!CODE_RE.test(code)) {
@@ -213,13 +217,14 @@ export class WebChatChannel implements Channel {
       }
       const unsupported = (what: string) =>
         Promise.reject(new Error(`数据源不支持${what}（东财直连无此能力，请启动 data-service）`));
-      const [quote, news, announcements, financials, profile, fundFlow] = await Promise.allSettled([
+      const [quote, news, announcements, financials, profile, fundFlow, dividends] = await Promise.allSettled([
         this.data.getQuote(code),
         this.data.getNews(code, 10),
         this.data.getAnnouncements ? this.data.getAnnouncements(code, 10) : unsupported('公告'),
         this.data.getFinancials ? this.data.getFinancials(code, 4) : unsupported('财报'),
         this.data.getProfile ? this.data.getProfile(code) : unsupported('公司资料'),
         this.data.getFundFlow ? this.data.getFundFlow(code, 30) : unsupported('资金流'),
+        this.data.getDividends ? this.data.getDividends(code, 10) : unsupported('分红送配'),
       ]);
       res.json({
         quote: quote.status === 'fulfilled' ? pickQuote(quote.value) : null,
@@ -235,6 +240,8 @@ export class WebChatChannel implements Channel {
         profileError: profile.status === 'rejected' ? errText(profile.reason) : null,
         fundFlow: fundFlow.status === 'fulfilled' ? fundFlow.value : null,
         fundFlowError: fundFlow.status === 'rejected' ? errText(fundFlow.reason) : null,
+        dividends: dividends.status === 'fulfilled' ? dividends.value : null,
+        dividendsError: dividends.status === 'rejected' ? errText(dividends.reason) : null,
       });
     });
 

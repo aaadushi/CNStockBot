@@ -166,6 +166,11 @@
         <div id="d-fundflow"></div>
       </div>
 
+      <div class="card" id="dividend-card" hidden>
+        <h3 style="margin-top: 0;">分红送配</h3>
+        <div id="d-dividend"></div>
+      </div>
+
       <div class="card">
         <div class="chart-head">
           <h3 id="chart-title">分时走势</h3>
@@ -470,6 +475,7 @@
       $('d-stats').replaceChildren();
       $('profile-card').hidden = true;
       $('fundflow-card').hidden = true;
+      $('dividend-card').hidden = true;
       renderTab();
       try {
         const res = await apiFetch('/api/stocks/' + code);
@@ -478,6 +484,7 @@
         renderQuote(detailData);
         renderProfile(detailData);
         renderFundFlow(detailData);
+        renderDividends(detailData);
         renderTab();
       } catch (e) {
         $('d-stats').replaceChildren(el('div', 'block-error', '详情加载失败：' + e.message));
@@ -510,6 +517,9 @@
         ['成交额', fmtCap(q.amount)],
         ['换手率', typeof q.turnover === 'number' && isFinite(q.turnover) ? q.turnover.toFixed(2) + '%' : '—'],
         ['量比', typeof q.volumeRatio === 'number' && isFinite(q.volumeRatio) ? q.volumeRatio.toFixed(2) : '—'],
+        // 涨跌停与 52 周高低（F3-6）：腾讯降级源无 52 周字段，缺失显示 —
+        ['涨停价', fmtPrice(q.limitUp)], ['跌停价', fmtPrice(q.limitDown)],
+        ['52周最高', fmtPrice(q.week52High)], ['52周最低', fmtPrice(q.week52Low)],
       ];
       const grid = $('d-stats');
       grid.replaceChildren();
@@ -591,6 +601,45 @@
         ? '数据源：新浪财经（降级源）。"净流入"含全部资金、与东财"主力净流入"口径不同；超大单为新浪 r0 口径。'
         : '数据源：东方财富。主力净流入 = 超大单 + 大单。';
       box.appendChild(el('div', 'flow-note', note + ' 仅供参考，不构成投资建议。'));
+    }
+
+    // 分红送配卡（F3-6）：按公告日期倒序的送配记录表。
+    // 数据缺失整块隐藏，失败时卡内降级提示（同公司资料/资金流卡模式）。
+    function renderDividends(d) {
+      const card = $('dividend-card');
+      const box = $('d-dividend');
+      box.replaceChildren();
+      if (!d.dividends && !d.dividendsError) { card.hidden = true; return; }
+      card.hidden = false;
+      if (!d.dividends) {
+        box.appendChild(el('div', 'block-error', '分红送配数据暂不可用：' + (d.dividendsError || '未知原因')));
+        return;
+      }
+      if (d.dividends.length === 0) {
+        box.appendChild(el('div', 'block-error', '暂无分红送配记录'));
+        return;
+      }
+      const per10 = (v, unit) => (typeof v === 'number' && isFinite(v) && v !== 0 ? v.toFixed(2) + unit : '—');
+      const table = el('table', 'fin-table');
+      const thead = el('thead');
+      const hr = el('tr');
+      for (const h of ['公告日期', '除权除息日', '每10股派息', '每10股送股', '每10股转增', '进度']) hr.appendChild(el('th', '', h));
+      thead.appendChild(hr);
+      table.appendChild(thead);
+      const tbody = el('tbody');
+      for (const r of d.dividends) {
+        const tr = el('tr');
+        tr.appendChild(el('td', '', r.announceDate || '—'));
+        tr.appendChild(el('td', '', r.exDate || '—'));
+        tr.appendChild(el('td', '', per10(r.dividend, ' 元')));
+        tr.appendChild(el('td', '', per10(r.bonus, ' 股')));
+        tr.appendChild(el('td', '', per10(r.transfer, ' 股')));
+        tr.appendChild(el('td', '', r.progress || '—'));
+        tbody.appendChild(tr);
+      }
+      table.appendChild(tbody);
+      box.appendChild(table);
+      box.appendChild(el('div', 'flow-note', '金额/股数均为每 10 股口径（税前）。仅供参考，不构成投资建议。'));
     }
 
     // 近 N 日主力净流入柱状图（手写 SVG，无外链依赖）：零线上下，流入红、流出绿

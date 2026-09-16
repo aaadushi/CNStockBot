@@ -26,6 +26,11 @@ export interface Quote {
   amount?: number;      // 成交额（元）
   turnover?: number;    // 换手率（%）
   volumeRatio?: number; // 量比
+  // —— 涨跌停与 52 周高低（F3-6，2026-09-16；腾讯无 52 周字段，降级时缺失）——
+  limitUp?: number;    // 涨停价（元）
+  limitDown?: number;  // 跌停价（元）
+  week52High?: number; // 52 周最高（元）
+  week52Low?: number;  // 52 周最低（元）
 }
 
 export interface NewsItem {
@@ -155,6 +160,19 @@ export interface Intraday {
   points: IntradayPoint[]; // 时间升序
 }
 
+// ---- 分红送配（F3-6，2026-09-16 新增；仅微服务模式提供） ----
+
+/** 单次分红送配记录（按公告日期倒序）；日期缺失为 undefined 而非占位串 */
+export interface DividendRecord {
+  announceDate?: string; // 公告日期 YYYY-MM-DD
+  exDate?: string;       // 除权除息日 YYYY-MM-DD
+  recordDate?: string;   // 股权登记日 YYYY-MM-DD
+  dividend?: number;     // 派息（每 10 股，元，税前）
+  bonus?: number;        // 送股（每 10 股，股）
+  transfer?: number;     // 转增（每 10 股，股）
+  progress?: string;     // 方案进度，如 预案/实施
+}
+
 // ---- 基金版块（F4-B，2026-09-15 新增；全部仅微服务模式提供） ----
 
 /** 开放式基金排行条目（天天基金数据源，按近1年收益率降序；新基金部分区间收益缺失为 null） */
@@ -231,6 +249,8 @@ export interface DataProvider {
   getFundFlow?(code: string, days?: number): Promise<FundFlow>;
   /** 个股分时（1 分钟线，最近一个交易日，F3-5）；东财直连无此能力，仅微服务模式提供 */
   getIntraday?(code: string): Promise<Intraday>;
+  /** 分红送配记录（按公告日期倒序，F3-6）；东财直连无此能力，仅微服务模式提供 */
+  getDividends?(code: string, limit?: number): Promise<DividendRecord[]>;
   /** 全市场今日涨跌榜（上涨/下跌/平盘 + 家数统计）；仅东财系接口提供 */
   getMovers?(limit?: number): Promise<MarketMovers>;
   /** 全市场财经快讯（区别于个股新闻）；东财直连无此能力，仅微服务模式提供 */

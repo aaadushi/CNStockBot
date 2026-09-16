@@ -8,7 +8,7 @@ import { config } from '../config.js';
 import { EastmoneyProvider } from './eastmoney.js';
 import { TencentProvider } from './tencent.js';
 import { PythonServiceProvider } from './pythonService.js';
-import type { Announcement, CompanyProfile, DataProvider, EtfQuote, FinancialReport, FundFlow, FundInfo, FundRankItem, FundSearchItem, HistoryBar, Intraday, MarketMovers, MarketNewsItem, NewsItem, NewsSort, Quote } from './provider.js';
+import type { Announcement, CompanyProfile, DataProvider, DividendRecord, EtfQuote, FinancialReport, FundFlow, FundInfo, FundRankItem, FundSearchItem, HistoryBar, Intraday, MarketMovers, MarketNewsItem, NewsItem, NewsSort, Quote } from './provider.js';
 
 class CompositeProvider implements DataProvider {
   readonly name = 'composite(eastmoney+python)';
@@ -114,6 +114,18 @@ class CompositeProvider implements DataProvider {
     } catch (err) {
       throw new Error(
         `分时数据不可用：${err instanceof Error ? err.message : String(err)}\n` +
+          '提示：进入 data-service 目录运行 `pip install -r requirements.txt && uvicorn main:app` 启动数据微服务。',
+      );
+    }
+  }
+
+  /** 分红送配只能走微服务（AKShare 历史分红明细，F3-6），未启动时给出带启动提示的错误 */
+  async getDividends(code: string, limit = 10): Promise<DividendRecord[]> {
+    try {
+      return await this.python.getDividends(code, limit);
+    } catch (err) {
+      throw new Error(
+        `分红送配数据不可用：${err instanceof Error ? err.message : String(err)}\n` +
           '提示：进入 data-service 目录运行 `pip install -r requirements.txt && uvicorn main:app` 启动数据微服务。',
       );
     }

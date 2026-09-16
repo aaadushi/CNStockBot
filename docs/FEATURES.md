@@ -549,3 +549,33 @@
   （本机 2026-09-16 仍在封禁，东财源列名为 AKShare 文档口径未实测，漂移时
   time/price/volume 缺失会跳过该行、amount 缺列则 avgPrice 不输出）；新浪源首个分钟 bar
   （09:31）的成交额含集合竞价，avgPrice 首点可能偏离首价，属上游口径不是 bug。
+
+## 29. 涨跌停价 / 52 周高低 / 分红送配（F3-6，2026-09-16 新增）
+
+- **涨跌停价与 52 周高低（走 Quote，不依赖微服务）**：`Quote` 新增可选字段
+  limitUp/limitDown/week52High/week52Low。东财 push2 字段 f51 涨停价 / f52 跌停价 /
+  f174 52周最高 / f175 52周最低——**均放大 100 倍**（2026-09-16 经 push2delay fltt=2
+  不缩放响应与默认缩放响应交叉实测核对一致），复用 priceField 解析（"-" 置 undefined）。
+  腾讯降级源 47=涨停价 / 48=跌停价（不缩放，与东财实测一致，opt() 解析）；
+  **腾讯无 52 周字段**，降级时缺失，前端显示 —。
+- **分红送配（微服务）**：data-service `GET /dividends/{code}?limit=`（默认 10、上限 50，
+  按代码缓存 6h——分红是低频事件）→ AKShare `stock_history_dividend_detail(symbol,
+  indicator="分红")`（东财数据源）。口径：**送股/转增/派息均为每 10 股**（派息单位元，
+  税前）。日期列 NaT/None 置 null；列名漂移时 row.get 得 None 输出 null 不补 0。
+  **无效代码上游返回空表，端点回 200 []**（与"从未分红"无法区分，不是错误）。
+  `DataProvider` 加 `DividendRecord` 与 `getDividends`，CompositeProvider 接线。
+- **落点**：详情页行情统计格加涨停价/跌停价/52周最高/52周最低四格；
+  资金流卡下方新增"分红送配"卡（公告日期/除权除息日/每10股派息/送股/转增/进度
+  六列表格，0 值显示 —，卡下注明每 10 股口径与免责声明）；
+  `/api/stocks/:code` 聚合扩为七块（+dividends/dividendsError 独立降级）。
+  **未进对话技能输出**（路线图落点仅为详情页；若需要可在 quote 技能格式化中补行）。
+- **代码位置**：字段解析 [src/data/eastmoney.ts](../src/data/eastmoney.ts) /
+  [src/data/tencent.ts](../src/data/tencent.ts)、接口 [src/data/provider.ts](../src/data/provider.ts)、
+  端点 [data-service/main.py](../data-service/main.py)（"分红送配（F3-6）"节）、
+  客户端 [src/data/pythonService.ts](../src/data/pythonService.ts)、
+  API [src/channels/webchat.ts](../src/channels/webchat.ts)（pickQuote + 聚合七块）、
+  页面 [public/stocks/index.html](../public/stocks/index.html)（renderQuote 统计格 /
+  renderDividends / dividend-card）、测试 [tests/pythonService-dividends.test.ts](../tests/pythonService-dividends.test.ts)
+  + eastmoney/tencent/fixtures 三处新用例（fixture 自 push2delay 重录含新字段）
+- **改动入口**：调缓存 → `_DIVIDEND_TTL`；加送配字段 → 端点 items 映射 + `DividendRecord`
+  + 前端表格列；东财字段编码变动 → eastmoney.ts 顶部注释清单先核对 push2delay

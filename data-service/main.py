@@ -827,6 +827,52 @@ async def intraday(code: str):
     return hit["data"]
 
 
+# ================= 分红送配（F3-6，2026-09-16） =================
+# AKShare stock_history_dividend_detail（indicator="分红"，东财数据源）：
+# 列 = 公告日期/送股/转增/派息/进度/除权除息日/股权登记日/红股上市日（2026-09-16 实测 600519）。
+# 口径：送股/转增/派息均为"每 10 股"（派息单位元，税前）。按代码缓存 6h（分红是低频事件）。
+
+_dividend_cache: dict = {}  # code -> {"ts": float, "data": list}
+_DIVIDEND_TTL = 6 * 3600
+
+
+def _div_date(v):
+    """datetime.date / NaT / None -> 'YYYY-MM-DD' / None。"""
+    if v is None or pd.isna(v):
+        return None
+    return str(v)[:10]
+
+
+@app.get("/dividends/{code}")
+async def dividends(code: str, limit: int = Query(default=10, ge=1, le=50)):
+    """个股分红送配记录（按公告日期倒序）。返回 DividendRecord[]：
+    announceDate/exDate/recordDate 为 YYYY-MM-DD；dividend=每10股派息(元，税前)，
+    bonus=每10股送股，transfer=每10股转增；progress 为方案进度（预案/实施等）。
+    从未分红的公司返回空数组（200）；上游失败 502。按代码缓存 6h。"""
+    hit = _dividend_cache.get(code)
+    if hit is None or time.time() - hit["ts"] > _DIVIDEND_TTL:
+        try:
+            df = await run_ak(ak.stock_history_dividend_detail, symbol=code, indicator="分红")
+        except Exception as e:
+            raise HTTPException(status_code=502, detail=f"分红送配数据获取失败: {e}")
+        items = []
+        if df is not None and not df.empty:
+            for _, row in df.iterrows():
+                items.append({
+                    "announceDate": _div_date(row.get("公告日期")),
+                    "exDate": _div_date(row.get("除权除息日")),
+                    "recordDate": _div_date(row.get("股权登记日")),
+                    # 列名漂移时 row.get 得 None -> null 输出，不用 0 顶替（A-310 同原则）
+                    "dividend": _fnum(row.get("派息")),
+                    "bonus": _fnum(row.get("送股")),
+                    "transfer": _fnum(row.get("转增")),
+                    "progress": None if pd.isna(row.get("进度")) else str(row.get("进度")),
+                })
+        hit = {"ts": time.time(), "data": items}
+        _dividend_cache[code] = hit
+    return hit["data"][:limit]
+
+
 # ================= 基金版块（F4-B，2026-09-15） =================
 # 开放式基金数据来自天天基金（东财系，与支付宝财富页同源）；场内 ETF 为东财全量实时快照。
 # 列结构均经 akshare 1.18.94 实测（见 docs/DATA_SOURCES.md）。

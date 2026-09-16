@@ -163,6 +163,34 @@ describe('EastmoneyProvider.getQuote 行情解析', () => {
     expect(q.volumeRatio).toBeUndefined();
   });
 
+  it('涨跌停与 52 周高低：f51/f52/f174/f175 均 ÷100（F3-6）', async () => {
+    mockFetchWith({
+      data: {
+        f43: 127275, f57: '600519', f58: '贵州茅台', f60: 127796, f170: -41,
+        f51: 140576, f52: 115016, f174: 153998, f175: 115101,
+      },
+    });
+    const q = await new EastmoneyProvider().getQuote('600519');
+    expect(q.limitUp).toBeCloseTo(1405.76);
+    expect(q.limitDown).toBeCloseTo(1150.16);
+    expect(q.week52High).toBeCloseTo(1539.98);
+    expect(q.week52Low).toBeCloseTo(1151.01);
+  });
+
+  it('涨跌停字段为 "-"（停牌等）时置 undefined 而非抛错（F3-6）', async () => {
+    mockFetchWith({
+      data: {
+        f43: 1000, f57: '600000', f58: '浦发银行', f60: 990, f170: 101,
+        f51: '-', f52: '-', f174: '-', f175: '-',
+      },
+    });
+    const q = await new EastmoneyProvider().getQuote('600000');
+    expect(q.limitUp).toBeUndefined();
+    expect(q.limitDown).toBeUndefined();
+    expect(q.week52High).toBeUndefined();
+    expect(q.week52Low).toBeUndefined();
+  });
+
   it('HTTP 非 2xx 抛错并带状态码', async () => {
     mockFetchWith({}, false, 503);
     await expect(new EastmoneyProvider().getQuote('600519')).rejects.toThrow('503');
