@@ -54,12 +54,13 @@ src/
     tencent.ts        腾讯行情（东财的自动降级备份；GBK 文本协议，价格不放大）
     pythonService.ts  AKShare 微服务客户端 + TradeCalendar（交易日历，按年缓存+格式校验）
     index.ts          createProvider()：默认组合（行情东财+腾讯降级 + 新闻微服务）
-  storage/store.ts    SQLite 存储（node:sqlite）：自选股 + 会话历史（含工具上下文）+ 收件箱 + kv，按 userId 隔离
+  storage/store.ts    SQLite 存储（node:sqlite）：自选股 + 会话历史（含工具上下文）+ 收件箱 + kv + alert_rules 监控规则（F5-4），按 userId 隔离
   channels/
     types.ts          Channel 接口：mount(app, agent) + notify(userId, text)
     webchat.ts        网页聊天 + 收件箱 + 股票浏览页 API（/api/watchlist、/api/stocks/:code、/api/search）
     feishu.ts         飞书渠道：验签(含防重放)/回复/主动推送，chat_id 映射 kv 持久化；默认不启用
-  alerts/scheduler.ts 定时任务：收盘日报（15:30 北京时间）+ 盘中异动提醒（超阈值推送）
+  alerts/scheduler.ts 定时任务：收盘日报（15:30 北京时间，含技术面信号摘要 F5-3）+ 盘中异动提醒（全局阈值 + 自定义多条件规则 F5-4）
+  alerts/rules.ts     监控规则领域逻辑（条件类型/校验/求值/文案，纯函数，scheduler 与 manage_alerts 技能共用）
   alerts/healthProbe.ts 行情健康探针：定时探测常青股票，连续失败告警（P4）
 data-service/         Python FastAPI + AKShare 微服务（新闻/公告/财报/历史K线；AKShare 调用统一 30s 超时）
 public/webchat/       内置聊天网页
@@ -155,8 +156,9 @@ uvicorn main:app --host 127.0.0.1 --port 8000
    四项轻量能力（排期在 F3/F4-B 之后），选股扫描与回测引擎两项重资产后置（前置：本地
    全市场行情库）。**红线：永不荐股、不做买卖建议与价格预测**，分析 = 客观指标计算 +
    LLM 汇总解读。**进度：F5-1 技术指标分析 2026-09-16 完成，F5-2 AI 个股多维分析
-   2026-09-19 完成**（analyze_stock 技能 + 详情页"AI 多维分析"卡），**F5-3 盘后复盘推送
-   2026-09-19 完成**（收盘日报附加技术面信号摘要），下一个任务 F5-4（多条件监控提醒）。
+   2026-09-19 完成**（analyze_stock 技能 + 详情页"AI 多维分析"卡），**F5-3/F5-4 轻量项
+   均于 2026-09-19 完成**（盘后复盘信号摘要 + 多条件监控提醒 manage_alerts 技能）。
+   剩余 F5-5/F5-6（选股扫描/回测引擎，重资产，前置：本地全市场行情库）与 F6 系列。
    详见 [docs/STATUS.md](docs/STATUS.md) 第四节。
 5. **F6 形态识别与多维共振分析**（用户 2026-09-15 指定，参考小红书博主"递归熵"的系统）：
    K 线形态识别 + 历史成绩单（先 20 种经典形态）、资金流验货、板块轮动监控、外盘联动

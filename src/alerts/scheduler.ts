@@ -4,7 +4,9 @@
  *    2026-09-19 起附加技术面信号摘要（F5-3，复用 F5-1 /indicators 端点的客观信号，
  *    需 data-service 运行；可用 DAILY_REPORT_SIGNALS=false 关闭）。
  * 2. 异动提醒：盘中（9:30-11:30 / 13:00-15:00）每 N 分钟轮询全部自选股，
- *    涨跌幅绝对值超阈值即推送，每股每日只报一次防刷屏。
+ *    涨跌幅绝对值超阈值即推送，每股每日只报一次防刷屏；
+ *    2026-09-19 起并入自定义多条件监控规则（F5-4，价格上下限/涨跌幅，AND/OR 组合，
+ *    条件粒度每日去重，与阈值提醒合并为一条推送）。
  * 用 setTimeout 实现的极简调度器，避免引入 cron 依赖；
  * 任务变多后建议换成 node-cron 或 BullMQ。
  */
@@ -13,6 +15,7 @@ import type { Channel } from '../channels/types.js';
 import type { DataProvider, Quote } from '../data/provider.js';
 import type { Store } from '../storage/store.js';
 import { TradeCalendar } from '../data/pythonService.js';
+import { describeCondition, evaluateRule } from './rules.js';
 
 /** 交易日历单例：判断当日是否 A 股交易日（跳法定节假日），服务不可用时降级为只跳周末 */
 const tradeCalendar = new TradeCalendar();
@@ -140,10 +143,11 @@ export async function buildDailyReport(
   return `${report}\n\n以上仅供参考，不构成投资建议。`;
 }
 
-/** 盘中异动提醒轮询 */
+/** 盘中异动提醒轮询：全局涨跌幅阈值（自选股）+ 用户自定义多条件规则（F5-4）合并推送 */
 function startPriceAlerts(store: Store, data: DataProvider, channels: Channel[]): void {
   const threshold = config.alerts.thresholdPct;
-  const alerted = new Set<string>(); // `${date}:${code}`，每股每日只报一次
+  // `${date}:${code}` 阈值提醒；`${date}:r<id>`（all 规则）/ `${date}:r<id>:<条件序号>`（any 规则）自定义提醒
+  const alerted = new Set<string>();
 
   const tick = async (): Promise<void> => {
     const bj = beijingNow();
@@ -153,9 +157,13 @@ function startPriceAlerts(store: Store, data: DataProvider, channels: Channel[])
         // 跨天后清掉前一天的记录
         for (const k of alerted) if (!k.startsWith(today)) alerted.delete(k);
 
-        // 先汇总全部用户的自选股去重拉行情，避免多用户重复请求东财
-        const users = store.allUsers();
-        const allCodes = [...new Set(users.flatMap((u) => store.getWatchlist(u)))];
+        const rules = store.getEnabledAlertRules();
+        // 用户集合 = 有自选股的 + 有监控规则的（规则股票不要求在自选股里）
+        const users = [...new Set([...store.allUsers(), ...rules.map((r) => r.userId)])];
+        // 先汇总全部用户的自选股与规则股票去重拉行情，避免多用户重复请求东财
+        const allCodes = [
+          ...new Set([...users.flatMap((u) => store.getWatchlist(u)), ...rules.map((r) => r.code)]),
+        ];
         const quotes = new Map<string, Quote>();
         await Promise.all(
           allCodes.map(async (c) => {
@@ -168,19 +176,59 @@ function startPriceAlerts(store: Store, data: DataProvider, channels: Channel[])
         );
 
         for (const userId of users) {
+          const parts: string[] = [];
+          // 推送成功才写 alerted 标记，失败下轮补报（审计 A-404：先标记后推送会丢当日提醒）
+          const markOnSuccess: string[] = [];
+
+          // —— 全局阈值提醒（自选股涨跌幅超 ±threshold%）——
           const hits = store
             .getWatchlist(userId)
             .map((c) => quotes.get(c))
             .filter((q): q is Quote => !!q && Number.isFinite(q.changePct) && Math.abs(q.changePct) >= threshold)
             .filter((q) => !alerted.has(`${today}:${q.code}`));
-          if (hits.length === 0) continue;
-          const text =
-            `【异动提醒】以下自选股涨跌幅超过 ±${threshold}%：\n` +
-            hits.map(formatQuoteLine).join('\n') +
-            '\n\n以上仅供参考，不构成投资建议。';
-          // 推送成功才标记"已报"，失败下轮补报（审计 A-404：先标记后推送会丢当日提醒）
+          if (hits.length > 0) {
+            parts.push(
+              `【异动提醒】以下自选股涨跌幅超过 ±${threshold}%：\n` + hits.map(formatQuoteLine).join('\n'),
+            );
+            markOnSuccess.push(...hits.map((q) => `${today}:${q.code}`));
+          }
+
+          // —— 自定义多条件规则（F5-4）——
+          const ruleLines: string[] = [];
+          for (const r of rules) {
+            if (r.userId !== userId) continue;
+            const q = quotes.get(r.code);
+            if (!q) continue;
+            const fired = evaluateRule(r, q);
+            if (!fired) continue;
+            if (r.combinator === 'all') {
+              // all 规则满足时全部条件必然都触发，按规则整体去重（每日一次）
+              const key = `${today}:r${r.id}`;
+              if (alerted.has(key)) continue;
+              ruleLines.push(
+                `· #${r.id} ${q.name}（${r.code}）现价 ${q.price.toFixed(2)} 元：` +
+                  `${r.conditions.map(describeCondition).join('；')}（已全部满足）`,
+              );
+              markOnSuccess.push(key);
+            } else {
+              // any 规则按条件粒度去重：同一规则的不同条件可在不同时间各自触发一次
+              const fresh = fired.filter((i) => !alerted.has(`${today}:r${r.id}:${i}`));
+              if (fresh.length === 0) continue;
+              ruleLines.push(
+                `· #${r.id} ${q.name}（${r.code}）现价 ${q.price.toFixed(2)} 元：触发 ` +
+                  fresh.map((i) => describeCondition(r.conditions[i])).join('；'),
+              );
+              markOnSuccess.push(...fresh.map((i) => `${today}:r${r.id}:${i}`));
+            }
+          }
+          if (ruleLines.length > 0) {
+            parts.push(`【条件提醒】你的监控规则已触发：\n${ruleLines.join('\n')}`);
+          }
+
+          if (parts.length === 0) continue;
+          const text = parts.join('\n\n') + '\n\n以上仅供参考，不构成投资建议。';
           if (await notifyUser(channels, userId, text)) {
-            for (const q of hits) alerted.add(`${today}:${q.code}`);
+            for (const k of markOnSuccess) alerted.add(k);
           }
         }
       }
@@ -191,7 +239,7 @@ function startPriceAlerts(store: Store, data: DataProvider, channels: Channel[])
     }
   };
   console.log(
-    `[scheduler] 异动提醒已启动：盘中每 ${config.alerts.intervalMinutes} 分钟轮询，阈值 ±${threshold}%`,
+    `[scheduler] 异动提醒已启动：盘中每 ${config.alerts.intervalMinutes} 分钟轮询，阈值 ±${threshold}%（含自定义监控规则 F5-4）`,
   );
   void tick();
 }

@@ -265,6 +265,9 @@
      （`ALERT_INTERVAL_MINUTES`，默认 5）轮询——先汇总全部用户的自选股**去重后并发拉行情**
      （避免多用户重复请求东财），涨跌幅绝对值超阈值（`ALERT_THRESHOLD_PCT`，默认 ±5%）
      即推送；`alerted` 集合按 `${日期}:${代码}` 去重，**每股每日只报一次**，跨天自动清空。
+     **2026-09-19 起同一轮询并入自定义多条件规则（F5-4，详见第 32 节）**：用户集合扩为
+     "有自选股 ∪ 有启用规则"，规则代码并入去重拉行情集合；阈值命中与规则触发合并为
+     一条推送（两段分区），推送成功才统一写去重标记。
   推送统一走 `notifyUser()`：逐渠道 try/catch，单用户/单渠道失败不中断当轮其余用户；
   **推送成功才写 alerted 标记**，失败下轮补报（审计 A-403/A-404/A-602）。
 - **代码位置**：[src/alerts/scheduler.ts](../src/alerts/scheduler.ts)，
@@ -653,3 +656,40 @@
   （ai-card / runAiAnalysis / renderAi）、测试 [tests/analyze.test.ts](../tests/analyze.test.ts)
 - **改动入口**：改聚合维度/每块取数 → analyze/index.ts 的 Promise.allSettled 列表与
   fmt* 格式化函数；改解读口径 → SYSTEM_PROMPT 规则 5；改前端交互 → renderAi/runAiAnalysis
+
+## 32. 多条件监控提醒（manage_alerts，F5-4，2026-09-19 新增）
+
+- **定位**：异动提醒从单一全局涨跌幅阈值升级为**用户可配置的多条件规则**——用户按个股
+  自定义触发条件，与全局阈值提醒（对全部自选股生效）互补；规则股票**不要求在自选股里**。
+- **领域逻辑（纯函数）**：[src/alerts/rules.ts](../src/alerts/rules.ts)。条件类型三种：
+  `price_above`（价格涨到 ≥）/ `price_below`（价格跌到 ≤）/ `change_pct`（涨跌幅绝对值 ≥ %）；
+  组合方式 `combinator=any`（任一触发）/ `all`（全部满足）。`validateConditions()` 校验
+  LLM 入参（未知类型/非正阈值/超 5 个条件均拒绝并回指引文本），`evaluateRule()` 对 Quote
+  求值返回触发条件下标（all 未全触发返回 null；changePct NaN 时 change_pct 不触发），
+  `describeCondition/describeRule` 产出中文文案（技能确认与推送共用）。
+  **范围裁剪**：指标信号类条件（金叉/超买等）不在盘中轮询——/indicators 基于已完成日 K、
+  盘中不变，该类信号由 F5-3 收盘日报信号摘要覆盖。
+- **存储**：SQLite `alert_rules(id, user_id, code, combinator, conditions(JSON), enabled,
+  created_at)`；Store 新增 addAlertRule/getAlertRules/getEnabledAlertRules/countAlertRules/
+  removeAlertRule/setAlertRuleEnabled，全部按 userId 隔离；损坏 JSON 行读取时跳过不抛错；
+  每用户上限 `MAX_RULES_PER_USER=20` 条防滥用。
+- **技能**：`manage_alerts`（[src/skills/bundled/alerts/](../src/skills/bundled/alerts/)），
+  action 白名单 add/list/remove/enable/disable（未知 action 拦截，同 A-201）；add 前验证
+  代码存在（停牌股走 search 降级，同 A-202）；list 带行情名称展示（行情失败退化为代码）；
+  SYSTEM_PROMPT 规则 3 加了 routing（"涨到 X 提醒我"→ manage_alerts）。
+- **调度**（scheduler.ts `startPriceAlerts`，与阈值提醒同一轮询）：每轮先取
+  `getEnabledAlertRules()`，规则代码并入去重拉行情集合；触发判定后按粒度去重——
+  all 规则按 `${date}:r<id>` 每日一次，any 规则按 `${date}:r<id>:<条件序号>` **每条件每日一次**
+  （同一规则的不同条件可在不同时刻各自触发一次）；与阈值命中合并为一条两段式推送
+  （【异动提醒】+【条件提醒】），推送成功才写去重标记、失败下轮补报（沿用 A-404 语义）。
+- **代码位置**：领域 [src/alerts/rules.ts](../src/alerts/rules.ts)、调度
+  [src/alerts/scheduler.ts](../src/alerts/scheduler.ts)、存储 [src/storage/store.ts](../src/storage/store.ts)、
+  技能 [src/skills/bundled/alerts/](../src/skills/bundled/alerts/)、测试
+  [tests/alertRules.test.ts](../tests/alertRules.test.ts)
+- **改动入口**：加条件类型 → rules.ts 三处（类型/校验/求值/文案）+ 技能 parameters 枚举 +
+  SKILL.md；调上限 → `MAX_CONDITIONS_PER_RULE`/`MAX_RULES_PER_USER`；改去重粒度 →
+  scheduler 的 markOnSuccess 键规则；加网页管理界面 → webchat.ts 加 /api/alerts 端点
+  （口令鉴权后）+ 复用 Store CRUD
+- **注意事项**：`ALERT_ENABLED=false` 时全局阈值与自定义规则都停止轮询；规则触发文案中的
+  价格/涨跌幅是触发时刻的客观状态，推送末尾固定免责声明，不得改写为买卖建议；
+  轮询每轮全量读启用规则（行数小，无需缓存）。
