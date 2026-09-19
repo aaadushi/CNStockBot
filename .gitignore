@@ -7,3 +7,6 @@ data/*.db
 *.log
 __pycache__/
 .venv/
+
+# Claude agent worktrees（本地运行时产物）
+.claude/worktrees/
