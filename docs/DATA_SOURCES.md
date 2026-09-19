@@ -46,6 +46,25 @@ GET https://push2.eastmoney.com/api/qt/ulist.np/get?secids=1.000001,0.399001,0.8
   0.399001=深、**0.899050=北交所**（实测可返回北交所全区统计），三市求和
 - push2 限流时两个端点都可换 `push2delay.eastmoney.com` 同构托底（延时约 15 分钟）
 
+**行业板块（已接入：/sectors 板块轮动页，F6-3，2026-09-19；data-service 内直连 clist 实现）**
+```
+GET https://push2.eastmoney.com/api/qt/clist/get?pn=1&pz=100&po=1&np=1&fltt=2&invt=2&fid=f3&fs=m:90+t:2+f:!50&fields=...
+```
+- 涨跌排行（/sectors/rank）：fs=`m:90 t:2 f:!50`（东财行业板块，含多级行业约 500 个），
+  fid=f3 按涨跌幅降序。字段：f12 板块代码（BK）/ f14 名称 / f2 最新价 / f3 涨跌幅 / f4 涨跌额 /
+  f6 成交额（元）/ f8 换手率 / f20 总市值（元）/ f104 上涨家数 / f105 下跌家数 /
+  f128 领涨股名 / f140 领涨股代码 / f136 领涨股涨跌幅
+- 资金流排行（/sectors/fund-flow）：fs=`m:90 t:2`（不带 f:!50），**fid0**=f62（今日主力净流入）
+  + stat=1，按主力净流入降序。字段：f62 主力净流入 / f184 主力净占比 / f66/f69 超大单 /
+  f72/f75 大单 / f78/f81 中单 / f84/f87 小单（净额元 + 净占比%）/ f204/f205 主力净流入最大个股
+- 成分股（/sectors/cons）：fs=`b:{BK代码} f:!50`，字段 f12/f14 成分股代码名称 +
+  f2/f3/f4 价涨跌 / f5 成交量（手）/ f6 成交额 / f7 振幅 / f8 换手率 / f9 市盈率（动）/ f23 市净率
+- 参数与 AKShare 封装（stock_board_industry_name_em / stock_sector_fund_flow_rank /
+  stock_board_industry_cons_em）逐一核对一致；**不走 AKShare 是因为其封装丢弃了成交额/
+  领涨股代码/板块代码等必需字段**（2026-09-19 实测其源码确认）
+- fltt=2 时数值**不缩放**（与涨跌榜一致）；全量约 500 行需翻页（pz=100 约 5 页，间隔 0.3s
+  防限流）；push2 限流自动降级 push2delay（响应带 `source: eastmoney-delay` 标注）
+
 ## 腾讯行情（免 key，已接入：东财的自动降级备份）
 
 ```
@@ -89,6 +108,8 @@ GET https://qt.gtimg.cn/q=sh600519
 | `ak.stock_zh_a_hist_min_em(symbol, period, adjust)` | 个股分钟 K，东财 push2his（已接入 /intraday 主源；period="1" 当日 1 分钟线仅支持 adjust=""；列：时间/开盘/收盘/最高/最低/涨跌幅/涨跌额/成交量（手）/成交额（元）/振幅/换手率——列名为 AKShare 文档口径，主源限流中未实测） |
 | `ak.stock_zh_a_minute(symbol, period, adjust)` | 个股分钟 K，新浪（已接入 /intraday 降级源；symbol 带市场前缀 sh/sz/bj——**bj 北交所实测覆盖**，与日 K 降级源不同；返回近约 8 个交易日约 1970 行，端点只取最近一日；**成交量单位是股**，端点 ÷100 归一到手；列：day/open/high/low/close/volume/amount） |
 | `ak.stock_history_dividend_detail(symbol, indicator)` | 个股分红送配明细，东财（已接入 /dividends；indicator="分红"，按公告日期倒序，列：公告日期/送股/转增/派息/进度/除权除息日/股权登记日/红股上市日——送股/转增/派息均**每 10 股**口径，派息为元、税前；日期列为 date 对象或 NaT；**无效代码返回空表不报错**，与"从未分红"无法区分；按代码缓存 6h） |
+| `ak.stock_board_industry_hist_em(symbol, start_date, end_date, period, adjust)` | 行业板块日 K，东财 push2his kline（secid=90.{BK代码}；已接入 /sectors/history，F6-3；**支持直传 BK 代码**跳过其内部名称→代码解析；列：日期/开盘/收盘/最高/最低/涨跌幅/涨跌额/成交量/成交额/振幅/换手率——与个股 /history 东财源列名一致，端点复用同一套归一化；按 code+days 缓存 10min。push2his 限流时无降级源，返回结构化 502） |
+| `ak.stock_board_industry_name_em()` / `ak.stock_sector_fund_flow_rank(indicator, sector_type)` / `ak.stock_board_industry_cons_em(symbol)` | 行业板块涨跌排行 / 板块资金流排行 / 板块成分股（**未接入 AKShare 封装**：实测其输出丢弃成交额/领涨股代码/板块代码等必需字段，/sectors/rank、/sectors/fund-flow、/sectors/cons 按其同参数同字段直连东财 clist 实现，见上方"行业板块"节） |
 
 **技术指标本地计算（/indicators，F5-1，2026-09-16；非外部接口，无新依赖）**
 

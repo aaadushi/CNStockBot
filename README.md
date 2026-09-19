@@ -20,6 +20,7 @@
 - 🚀 全市场涨跌榜（/market）：今日涨幅榜/跌幅榜/平盘 + 涨跌平家数总览，点卡片跳个股详情
 - 📰 财经快讯（/news + `get_market_news` 技能）：全市场财经快讯滚动列表，60s 自动刷新（需 data-service）
 - 💰 基金版块（/funds）：开放式基金排行（按类型）/基金搜索/净值走势图/场内 ETF 实时榜，对标支付宝财富页基金内容；对话可查"基金排行""某基金怎么样"
+- 🏭 板块轮动页（/sectors）：行业板块涨跌排行/资金流排行、板块详情（成分股 + 日 K 走势图）、"查个股所属板块"共振查询（所属行业当日涨跌与资金流名次）；需 data-service
 
 ## 快速开始
 
@@ -31,10 +32,10 @@ cp .env.example .env   # 填入 LLM_API_KEY（推荐 DeepSeek，国内直连且�
 npm run dev
 ```
 
-打开 http://localhost:18790/webchat 、http://localhost:18790/stocks 、http://localhost:18790/market 、http://localhost:18790/news 或 http://localhost:18790/funds ，按提示输入访问口令
+打开 http://localhost:18790/webchat 、http://localhost:18790/stocks 、http://localhost:18790/market 、http://localhost:18790/news 、http://localhost:18790/funds 或 http://localhost:18790/sectors ，按提示输入访问口令
 （口令 = `.env` 的 `ACCESS_TOKEN`；未配置时启动日志会打印一个随机口令）。
 
-**启用新闻/公告/财报/历史走势/搜索/财经快讯/基金版块功能**（需要 Python ≥ 3.10；行情/指数/涨跌榜不需要 data-service）：
+**启用新闻/公告/财报/历史走势/搜索/财经快讯/基金版块/板块轮动功能**（需要 Python ≥ 3.10；行情/指数/涨跌榜不需要 data-service）：
 
 ```bash
 cd data-service

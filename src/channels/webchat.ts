@@ -5,6 +5,7 @@
  * - GET  /market                  全市场涨跌榜静态页面（public/market/），不鉴权
  * - GET  /funds                   基金版块静态页面（public/funds/），不鉴权
  * - GET  /news                    财经快讯静态页面（public/news/），不鉴权
+ * - GET  /sectors                 板块轮动静态页面（public/sectors/），不鉴权
  * - GET  /shared                  前端共享静态资源（public/shared/），不鉴权
  * - POST /api/chat                { userId, message } -> { reply }
  * - GET  /api/inbox?userId=       拉取离线通知（读后即删）
@@ -24,6 +25,11 @@
  * - GET  /api/funds/search?keyword=     基金搜索（名称/代码/拼音缩写，需 data-service）
  * - GET  /api/funds/etf?limit=          场内 ETF 实时行情榜（需 data-service）
  * - GET  /api/funds/:code?days=         单只基金详情 + 单位净值走势（需 data-service）
+ * - GET  /api/sectors/rank?limit=        行业板块涨跌排行（需 data-service，F6-3）
+ * - GET  /api/sectors/fund-flow?limit=   行业板块资金流排行（需 data-service，F6-3）
+ * - GET  /api/sectors/cons?name=&limit=  板块成分股（需 data-service，F6-3）
+ * - GET  /api/sectors/history?name=&days= 板块日 K 走势（需 data-service，F6-3）
+ * - GET  /api/sectors/of-stock/:code     个股→板块共振（需 data-service，F6-3）
  *
  * 鉴权：所有 /api/* 请求需带请求头 `Authorization: Bearer <ACCESS_TOKEN>`，
  * 口令来自 config.accessToken（.env 的 ACCESS_TOKEN，未配置时启动时随机生成并打印）。
@@ -53,6 +59,7 @@ const STOCKS_ROOT = path.resolve(__dirname, '../../public/stocks');
 const MARKET_ROOT = path.resolve(__dirname, '../../public/market');
 const FUNDS_ROOT = path.resolve(__dirname, '../../public/funds');
 const NEWS_ROOT = path.resolve(__dirname, '../../public/news');
+const SECTORS_ROOT = path.resolve(__dirname, '../../public/sectors');
 const SHARED_ROOT = path.resolve(__dirname, '../../public/shared');
 
 /** 股票代码统一校验：6 位数字 */
@@ -136,6 +143,7 @@ export class WebChatChannel implements Channel {
     app.use('/market', express.static(MARKET_ROOT));
     app.use('/funds', express.static(FUNDS_ROOT));
     app.use('/news', express.static(NEWS_ROOT));
+    app.use('/sectors', express.static(SECTORS_ROOT));
     app.use('/shared', express.static(SHARED_ROOT));
 
     // 只保护 /api/*，静态资源（/webchat、/stocks、/market、/news、/shared）不鉴权
@@ -480,6 +488,99 @@ export class WebChatChannel implements Channel {
       const days = Number.isNaN(parsed) ? 260 : Math.min(1000, Math.max(1, parsed));
       try {
         res.json(await this.data.getFundInfo(code, days));
+      } catch (err) {
+        res.status(500).json({ error: errText(err) });
+      }
+    });
+
+    // ---- 板块轮动监控 API（F6-3，2026-09-19；全部依赖 data-service 微服务的可选方法） ----
+    const noSectorService = (res: express.Response) =>
+      res.status(503).json({ error: '板块数据需要 data-service（AKShare 微服务），请确认已启动' });
+    const sectorName = (req: express.Request): string => String(req.query.name ?? '').trim();
+
+    // 行业板块涨跌排行（涨跌幅降序）
+    app.get('/api/sectors/rank', async (req, res) => {
+      if (!this.data.getSectorRank) {
+        noSectorService(res);
+        return;
+      }
+      const parsed = Number.parseInt(String(req.query.limit ?? ''), 10);
+      const limit = Number.isNaN(parsed) ? 30 : Math.min(200, Math.max(1, parsed));
+      try {
+        res.json(await this.data.getSectorRank(limit));
+      } catch (err) {
+        res.status(500).json({ error: errText(err) });
+      }
+    });
+
+    // 行业板块资金流排行（今日主力净流入降序）
+    app.get('/api/sectors/fund-flow', async (req, res) => {
+      if (!this.data.getSectorFundFlow) {
+        noSectorService(res);
+        return;
+      }
+      const parsed = Number.parseInt(String(req.query.limit ?? ''), 10);
+      const limit = Number.isNaN(parsed) ? 30 : Math.min(200, Math.max(1, parsed));
+      try {
+        res.json(await this.data.getSectorFundFlow(limit));
+      } catch (err) {
+        res.status(500).json({ error: errText(err) });
+      }
+    });
+
+    // 板块成分股（涨跌幅降序）
+    app.get('/api/sectors/cons', async (req, res) => {
+      if (!this.data.getSectorCons) {
+        noSectorService(res);
+        return;
+      }
+      const name = sectorName(req);
+      if (!name || name.length > 20) {
+        res.status(400).json({ error: '需要 name 参数（板块名称或 BK 代码）' });
+        return;
+      }
+      const parsed = Number.parseInt(String(req.query.limit ?? ''), 10);
+      const limit = Number.isNaN(parsed) ? 100 : Math.min(500, Math.max(1, parsed));
+      try {
+        res.json(await this.data.getSectorCons(name, limit));
+      } catch (err) {
+        res.status(500).json({ error: errText(err) });
+      }
+    });
+
+    // 板块日 K 走势（走势图数据源）
+    app.get('/api/sectors/history', async (req, res) => {
+      if (!this.data.getSectorHistory) {
+        noSectorService(res);
+        return;
+      }
+      const name = sectorName(req);
+      if (!name || name.length > 20) {
+        res.status(400).json({ error: '需要 name 参数（板块名称或 BK 代码）' });
+        return;
+      }
+      const parsed = Number.parseInt(String(req.query.days ?? ''), 10);
+      const days = Number.isNaN(parsed) ? 120 : Math.min(500, Math.max(1, parsed));
+      try {
+        res.json(await this.data.getSectorHistory(name, days));
+      } catch (err) {
+        res.status(500).json({ error: errText(err) });
+      }
+    });
+
+    // 个股→板块共振（所属行业在当日涨跌/资金流排行中的位置；未匹配返回 matched=false 而非报错）
+    app.get('/api/sectors/of-stock/:code', async (req, res) => {
+      if (!this.data.getSectorOfStock) {
+        noSectorService(res);
+        return;
+      }
+      const code = req.params.code;
+      if (!CODE_RE.test(code)) {
+        res.status(400).json({ error: 'code 必须是 6 位数字' });
+        return;
+      }
+      try {
+        res.json(await this.data.getSectorOfStock(code));
       } catch (err) {
         res.status(500).json({ error: errText(err) });
       }

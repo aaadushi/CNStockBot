@@ -694,7 +694,52 @@
   价格/涨跌幅是触发时刻的客观状态，推送末尾固定免责声明，不得改写为买卖建议；
   轮询每轮全量读启用规则（行数小，无需缓存）。
 
-## 33. K 线形态识别 + 历史成绩单（F6-1，2026-09-19 新增）
+## 33. 板块轮动监控（/sectors，F6-3，2026-09-19 新增）
+
+- **定位**：东财行业板块（m:90 t:2，含多级行业约 500 个）的轮动监控独立导航页：
+  涨跌排行 / 资金流排行 / 板块详情（成分股 + 日 K 走势图）/ "查个股所属板块"共振查询。
+  纯客观数据呈现，**不做任何板块推荐**；页面注明数据口径与"仅供参考，不构成投资建议"。
+- **data-service**（[data-service/main.py](../data-service/main.py) 末尾"板块轮动监控"节）：
+  - `GET /sectors/rank?limit=`：涨跌排行（涨跌幅降序，缓存 60s）。字段：名次/板块代码（BK）/
+    名称/最新价/涨跌幅/涨跌额/成交额/换手率/总市值/上涨下跌家数/领涨股（名称+代码+涨跌幅）。
+  - `GET /sectors/fund-flow?limit=`：资金流排行（今日主力净流入降序，缓存 60s）。
+    主力/超大单/大单/中单/小单五档净流入与净占比 + 主力净流入最大个股。
+  - `GET /sectors/cons?name=&limit=`：板块成分股（涨跌幅降序，按板块缓存 10min）；
+    name 支持板块名称或 BK 代码（代码直传时尝试从排行表反查名称）。
+  - `GET /sectors/history?name=&days=`：板块日 K（日期升序，缓存 10min），bars 结构与个股
+    /history 一致（复用 `_hist_items` 归一化，列名与东财个股日 K 相同）。
+  - `GET /sectors/of-stock/{code}`：个股→板块共振。所属行业复用 /profile（含其降级链与
+    24h 缓存），与涨跌排行表匹配（精确优先，其次去罗马数字后缀归一化兜底）；命中返回
+    板块当日涨跌名次 rank/total 与资金流名次 fundFlowRank/fundFlowTotal（资金流排行失败
+    仅省略资金流字段，独立降级）；行业缺失或无同名板块返回 `matched=false` 结构化响应。
+  - **实现选型**：排行/资金流/成分股本质是东财 clist 翻页接口，AKShare 封装
+    （stock_board_industry_name_em / stock_sector_fund_flow_rank / stock_board_industry_cons_em）
+    会丢弃本项目需要的字段（成交额/领涨股代码/板块代码），故按 AKShare 同参数同字段
+    **直连 clist**（`_clist_paginated`：push2 主宿主 → push2delay 延时镜像降级，
+    翻页间隔 0.3s 防限流，响应带 `source: eastmoney/eastmoney-delay` 标注）；
+    板块日 K 走 AKShare `stock_board_industry_hist_em`（push2his，支持 BK 代码直传）。
+- **主服务**：`DataProvider` 新增 `SectorRank/SectorFundFlow/SectorCons/SectorHistory/
+  StockSectorInfo` 类型与五个可选方法（[src/data/provider.ts](../src/data/provider.ts)），
+  PythonServiceProvider 与 CompositeProvider 接线（微服务未启动时给带启动提示的错误）；
+  webchat.ts 挂 `/sectors` 静态页与 `/api/sectors/*` 五个端点（全部在口令鉴权后，
+  code 校验 6 位数字、name 必填且 ≤20 字符）。
+- **前端**：[public/sectors/index.html](../public/sectors/index.html)（复用 theme.css，
+  全部 textContent 渲染）——列表视图：个股查板块输入框（代码直查/名称先走 /api/search
+  解析）+ 涨跌排行/资金流排行两个 Tab（卡片含名次/领涨股/涨跌家数/成交额或主力净流入）；
+  详情视图（?name=）：走势图（手写 SVG 折线，近1月/3月/6月/1年区间切换，hover tooltip）
+  与成分股表（点击跳 /stocks 个股详情）**独立加载互不阻塞**；延时镜像数据页面标注
+  "延时约 15 分钟"。/stocks、/market、/news、/funds 页头导航加"🏭 板块"入口。
+- **测试**：[tests/pythonService-sectors.test.ts](../tests/pythonService-sectors.test.ts)
+  9 条用例（五方法 URL 拼接含中文编码/参数默认值、响应透传、matched=false 结构化响应、
+  404/连接失败分支），fetch 全 mock 不碰真实网络。
+- **改动入口**：加板块字段 → main.py 的 `_SECTOR_*_FIELDS` + 对应 `_sector_*_item` 归一化 +
+  provider.ts 类型；调缓存 → `_SECTOR_*_TTL`；概念板块（m:90 t:3）→ `_clist_paginated`
+  调用处换 fs 参数。
+- **注意事项**：push2his（板块日 K）与 push2（clist）限流独立，板块日 K 限流期返回
+  结构化 502，只影响走势图区块；排行表全量约 500 行需翻页约 5 次，60s 缓存是限流防线，
+  不要缩短；`/api/sectors/of-stock` 的行业匹配依赖"profile 行业名 = 板块名"同源性
+  （均为东财行业分类），东财若改分类口径会表现为 matched=false 增多而非报错。
+## 34. K 线形态识别 + 历史成绩单（F6-1，2026-09-19 新增）
 
 - **数据层（纯本地计算，无新外部依赖）**：data-service `GET /patterns/{code}?days=`
   （默认 750≈3 年、范围 30~1500，按 (code,days) 缓存 6h）。输入是与 /history 同源的

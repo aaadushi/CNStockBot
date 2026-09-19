@@ -1277,6 +1277,413 @@ async def fund_info(code: str, days: int = Query(default=250, ge=1, le=2000)):
     }
 
 
+# ================= 板块轮动监控（F6-3，2026-09-19） =================
+# 东财行业板块（m:90 t:2）四个能力：涨跌排行 / 资金流排行 / 成分股 / 板块日 K + 个股→板块共振。
+# 数据源说明（2026-09-19 实测 akshare 1.18.94）：
+# - 排行/资金流/成分股本质是东财 clist 翻页接口（push2）。AKShare 封装（stock_board_industry_name_em /
+#   stock_sector_fund_flow_rank / stock_board_industry_cons_em）会丢弃本项目需要的字段
+#   （成交额/领涨股代码/板块代码等），故按 AKShare 同参数同字段**直连 clist** 实现，
+#   宿主降级链 push2 → push2delay（同构延时镜像，约延时 15 分钟，响应带 source 标注，同 /profile 先例）。
+# - 板块日 K 走 AKShare stock_board_industry_hist_em（push2his kline，secid=90.{BK代码}），
+#   支持直接传 BK 代码（跳过其内部名称→代码解析，省一次排行表请求）。
+# - 个股所属行业复用 /profile 端点（含自身降级链与 24h 缓存），再与排行表匹配。
+# 缓存：排行/资金流 60s（盘中实时变动），成分股/板块日 K 10min。
+
+_PUSH2_CLIST_HOSTS = ("https://push2.eastmoney.com", "https://push2delay.eastmoney.com")
+_PUSH2_HEADERS = {
+    "Referer": "https://quote.eastmoney.com/",
+    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+    "(KHTML, like Gecko) Chrome/126.0 Safari/537.36",
+}
+_CLIST_MAX_PAGES = 8  # 行业板块全量约 500 行（含多级行业），pz=100 需 5 页；留余量防膨胀死循环
+
+
+def _clist_paginated(params: dict):
+    """东财 clist 全量翻页（push2 主宿主 → push2delay 延时镜像降级）。
+    返回 (rows: list[dict], host: str)；两宿主都失败抛最后一个异常。
+    np=1 时 data.diff 为数组；翻页间隔 0.3s 防触发东财 IP 限流（见 PITFALLS 东财条目）。"""
+    last_err = None
+    for host in _PUSH2_CLIST_HOSTS:
+        try:
+            rows: list = []
+            page = 1
+            while True:
+                p = dict(params)
+                p["pn"] = str(page)
+                r = requests.get(
+                    f"{host}/api/qt/clist/get", params=p, headers=_PUSH2_HEADERS, timeout=15
+                )
+                r.raise_for_status()
+                data = r.json().get("data")
+                if not isinstance(data, dict) or not isinstance(data.get("diff"), list):
+                    break
+                rows.extend(data["diff"])
+                total = int(data.get("total") or 0)
+                if not data["diff"] or len(rows) >= total or page >= _CLIST_MAX_PAGES:
+                    break
+                page += 1
+                time.sleep(0.3)
+            if not rows:
+                raise ValueError("clist 返回空数据")
+            return rows, host
+        except Exception as e:
+            last_err = e
+            logger.warning("clist 宿主失败，尝试下一宿主: host=%s err=%s", host, e)
+    raise last_err if last_err is not None else ValueError("clist 无可用宿主")
+
+
+def _clist_source(host: str) -> str:
+    """响应数据源标注：push2delay 为延时镜像（约 15 分钟），前端据此标注。"""
+    return "eastmoney-delay" if "push2delay" in host else "eastmoney"
+
+
+def _f_int(v):
+    """家数类整数字段：'-'/非法 -> None，否则 int（不经 float 输出 16.0 这种值）。"""
+    f = _f_opt(v)
+    return None if f is None else int(f)
+
+
+# --- 行业板块涨跌排行（缓存 60s；/sectors/rank 与名称→代码解析、of-stock 共振共用） ---
+# 参数与 AKShare stock_board_industry_name_em 一致（fs=m:90 t:2 f:!50，按 f3 涨跌幅降序），
+# 字段在 AKShare 基础上多取 f6 成交额 / f140 领涨股代码（AKShare 封装丢弃了这两列）。
+_SECTOR_RANK_FIELDS = "f2,f3,f4,f5,f6,f8,f12,f14,f20,f104,f105,f128,f136,f140"
+_sector_rank_cache: dict = {"ts": 0.0, "data": None}
+_SECTOR_RANK_TTL = 60
+
+
+def _sector_rank_item(row: dict, idx: int) -> dict:
+    lead = row.get("f128")
+    lead_code = row.get("f140")
+    return {
+        "rank": idx + 1,  # 按涨跌幅降序的 1 起始名次
+        "code": str(row.get("f12") or ""),
+        "name": str(row.get("f14") or ""),
+        "price": _f_opt(row.get("f2")),
+        "changePct": _f_opt(row.get("f3")),
+        "change": _f_opt(row.get("f4")),
+        "amount": _f_opt(row.get("f6")),  # 成交额（元）
+        "turnover": _f_opt(row.get("f8")),
+        "totalMarketCap": _f_opt(row.get("f20")),
+        "upCount": _f_int(row.get("f104")),
+        "downCount": _f_int(row.get("f105")),
+        "leadStock": None if lead in (None, "-") else str(lead),
+        "leadStockCode": None if lead_code in (None, "-") else str(lead_code),
+        "leadStockChangePct": _f_opt(row.get("f136")),
+    }
+
+
+async def _load_sector_rank() -> dict:
+    """行业板块涨跌排行全量表（涨跌幅降序），进程内缓存 60s。返回 {source, items}。"""
+    now = time.time()
+    if _sector_rank_cache["data"] is None or now - _sector_rank_cache["ts"] > _SECTOR_RANK_TTL:
+        rows, host = await run_ak(
+            _clist_paginated,
+            {
+                "pz": "100",
+                "po": "1",
+                "np": "1",
+                "fltt": "2",
+                "invt": "2",
+                "fid": "f3",
+                "fs": "m:90 t:2 f:!50",
+                "ut": "bd1d9ddb04089700cf9c27f6f7426281",
+                "fields": _SECTOR_RANK_FIELDS,
+            },
+        )
+        _sector_rank_cache["data"] = {
+            "source": _clist_source(host),
+            "items": [_sector_rank_item(r, i) for i, r in enumerate(rows)],
+        }
+        _sector_rank_cache["ts"] = now
+    return _sector_rank_cache["data"]
+
+
+@app.get("/sectors/rank")
+async def sector_rank(limit: int = Query(default=30, ge=1, le=500)):
+    """行业板块涨跌排行（涨跌幅降序）。返回 {source, items: SectorRankItem[]}，
+    缓存 60s。source=eastmoney-delay 表示来自延时镜像（约 15 分钟）。"""
+    try:
+        data = await _load_sector_rank()
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=502, detail=f"行业板块排行获取失败: {e}")
+    return {"source": data["source"], "items": data["items"][:limit]}
+
+
+# --- 板块资金流排行（今日主力净流入降序，缓存 60s） ---
+# 参数与 AKShare stock_sector_fund_flow_rank(indicator="今日", sector_type="行业资金流") 一致
+# （fid0=f62 按主力净流入排序、stat=1）；该 AKShare 封装的输出丢弃板块代码，故直连 clist。
+_SECTOR_FF_FIELDS = "f12,f14,f2,f3,f62,f184,f66,f69,f72,f75,f78,f81,f84,f87,f204,f205"
+_sector_ff_cache: dict = {"ts": 0.0, "data": None}
+_SECTOR_FF_TTL = 60
+
+
+def _sector_ff_item(row: dict, idx: int) -> dict:
+    top = row.get("f204")
+    top_code = row.get("f205")
+    return {
+        "rank": idx + 1,  # 按今日主力净流入降序的 1 起始名次
+        "code": str(row.get("f12") or ""),
+        "name": str(row.get("f14") or ""),
+        "price": _f_opt(row.get("f2")),
+        "changePct": _f_opt(row.get("f3")),
+        "mainNetInflow": _f_opt(row.get("f62")),        # 主力净流入（元）
+        "mainNetInflowPct": _f_opt(row.get("f184")),    # 主力净占比（%）
+        "superLargeNetInflow": _f_opt(row.get("f66")),
+        "superLargeNetInflowPct": _f_opt(row.get("f69")),
+        "largeNetInflow": _f_opt(row.get("f72")),
+        "largeNetInflowPct": _f_opt(row.get("f75")),
+        "mediumNetInflow": _f_opt(row.get("f78")),
+        "mediumNetInflowPct": _f_opt(row.get("f81")),
+        "smallNetInflow": _f_opt(row.get("f84")),
+        "smallNetInflowPct": _f_opt(row.get("f87")),
+        "topStock": None if top in (None, "-") else str(top),  # 主力净流入最大个股
+        "topStockCode": None if top_code in (None, "-") else str(top_code),
+    }
+
+
+async def _load_sector_fund_flow() -> dict:
+    """行业板块今日资金流排行（主力净流入降序），进程内缓存 60s。返回 {source, items}。"""
+    now = time.time()
+    if _sector_ff_cache["data"] is None or now - _sector_ff_cache["ts"] > _SECTOR_FF_TTL:
+        rows, host = await run_ak(
+            _clist_paginated,
+            {
+                "pz": "100",
+                "po": "1",
+                "np": "1",
+                "fltt": "2",
+                "invt": "2",
+                "fid0": "f62",
+                "stat": "1",
+                "fs": "m:90 t:2",
+                "ut": "b2884a393a59ad64002292a3e90d46a5",
+                "fields": _SECTOR_FF_FIELDS,
+            },
+        )
+        _sector_ff_cache["data"] = {
+            "source": _clist_source(host),
+            "items": [_sector_ff_item(r, i) for i, r in enumerate(rows)],
+        }
+        _sector_ff_cache["ts"] = now
+    return _sector_ff_cache["data"]
+
+
+@app.get("/sectors/fund-flow")
+async def sector_fund_flow(limit: int = Query(default=30, ge=1, le=500)):
+    """行业板块资金流排行（今日主力净流入降序）。返回 {source, items: SectorFundFlowItem[]}，
+    缓存 60s。"""
+    try:
+        data = await _load_sector_fund_flow()
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=502, detail=f"板块资金流排行获取失败: {e}")
+    return {"source": data["source"], "items": data["items"][:limit]}
+
+
+# --- 板块名称→代码解析（成分股/板块日 K 共用） ---
+def _norm_board_name(s: str) -> str:
+    """板块名归一化：去掉尾部罗马数字行业级别后缀（Ⅰ/Ⅱ/Ⅲ/I/II/III），用于模糊兜底匹配。
+    东财多级行业同名不同级（如"白酒Ⅱ"），精确匹配优先，归一化只作兜底。"""
+    return re.sub(r"(?:Ⅰ|Ⅱ|Ⅲ|IV|V|I{1,3})$", "", (s or "").strip())
+
+
+async def _resolve_board(name: str) -> tuple:
+    """板块名称或 BK 代码 → (code, name)。BK 代码直传时仍尝试从排行表反查名称
+    （排行表失败不阻塞，退回代码占位）；名称经排行表精确匹配，匹配不上按归一化名兜底。
+    未匹配抛 404。"""
+    name = name.strip()
+    if re.fullmatch(r"BK\d{4}", name):
+        try:
+            hit = next(
+                (it for it in (await _load_sector_rank())["items"] if it["code"] == name), None
+            )
+            if hit is not None:
+                return hit["code"], hit["name"]
+        except Exception as e:
+            logger.warning("BK 代码反查名称失败（用代码占位）: %s err=%s", name, e)
+        return name, name
+    rank_data = await _load_sector_rank()
+    items = rank_data["items"]
+    hit = next((it for it in items if it["name"] == name), None)
+    if hit is None:
+        norm = _norm_board_name(name)
+        hit = next((it for it in items if _norm_board_name(it["name"]) == norm), None)
+    if hit is None:
+        raise HTTPException(status_code=404, detail=f"未找到行业板块: {name}")
+    return hit["code"], hit["name"]
+
+
+# --- 板块成分股（缓存 10min） ---
+_SECTOR_CONS_FIELDS = "f12,f14,f2,f3,f4,f5,f6,f7,f8,f9,f23"
+_sector_cons_cache: dict = {}  # 板块代码 -> {"ts": float, "data": dict}
+_SECTOR_CONS_TTL = 10 * 60
+
+
+def _sector_cons_item(row: dict) -> dict:
+    return {
+        "code": str(row.get("f12") or ""),
+        "name": str(row.get("f14") or ""),
+        "price": _f_opt(row.get("f2")),
+        "changePct": _f_opt(row.get("f3")),
+        "change": _f_opt(row.get("f4")),
+        "volume": _f_opt(row.get("f5")),   # 成交量（手）
+        "amount": _f_opt(row.get("f6")),   # 成交额（元）
+        "amplitude": _f_opt(row.get("f7")),
+        "turnover": _f_opt(row.get("f8")),
+        "peDynamic": _f_opt(row.get("f9")),
+        "pb": _f_opt(row.get("f23")),
+    }
+
+
+@app.get("/sectors/cons")
+async def sector_cons(name: str = Query(min_length=1), limit: int = Query(default=50, ge=1, le=500)):
+    """板块成分股（涨跌幅降序）。name 支持板块名称或 BK 代码。
+    返回 {code, name, source, items: SectorConsItem[]}，按板块缓存 10min。"""
+    code, board_name = await _resolve_board(name)
+    hit = _sector_cons_cache.get(code)
+    if hit is None or time.time() - hit["ts"] > _SECTOR_CONS_TTL:
+        try:
+            rows, host = await run_ak(
+                _clist_paginated,
+                {
+                    "pz": "100",
+                    "po": "1",
+                    "np": "1",
+                    "fltt": "2",
+                    "invt": "2",
+                    "fid": "f3",
+                    "fs": f"b:{code} f:!50",
+                    "ut": "bd1d9ddb04089700cf9c27f6f7426281",
+                    "fields": _SECTOR_CONS_FIELDS,
+                },
+            )
+        except HTTPException:
+            raise
+        except Exception as e:
+            raise HTTPException(status_code=502, detail=f"板块成分股获取失败: {e}")
+        hit = {
+            "ts": time.time(),
+            "data": {
+                "code": code,
+                "name": board_name,
+                "source": _clist_source(host),
+                "items": [_sector_cons_item(r) for r in rows],
+            },
+        }
+        _sector_cons_cache[code] = hit
+    d = hit["data"]
+    return {"code": d["code"], "name": d["name"], "source": d["source"], "items": d["items"][:limit]}
+
+
+# --- 板块日 K 走势（AKShare stock_board_industry_hist_em，push2his；缓存 10min） ---
+_sector_hist_cache: dict = {}  # f"{code}:{days}" -> {"ts": float, "data": dict}
+_SECTOR_HIST_TTL = 10 * 60
+
+
+@app.get("/sectors/history")
+async def sector_history(name: str = Query(min_length=1), days: int = Query(default=120, ge=1, le=500)):
+    """板块日 K 走势（日期升序，尾部 days 条）。name 支持板块名称或 BK 代码。
+    返回 {code, name, source, bars: HistoryBar[]}（bars 结构与 /history 一致）。
+    AKShare stock_board_industry_hist_em 支持直传 BK 代码（跳过其内部名称解析）。"""
+    code, board_name = await _resolve_board(name)
+    key = f"{code}:{days}"
+    hit = _sector_hist_cache.get(key)
+    if hit is None or time.time() - hit["ts"] > _SECTOR_HIST_TTL:
+        end = datetime.now().strftime("%Y%m%d")
+        start = (datetime.now() - timedelta(days=days * 2)).strftime("%Y%m%d")
+        try:
+            df = await run_ak(
+                ak.stock_board_industry_hist_em,
+                symbol=code,
+                start_date=start,
+                end_date=end,
+                period="日k",
+                adjust="",
+            )
+        except HTTPException:
+            raise
+        except Exception as e:
+            raise HTTPException(status_code=502, detail=f"板块历史行情获取失败: {e}")
+        # 列名与个股 /history 东财源一致（日期/开盘/收盘/最高/最低/成交量/涨跌幅/成交额/换手率），
+        # 直接复用同一套归一化
+        bars = _hist_items(
+            df,
+            days,
+            {"date": "日期", "open": "开盘", "close": "收盘",
+             "high": "最高", "low": "最低", "volume": "成交量", "changePct": "涨跌幅",
+             "amount": "成交额", "turnover": "换手率"},
+        )
+        if not bars:
+            raise HTTPException(status_code=502, detail=f"板块历史行情为空: {board_name}")
+        hit = {
+            "ts": time.time(),
+            "data": {"code": code, "name": board_name, "source": "eastmoney", "bars": bars},
+        }
+        _sector_hist_cache[key] = hit
+    return hit["data"]
+
+
+# --- 个股→板块共振：个股所属行业在当日板块涨跌/资金流排行中的位置 ---
+@app.get("/sectors/of-stock/{code}")
+async def sector_of_stock(code: str):
+    """个股所属行业板块共振信息。返回 {code, name, industry, matched, sector, source}。
+    行业取自 /profile（东财行业分类，与板块排行同源口径）；行业缺失或排行表无同名板块时
+    返回 matched=false 的结构化响应（不报错）。sector 含涨跌名次 rank/total 与资金流名次
+    fundFlowRank/fundFlowTotal（资金流排行失败时仅省略资金流字段，独立降级）。"""
+    if not re.fullmatch(r"\d{6}", code):
+        raise HTTPException(status_code=400, detail="code 必须是 6 位数字")
+    # 复用 /profile 端点（含 push2 → push2delay 降级链与 24h 缓存）
+    prof = await profile(code)
+    industry = prof.get("industry")
+    result: dict = {
+        "code": code,
+        "name": prof.get("name"),
+        "industry": industry,
+        "matched": False,
+        "sector": None,
+    }
+    if not industry:
+        return result
+    try:
+        rank_data = await _load_sector_rank()
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=502, detail=f"板块排行获取失败: {e}")
+    items = rank_data["items"]
+    hit = next((it for it in items if it["name"] == industry), None)
+    if hit is None:
+        norm = _norm_board_name(industry)
+        hit = next((it for it in items if _norm_board_name(it["name"]) == norm), None)
+    if hit is None:
+        return result  # 结构化"未匹配"：排行表无该行业同名板块
+    sector: dict = {
+        "code": hit["code"],
+        "name": hit["name"],
+        "rank": hit["rank"],
+        "total": len(items),
+        "changePct": hit["changePct"],
+        "upCount": hit["upCount"],
+        "downCount": hit["downCount"],
+    }
+    # 资金流名次独立降级：失败不影响涨跌名次返回
+    try:
+        ff_items = (await _load_sector_fund_flow())["items"]
+        ff_hit = next((it for it in ff_items if it["code"] == hit["code"]), None)
+        if ff_hit is not None:
+            sector["fundFlowRank"] = ff_hit["rank"]
+            sector["fundFlowTotal"] = len(ff_items)
+            sector["mainNetInflow"] = ff_hit["mainNetInflow"]
+            sector["mainNetInflowPct"] = ff_hit["mainNetInflowPct"]
+    except Exception as e:
+        logger.warning("of-stock 资金流排行失败（仅省略资金流字段）: code=%s err=%s", code, e)
+    result["matched"] = True
+    result["sector"] = sector
+    result["source"] = rank_data["source"]
+    return result
 # ================= K 线形态识别 + 历史成绩单（F6-1，2026-09-19） =================
 # 全部纯本地计算（基于 _load_bars 的前复权日 K，与 /history、/indicators 同源同降级链），
 # 无新外部依赖。形态库 17 种（定义清晰优先于数量，拿不准定义的形态宁可不做）：
