@@ -8,7 +8,7 @@
 > 功能现状（能用/待做/有问题）看 [STATUS.md](STATUS.md)，原理性架构看
 > [ARCHITECTURE.md](ARCHITECTURE.md)，报错排查看 [PITFALLS.md](PITFALLS.md)。
 
-最后更新：2026-09-15
+最后更新：2026-09-19
 
 ---
 
@@ -252,6 +252,15 @@
 - **实现方式**：手写 `setTimeout` 调度器（北京时间显式换算），现有两个任务：
   1. **收盘日报**：每工作日 15:30 对自选股并发拉行情，格式化成带 emoji 的报告，
      单只失败降级为"获取失败"行，末尾固定附免责声明，通过所有渠道的 `notify()` 推送。
+     **2026-09-19 起附加技术面信号摘要（F5-3）**：`buildSignalSection()` 对每只自选股
+     并发调 `data.getIndicators()`（复用 F5-1 端点，默认 250 天），只列出有客观信号
+     的股票（金叉/死叉/站上跌破 MA60/突破布林轨/RSI6 超买超卖，文案直接复用端点
+     `signals[].text`），单股最多 3 条（`MAX_SIGNALS_PER_STOCK`）防刷屏；
+     全区标注"客观状态描述，非买卖建议"。降级规则：全部无信号且零失败 → 信号区整段
+     不出现；数据源无 `getIndicators`（纯东财直连）或全部失败 → 一行降级说明；
+     单股指标失败 → 其余照常 + "N 只获取失败已跳过"注记。`DAILY_REPORT_SIGNALS=false`
+     可整体关闭（`config.dailyReport.signals`）。`buildDailyReport` 已导出供单测
+     （`tests/dailyReport.test.ts`）。
   2. **异动提醒**（2026-09-14 新增）：盘中（9:30-11:30 / 13:00-15:00）每 N 分钟
      （`ALERT_INTERVAL_MINUTES`，默认 5）轮询——先汇总全部用户的自选股**去重后并发拉行情**
      （避免多用户重复请求东财），涨跌幅绝对值超阈值（`ALERT_THRESHOLD_PCT`，默认 ±5%）
