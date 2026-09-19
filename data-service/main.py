@@ -1275,3 +1275,495 @@ async def fund_info(code: str, days: int = Query(default=250, ge=1, le=2000)):
         "latest": points[-1] if points else None,
         "history": points,
     }
+
+
+# ================= K 线形态识别 + 历史成绩单（F6-1，2026-09-19） =================
+# 全部纯本地计算（基于 _load_bars 的前复权日 K，与 /history、/indicators 同源同降级链），
+# 无新外部依赖。形态库 17 种（定义清晰优先于数量，拿不准定义的形态宁可不做）：
+#   K 线组合类（11）：十字星、锤子线、上吊线、看涨吞没、看跌吞没、早晨之星、黄昏之星、
+#     乌云盖顶、刺透形态、红三兵、三只乌鸦
+#   价格结构类（6）：双底、双顶、头肩底、头肩顶、上升三角形、下降三角形
+# 检测无未来函数：任一形态在第 i 根 K 线的判定只用 <= i 的数据（背景趋势以信号日前一日为锚）。
+# 红线：统计为"历史事实"口径（过去每次出现后 5/10/20 个交易日的实际走势汇总），
+# 不含任何预测与买卖建议；响应带 disclaimer，展示层必须保留。
+
+# ---- 单根 K 线特征与背景趋势 ----
+
+def _body(o, c, i):
+    return abs(c[i] - o[i])
+
+
+def _rng(h, l, i):
+    return h[i] - l[i]
+
+
+def _upper_shadow(o, h, c, i):
+    return h[i] - max(o[i], c[i])
+
+
+def _lower_shadow(o, l, c, i):
+    return min(o[i], c[i]) - l[i]
+
+
+def _trend5(c, i):
+    """信号日前 5 个交易日累计涨跌幅（只用 <= i-1 的数据）；数据不足返回 None。"""
+    if i - 6 < 0:
+        return None
+    prev = c[i - 6]
+    if prev <= 0:
+        return None
+    return c[i - 1] / prev - 1
+
+
+# ---- K 线组合类检测器（签名统一为 (o, h, l, c, i) -> bool） ----
+
+def _is_doji(o, h, l, c, i):
+    """十字星（中性）：实体 <= 全日振幅 10%，且全日振幅 >= 收盘 1%（过滤无意义的极小 K 线）。"""
+    r = _rng(h, l, i)
+    if r <= 0 or c[i] <= 0:
+        return False
+    return _body(o, c, i) <= 0.1 * r and r >= 0.01 * c[i]
+
+
+def _pin_shape(o, h, l, c, i):
+    """锤子/上吊共用形状：实体 >= 振幅 5%（排除十字星），下影线 >= 2 倍实体，上影线 <= 0.5 倍实体。"""
+    r = _rng(h, l, i)
+    b = _body(o, c, i)
+    if r <= 0 or b < 0.05 * r:
+        return False
+    return _lower_shadow(o, l, c, i) >= 2 * b and _upper_shadow(o, h, c, i) <= 0.5 * b
+
+
+def _is_hammer(o, h, l, c, i):
+    """锤子线（看涨）：下跌背景（前 5 日累计下跌）中出现钉子形状。"""
+    t = _trend5(c, i)
+    return t is not None and t < 0 and _pin_shape(o, h, l, c, i)
+
+
+def _is_hanging_man(o, h, l, c, i):
+    """上吊线（看跌）：上涨背景中出现钉子形状。"""
+    t = _trend5(c, i)
+    return t is not None and t > 0 and _pin_shape(o, h, l, c, i)
+
+
+def _is_bull_engulf(o, h, l, c, i):
+    """看涨吞没（看涨）：下跌背景；前一根阴线、当日阳线，当日实体完全包住前一根实体且更大。"""
+    if i < 1:
+        return False
+    t = _trend5(c, i)
+    if t is None or t >= 0:
+        return False
+    if not (c[i - 1] < o[i - 1] and c[i] > o[i]):
+        return False
+    b1, b2 = _body(o, c, i - 1), _body(o, c, i)
+    if b1 <= 0 or b2 <= b1:
+        return False
+    return o[i] <= c[i - 1] and c[i] >= o[i - 1]
+
+
+def _is_bear_engulf(o, h, l, c, i):
+    """看跌吞没（看跌）：上涨背景；前一根阳线、当日阴线，当日实体完全包住前一根实体且更大。"""
+    if i < 1:
+        return False
+    t = _trend5(c, i)
+    if t is None or t <= 0:
+        return False
+    if not (c[i - 1] > o[i - 1] and c[i] < o[i]):
+        return False
+    b1, b2 = _body(o, c, i - 1), _body(o, c, i)
+    if b1 <= 0 or b2 <= b1:
+        return False
+    return o[i] >= c[i - 1] and c[i] <= o[i - 1]
+
+
+def _is_morning_star(o, h, l, c, i):
+    """早晨之星（看涨，3 根）：下跌背景（以首根为锚）；首根大阴线（实体 >= 振幅 50%）；
+    次根星线（实体 <= 振幅 30%，实体整体低于首根收盘）；末根阳线收复首根实体中点以上。"""
+    if i < 2:
+        return False
+    t = _trend5(c, i - 2)
+    if t is None or t >= 0:
+        return False
+    r1 = _rng(h, l, i - 2)
+    b1 = o[i - 2] - c[i - 2]
+    if r1 <= 0 or b1 < 0.5 * r1:
+        return False
+    r2 = _rng(h, l, i - 1)
+    if r2 <= 0 or _body(o, c, i - 1) > 0.3 * r2:
+        return False
+    if max(o[i - 1], c[i - 1]) > c[i - 2]:
+        return False
+    if c[i] <= o[i]:
+        return False
+    return c[i] > (o[i - 2] + c[i - 2]) / 2
+
+
+def _is_evening_star(o, h, l, c, i):
+    """黄昏之星（看跌，3 根）：早晨之星的镜像（上涨背景，首根大阳线，末根阴线跌破首根实体中点）。"""
+    if i < 2:
+        return False
+    t = _trend5(c, i - 2)
+    if t is None or t <= 0:
+        return False
+    r1 = _rng(h, l, i - 2)
+    b1 = c[i - 2] - o[i - 2]
+    if r1 <= 0 or b1 < 0.5 * r1:
+        return False
+    r2 = _rng(h, l, i - 1)
+    if r2 <= 0 or _body(o, c, i - 1) > 0.3 * r2:
+        return False
+    if min(o[i - 1], c[i - 1]) < c[i - 2]:
+        return False
+    if c[i] >= o[i]:
+        return False
+    return c[i] < (o[i - 2] + c[i - 2]) / 2
+
+
+def _is_dark_cloud(o, h, l, c, i):
+    """乌云盖顶（看跌，2 根）：上涨背景；前一根大阳线；当日高开于前高之上、
+    收盘深入前一根实体中点以下但未吞没（仍高于前一根开盘）。"""
+    if i < 1:
+        return False
+    t = _trend5(c, i)
+    if t is None or t <= 0:
+        return False
+    r1 = _rng(h, l, i - 1)
+    b1 = c[i - 1] - o[i - 1]
+    if r1 <= 0 or b1 < 0.5 * r1:
+        return False
+    mid = (o[i - 1] + c[i - 1]) / 2
+    return o[i] > h[i - 1] and c[i] < mid and c[i] > o[i - 1]
+
+
+def _is_piercing(o, h, l, c, i):
+    """刺透形态（看涨，2 根）：乌云盖顶镜像（下跌背景，前一根大阴线，当日低开于前低之下、
+    收盘升入前一根实体中点以上但未吞没）。"""
+    if i < 1:
+        return False
+    t = _trend5(c, i)
+    if t is None or t >= 0:
+        return False
+    r1 = _rng(h, l, i - 1)
+    b1 = o[i - 1] - c[i - 1]
+    if r1 <= 0 or b1 < 0.5 * r1:
+        return False
+    mid = (o[i - 1] + c[i - 1]) / 2
+    return o[i] < l[i - 1] and c[i] > mid and c[i] < o[i - 1]
+
+
+def _is_three_soldiers(o, h, l, c, i):
+    """红三兵（看涨，3 根）：三根实体饱满的阳线（实体 >= 振幅 50%），收盘逐级抬高，
+    后两根开盘在前一根实体之内。"""
+    if i < 2:
+        return False
+    for j in (i - 2, i - 1, i):
+        r = _rng(h, l, j)
+        if r <= 0 or c[j] - o[j] < 0.5 * r:
+            return False
+    if not (c[i - 2] < c[i - 1] < c[i]):
+        return False
+    return o[i - 2] <= o[i - 1] <= c[i - 2] and o[i - 1] <= o[i] <= c[i - 1]
+
+
+def _is_three_crows(o, h, l, c, i):
+    """三只乌鸦（看跌，3 根）：红三兵镜像（三根饱满阴线，收盘逐级降低，后两根开盘在前一根实体内）。"""
+    if i < 2:
+        return False
+    for j in (i - 2, i - 1, i):
+        r = _rng(h, l, j)
+        if r <= 0 or o[j] - c[j] < 0.5 * r:
+            return False
+    if not (c[i - 2] > c[i - 1] > c[i]):
+        return False
+    return c[i - 2] <= o[i - 1] <= o[i - 2] and c[i - 1] <= o[i] <= o[i - 1]
+
+
+# ---- 价格结构类检测器 ----
+
+def _fractals(vals, lo, hi, kind, w=2):
+    """[lo, hi) 内的分形点下标：±w 窗口严格局部极值（并列极值不取）。
+    右边界自动留 w 根确认（信号日附近的分形点要 w 根后才能确认，天然防未来函数）。"""
+    out = []
+    for k in range(lo + w, min(hi, len(vals)) - w):
+        seg = vals[k - w: k + w + 1]
+        if kind == "low" and vals[k] == min(seg) and seg.count(vals[k]) == 1:
+            out.append(k)
+        elif kind == "high" and vals[k] == max(seg) and seg.count(vals[k]) == 1:
+            out.append(k)
+    return out
+
+
+def _is_double_bottom(o, h, l, c, i, window=60):
+    """双底（看涨）：近 60 根内两个分形低点价差 <= 3%、间隔 >= 10 根，且底部不高于窗口最低价
+    3%（即须为窗口内的显著底部）；其间反弹高点（颈线）高出底部 >= 5%；右底之后未再跌破底部
+    （容差 1%）；信号日 = 收盘首次站上颈线。"""
+    if i < 30:
+        return False
+    lo = max(0, i - window + 1)
+    win_low = min(l[lo: i + 1])
+    if win_low <= 0:
+        return False
+    fracs = _fractals(l, lo, i, "low")
+    for a_i, t1 in enumerate(fracs):
+        for t2 in fracs[a_i + 1:]:
+            if t2 - t1 < 10:
+                continue
+            base = min(l[t1], l[t2])
+            if base <= 0 or abs(l[t1] - l[t2]) / base > 0.03:
+                continue
+            if base > win_low * 1.03:
+                continue  # 底部须接近窗口最低点（显著底部，防普通波动误判）
+            neck = max(h[t1 + 1: t2])
+            if neck < max(l[t1], l[t2]) * 1.05:
+                continue
+            if t2 + 1 < i and min(l[t2 + 1: i]) < base * 0.99:
+                continue
+            if c[i] > neck and c[i - 1] <= neck:
+                return True
+    return False
+
+
+def _is_double_top(o, h, l, c, i, window=60):
+    """双顶（看跌）：双底镜像——两个分形高点价差 <= 3%、间隔 >= 10 根，且顶部不低于窗口最高
+    价的 3%（显著顶部）；其间回落低点（颈线）低于顶部 >= 5%；右顶之后未再突破顶部
+    （容差 1%）；信号日 = 收盘首次跌破颈线。"""
+    if i < 30:
+        return False
+    lo = max(0, i - window + 1)
+    win_high = max(h[lo: i + 1])
+    if win_high <= 0:
+        return False
+    fracs = _fractals(h, lo, i, "high")
+    for a_i, t1 in enumerate(fracs):
+        for t2 in fracs[a_i + 1:]:
+            if t2 - t1 < 10:
+                continue
+            top = max(h[t1], h[t2])
+            if top <= 0 or abs(h[t1] - h[t2]) / top > 0.03:
+                continue
+            if top < win_high * 0.97:
+                continue  # 顶部须接近窗口最高点
+            neck = min(l[t1 + 1: t2])
+            if neck > min(h[t1], h[t2]) * 0.95:
+                continue
+            if t2 + 1 < i and max(h[t2 + 1: i]) > top * 1.01:
+                continue
+            if c[i] < neck and c[i - 1] >= neck:
+                return True
+    return False
+
+
+def _is_inv_head_shoulders(o, h, l, c, i, window=90):
+    """头肩底（看涨）：近 90 根内三个分形低点 左肩-头-右肩：头即窗口最低点（显著头部），
+    双肩各比头高 >= 0.5% 且相互价差 <= 5%；颈线取两段反弹高点的较低者（保守水平线），
+    头到颈线深度 >= 5%；右肩之后未再破头；信号日 = 收盘首次站上颈线。"""
+    if i < 40:
+        return False
+    lo = max(0, i - window + 1)
+    win_low = min(l[lo: i + 1])
+    lows = _fractals(l, lo, i, "low")
+    for a in range(len(lows)):
+        for b in range(a + 1, len(lows)):
+            for d in range(b + 1, len(lows)):
+                s1, hd, s2 = lows[a], lows[b], lows[d]
+                if l[hd] != win_low:
+                    continue  # 头必须是窗口最低点（显著头部，防普通三段波动误判）
+                if not (l[hd] < l[s1] * 0.995 and l[hd] < l[s2] * 0.995):
+                    continue
+                if min(l[s1], l[s2]) <= 0 or abs(l[s1] - l[s2]) / min(l[s1], l[s2]) > 0.05:
+                    continue
+                neck = min(max(h[s1: hd + 1]), max(h[hd: s2 + 1]))
+                if neck < l[hd] * 1.05:
+                    continue
+                if s2 + 1 < i and min(l[s2 + 1: i]) < l[hd]:
+                    continue
+                if c[i] > neck and c[i - 1] <= neck:
+                    return True
+    return False
+
+
+def _is_head_shoulders(o, h, l, c, i, window=90):
+    """头肩顶（看跌）：头肩底镜像——头即窗口最高点（显著头部），双肩各比头低 >= 0.5% 且
+    相互价差 <= 5%；颈线取两段回落低点的较高者，头到颈线深度 >= 5%；右肩之后未再破头；
+    信号日 = 收盘首次跌破颈线。"""
+    if i < 40:
+        return False
+    lo = max(0, i - window + 1)
+    win_high = max(h[lo: i + 1])
+    highs = _fractals(h, lo, i, "high")
+    for a in range(len(highs)):
+        for b in range(a + 1, len(highs)):
+            for d in range(b + 1, len(highs)):
+                s1, hd, s2 = highs[a], highs[b], highs[d]
+                if h[hd] != win_high:
+                    continue  # 头必须是窗口最高点
+                if not (h[hd] > h[s1] * 1.005 and h[hd] > h[s2] * 1.005):
+                    continue
+                if max(h[s1], h[s2]) <= 0 or abs(h[s1] - h[s2]) / max(h[s1], h[s2]) > 0.05:
+                    continue
+                neck = max(min(l[s1: hd + 1]), min(l[hd: s2 + 1]))
+                if neck > h[hd] * 0.95:
+                    continue
+                if s2 + 1 < i and max(h[s2 + 1: i]) > h[hd]:
+                    continue
+                if c[i] < neck and c[i - 1] >= neck:
+                    return True
+    return False
+
+
+def _is_asc_triangle(o, h, l, c, i, window=40):
+    """上升三角形（看涨）：近 40 根内最近 2~3 个分形高点近似水平（价差 <= 2%，作压力线），
+    最近 2~3 个分形低点逐级抬高（各抬升 >= 0.1%），且低点与压力点交错（收敛形态）；
+    信号日 = 收盘首次站上压力线。"""
+    if i < 25:
+        return False
+    lo = max(0, i - window + 1)
+    highs = _fractals(h, lo, i, "high")[-3:]
+    lows = _fractals(l, lo, i, "low")[-3:]
+    if len(highs) < 2 or len(lows) < 2:
+        return False
+    res = sum(h[k] for k in highs) / len(highs)
+    if res <= 0 or max(h[k] for k in highs) > res * 1.02 or min(h[k] for k in highs) < res * 0.98:
+        return False
+    if not all(l[lows[j + 1]] > l[lows[j]] * 1.001 for j in range(len(lows) - 1)):
+        return False
+    if lows[-1] < highs[0]:
+        return False
+    return c[i] > res and c[i - 1] <= res
+
+
+def _is_desc_triangle(o, h, l, c, i, window=40):
+    """下降三角形（看跌）：上升三角形镜像——最近 2~3 个分形低点近似水平（支撑线），
+    最近 2~3 个分形高点逐级降低；信号日 = 收盘首次跌破支撑线。"""
+    if i < 25:
+        return False
+    lo = max(0, i - window + 1)
+    highs = _fractals(h, lo, i, "high")[-3:]
+    lows = _fractals(l, lo, i, "low")[-3:]
+    if len(highs) < 2 or len(lows) < 2:
+        return False
+    sup = sum(l[k] for k in lows) / len(lows)
+    if sup <= 0 or max(l[k] for k in lows) > sup * 1.02 or min(l[k] for k in lows) < sup * 0.98:
+        return False
+    if not all(h[highs[j + 1]] < h[highs[j]] * 0.999 for j in range(len(highs) - 1)):
+        return False
+    if highs[-1] < lows[0]:
+        return False
+    return c[i] < sup and c[i - 1] >= sup
+
+
+_PATTERN_DEFS = [
+    {"key": "doji", "name": "十字星", "direction": "中性", "detect": _is_doji},
+    {"key": "hammer", "name": "锤子线", "direction": "看涨", "detect": _is_hammer},
+    {"key": "hanging_man", "name": "上吊线", "direction": "看跌", "detect": _is_hanging_man},
+    {"key": "bull_engulf", "name": "看涨吞没", "direction": "看涨", "detect": _is_bull_engulf},
+    {"key": "bear_engulf", "name": "看跌吞没", "direction": "看跌", "detect": _is_bear_engulf},
+    {"key": "morning_star", "name": "早晨之星", "direction": "看涨", "detect": _is_morning_star},
+    {"key": "evening_star", "name": "黄昏之星", "direction": "看跌", "detect": _is_evening_star},
+    {"key": "dark_cloud", "name": "乌云盖顶", "direction": "看跌", "detect": _is_dark_cloud},
+    {"key": "piercing", "name": "刺透形态", "direction": "看涨", "detect": _is_piercing},
+    {"key": "three_soldiers", "name": "红三兵", "direction": "看涨", "detect": _is_three_soldiers},
+    {"key": "three_crows", "name": "三只乌鸦", "direction": "看跌", "detect": _is_three_crows},
+    {"key": "double_bottom", "name": "双底", "direction": "看涨", "detect": _is_double_bottom},
+    {"key": "double_top", "name": "双顶", "direction": "看跌", "detect": _is_double_top},
+    {"key": "inv_head_shoulders", "name": "头肩底", "direction": "看涨", "detect": _is_inv_head_shoulders},
+    {"key": "head_shoulders", "name": "头肩顶", "direction": "看跌", "detect": _is_head_shoulders},
+    {"key": "asc_triangle", "name": "上升三角形", "direction": "看涨", "detect": _is_asc_triangle},
+    {"key": "desc_triangle", "name": "下降三角形", "direction": "看跌", "detect": _is_desc_triangle},
+]
+
+_PATTERN_WINDOWS = (5, 10, 20)  # 历史成绩单统计窗口（信号日后 N 个交易日）
+_RECENT_BARS = 60               # "近期出现"的窗口（近约 60 个交易日）
+
+
+def _scan_patterns(bars):
+    """逐日扫描全部形态，返回 {pattern_key: [信号日下标, ...]}（下标升序）。"""
+    o = [b["open"] for b in bars]
+    h = [b["high"] for b in bars]
+    l = [b["low"] for b in bars]
+    c = [b["close"] for b in bars]
+    hits = {d["key"]: [] for d in _PATTERN_DEFS}
+    for i in range(len(bars)):
+        for d in _PATTERN_DEFS:
+            if d["detect"](o, h, l, c, i):
+                hits[d["key"]].append(i)
+    return hits
+
+
+def _build_pattern_report(code, source, bars, days):
+    """形态扫描 + 历史成绩单组装。
+    成绩单口径：对每个信号日 i，取之后第 5/10/20 个交易日的收盘计算涨跌幅（相对信号日收盘），
+    窗口内最低价相对信号日收盘的最大跌幅作为"最大回撤"；信号日后不足该窗口的不计入该窗口统计。
+    """
+    n = len(bars)
+    closes = [b["close"] for b in bars]
+    lows = [b["low"] for b in bars]
+    hits = _scan_patterns(bars)
+    out = []
+    for d in _PATTERN_DEFS:
+        idxs = hits[d["key"]]
+        if not idxs:
+            continue  # 窗口内从未出现的形态不输出（无统计意义）
+        stats = {}
+        for w in _PATTERN_WINDOWS:
+            rets, dds = [], []
+            for i in idxs:
+                if i + w >= n or closes[i] <= 0:
+                    continue
+                rets.append(closes[i + w] / closes[i] - 1)
+                dds.append(min(lows[i + 1: i + w + 1]) / closes[i] - 1)
+            cnt = len(rets)
+            stats[str(w)] = {
+                "count": cnt,
+                "upRatio": round(sum(1 for r in rets if r > 0) / cnt * 100, 1) if cnt else None,
+                "avgRet": round(sum(rets) / cnt * 100, 2) if cnt else None,
+                "avgMaxDrawdown": round(sum(dds) / cnt * 100, 2) if cnt else None,
+            }
+        out.append({
+            "key": d["key"],
+            "name": d["name"],
+            "direction": d["direction"],
+            "count": len(idxs),
+            "recentDates": [bars[i]["date"] for i in idxs if i >= n - _RECENT_BARS],
+            "stats": stats,
+        })
+    # 排序：最近出现过的在前（按最近一次信号日倒序），其次按历史次数降序
+    out.sort(key=lambda p: (hits[p["key"]][-1], p["count"]), reverse=True)
+    return {
+        "code": code,
+        "source": source,
+        "days": days,
+        "asOf": bars[-1]["date"],
+        "patterns": out,
+        "disclaimer": "形态统计为历史事实口径（该股过去出现该形态后 5/10/20 个交易日的实际走势汇总），"
+                      "不代表未来表现，仅供参考，不构成投资建议。",
+    }
+
+
+# 形态是日频数据，盘后不再变化，按 (code, days) 缓存 6 小时（同 /dividends 的低频口径）
+_patterns_cache: dict = {}
+_PATTERNS_TTL = 6 * 3600
+
+
+@app.get("/patterns/{code}")
+async def patterns_ep(code: str, days: int = Query(default=750, ge=30, le=1500)):
+    """K 线形态识别 + 历史成绩单（F6-1）。返回 {code, source, days, asOf, patterns, disclaimer}。
+    patterns 按形态聚合：{key, name, direction(看涨/看跌/中性), count(窗口内出现总次数),
+    recentDates(近约 60 个交易日内的信号日), stats: {"5"/"10"/"20": {count, upRatio(%),
+    avgRet(%), avgMaxDrawdown(%)}}}；窗口样本不足时该窗口各值为 null。
+    纯本地计算（输入为与 /history 同源的前复权日 K），按 (code, days) 缓存 6h。"""
+    key = (code, days)
+    hit = _patterns_cache.get(key)
+    if hit is None or time.time() - hit["ts"] > _PATTERNS_TTL:
+        bars, source = await _load_bars(code, days)
+        if not bars:
+            raise HTTPException(
+                status_code=502, detail=f"历史行情为空，无法做形态识别（代码错误或数据源不可用）: {code}"
+            )
+        try:
+            data = _build_pattern_report(code, source, bars, days)
+        except Exception as e:
+            raise HTTPException(status_code=502, detail=f"形态识别计算失败: {e}")
+        hit = {"ts": time.time(), "data": data}
+        _patterns_cache[key] = hit
+    return hit["data"]

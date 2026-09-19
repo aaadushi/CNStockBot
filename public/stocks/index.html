@@ -127,6 +127,9 @@
       animation: dots 1.2s steps(4) infinite;
     }
     @keyframes dots { 0% { content: ''; } 25% { content: '.'; } 50% { content: '..'; } 75% { content: '...'; } }
+    /* ---- 形态分析（F6-1） ---- */
+    .pat-cell { display: flex; flex-direction: column; gap: 2px; }
+    .pat-sub { font-size: 11px; color: var(--text-3); font-weight: 400; }
   </style>
 </head>
 <body>
@@ -224,6 +227,12 @@
         </div>
         <div id="ai-result" class="ai-result"></div>
         <div class="flow-note">AI 综合行情估值、资金流、技术指标、财报与新闻等公开数据生成客观解读；分析结果会同步出现在聊天页的对话记录中。仅供参考，不构成投资建议。</div>
+      </div>
+
+      <!-- 形态分析（F6-1）：独立于详情聚合拉取，失败只影响本卡 -->
+      <div class="card" id="patterns-card" hidden>
+        <h3 style="margin-top: 0;">形态分析</h3>
+        <div id="d-patterns"></div>
       </div>
 
       <div class="card">
@@ -472,6 +481,8 @@
     let detailData = null;
     let indicatorData = null;   // 技术指标（F5-1）；null=未加载/失败
     let indicatorError = null;
+    let patternsData = null;    // 形态识别 + 历史成绩单（F6-1）；null=未加载/失败
+    let patternsError = null;
     let cachedBars = null;      // 日 K 数据缓存（指标后到时补画均线用）
 
     function goDetail(code, name) {
@@ -514,7 +525,9 @@
       $('fundflow-card').hidden = true;
       $('dividend-card').hidden = true;
       $('indicator-card').hidden = true;
+      $('patterns-card').hidden = true;
       indicatorData = null; indicatorError = null; cachedBars = null;
+      patternsData = null; patternsError = null;
       aiState = { code, text: '', error: '', loading: false }; // 切换股票时清掉上一只的分析结果
       renderAi();
       renderTab();
@@ -532,6 +545,98 @@
       }
       loadHistory();
       loadIndicators();
+      loadPatterns();
+    }
+
+    /* ---- 形态分析（F6-1）：独立于详情聚合拉取（统计窗口约 3 年日 K），失败只影响本卡 ---- */
+    async function loadPatterns() {
+      try {
+        const res = await apiFetch(`/api/stocks/${currentCode}/patterns`);
+        const data = await res.json();
+        if (currentCode !== new URLSearchParams(location.search).get('code')) return; // 已切换
+        patternsData = data.patterns || null;
+        patternsError = data.error || null;
+      } catch (e) {
+        patternsData = null;
+        patternsError = e.message;
+      }
+      renderPatterns();
+    }
+
+    // 形态分析卡：近期触发 chips + 历史成绩单表格（5/10/20 日三窗口）。
+    // 数据缺失整块隐藏，失败时卡内降级提示（同技术指标卡模式）；全部文本 textContent 渲染。
+    function renderPatterns() {
+      const card = $('patterns-card');
+      const box = $('d-patterns');
+      box.replaceChildren();
+      if (!patternsData && !patternsError) { card.hidden = true; return; }
+      card.hidden = false;
+      if (!patternsData) {
+        box.appendChild(el('div', 'block-error', '形态分析暂不可用：' + (patternsError || '未知原因')));
+        return;
+      }
+      const list = patternsData.patterns || [];
+      // 近期触发（近约 60 个交易日）
+      box.appendChild(el('div', 'ind-group', '近期触发（近约 60 个交易日）'));
+      const recent = list.filter((p) => p.recentDates && p.recentDates.length > 0);
+      if (recent.length === 0) {
+        box.appendChild(el('div', 'ai-hint', '近期未触发形态库中的形态'));
+      } else {
+        const chips = el('div', 'sig-list');
+        chips.style.marginTop = '0';
+        for (const p of recent) {
+          // 中性配色（同指标信号 chips）：方向是形态分类，不构成操作建议
+          chips.appendChild(el('span', 'sig-chip', `${p.name}（${p.direction}） ${p.recentDates.join(' / ')}`));
+        }
+        box.appendChild(chips);
+      }
+      // 历史成绩单
+      box.appendChild(el('div', 'ind-group', '历史成绩单'));
+      if (list.length === 0) {
+        box.appendChild(el('div', 'ai-hint', `近 ${patternsData.days} 个交易日未检测到形态库中的形态`));
+      } else {
+        const table = el('table', 'fin-table');
+        const thead = el('thead');
+        const hr = el('tr');
+        for (const h of ['形态', '方向', '历史次数', '信号后 5 日', '信号后 10 日', '信号后 20 日']) hr.appendChild(el('th', '', h));
+        thead.appendChild(hr);
+        table.appendChild(thead);
+        const tbody = el('tbody');
+        const winCell = (td, ws) => {
+          if (!ws || ws.count === 0 || ws.upRatio == null) {
+            td.appendChild(el('span', 'pat-sub', '样本不足'));
+            return;
+          }
+          const wrap = el('div', 'pat-cell');
+          const l1 = el('span', '', `涨 ${ws.upRatio}% · 均 ${(ws.avgRet > 0 ? '+' : '') + Number(ws.avgRet).toFixed(2)}%`);
+          l1.className = upDownClass(ws.avgRet);
+          wrap.appendChild(l1);
+          wrap.appendChild(el('span', 'pat-sub', `平均最大回撤 ${Number(ws.avgMaxDrawdown).toFixed(2)}%`));
+          td.appendChild(wrap);
+        };
+        for (const p of list) {
+          const tr = el('tr');
+          tr.appendChild(el('td', '', p.name));
+          tr.appendChild(el('td', '', p.direction));
+          const cntTd = el('td', '', String(p.count));
+          if (p.count < 5) cntTd.appendChild(el('span', 'pat-sub', '（样本过少）'));
+          tr.appendChild(cntTd);
+          for (const w of ['5', '10', '20']) {
+            const td = el('td');
+            winCell(td, p.stats && p.stats[w]);
+            tr.appendChild(td);
+          }
+          tbody.appendChild(tr);
+        }
+        table.appendChild(tbody);
+        box.appendChild(table);
+      }
+      const srcLabel = patternsData.source === 'sina' ? '新浪财经（降级源）' : '东方财富';
+      box.appendChild(el('div', 'flow-note',
+        `数据截至 ${patternsData.asOf} · 统计窗口为近 ${patternsData.days} 个交易日前复权日 K · 数据源：${srcLabel} · ` +
+        '口径：形态信号日之后 5/10/20 个交易日的实际走势汇总（上涨占比/平均涨跌幅按收盘价，最大回撤按窗口内最低价相对信号日收盘）。'));
+      box.appendChild(el('div', 'flow-note',
+        patternsData.disclaimer || '形态统计为历史事实口径，不代表未来表现，仅供参考，不构成投资建议。'));
     }
 
     /* ---- 技术指标（F5-1）：独立于详情聚合拉取，失败只影响指标卡与均线叠加 ---- */
