@@ -119,6 +119,14 @@
       background: var(--accent-soft); color: var(--accent);
     }
     [hidden] { display: none !important; }
+    /* ---- AI 多维分析（F5-2） ---- */
+    .ai-result { font-size: 14px; line-height: 1.8; white-space: pre-wrap; word-break: break-word; }
+    .ai-hint { font-size: 13px; color: var(--text-3); }
+    .ai-loading::after {
+      content: ''; display: inline-block; width: 1.2em; text-align: left;
+      animation: dots 1.2s steps(4) infinite;
+    }
+    @keyframes dots { 0% { content: ''; } 25% { content: '.'; } 50% { content: '..'; } 75% { content: '...'; } }
   </style>
 </head>
 <body>
@@ -206,6 +214,16 @@
       <div class="card" id="indicator-card" hidden>
         <h3 style="margin-top: 0;">技术指标</h3>
         <div id="d-indicators"></div>
+      </div>
+
+      <!-- AI 多维分析（F5-2）：复用 /api/chat 链路，回复同步进聊天页会话历史 -->
+      <div class="card" id="ai-card">
+        <div class="chart-head">
+          <h3 style="margin: 0;">AI 多维分析</h3>
+          <button class="btn btn-primary btn-sm" id="ai-run">生成分析</button>
+        </div>
+        <div id="ai-result" class="ai-result"></div>
+        <div class="flow-note">AI 综合行情估值、资金流、技术指标、财报与新闻等公开数据生成客观解读；分析结果会同步出现在聊天页的对话记录中。仅供参考，不构成投资建议。</div>
       </div>
 
       <div class="card">
@@ -497,6 +515,8 @@
       $('dividend-card').hidden = true;
       $('indicator-card').hidden = true;
       indicatorData = null; indicatorError = null; cachedBars = null;
+      aiState = { code, text: '', error: '', loading: false }; // 切换股票时清掉上一只的分析结果
+      renderAi();
       renderTab();
       try {
         const res = await apiFetch('/api/stocks/' + code);
@@ -577,6 +597,53 @@
       const srcLabel = indicatorData.source === 'sina' ? '新浪财经（降级源）' : '东方财富';
       box.appendChild(el('div', 'flow-note',
         `数据截至 ${indicatorData.asOf} · 数据源：${srcLabel} · 指标为历史行情的客观统计计算，信号仅描述当前状态。仅供参考，不构成投资建议。`));
+    }
+
+    /* ---- AI 多维分析（F5-2）：复用 /api/chat 链路（同 webchat），回复同步进该用户的会话历史 ---- */
+    let aiState = { code: null, text: '', error: '', loading: false };
+    $('ai-run').onclick = runAiAnalysis;
+
+    async function runAiAnalysis() {
+      if (aiState.loading || !currentCode) return;
+      aiState = { code: currentCode, text: '', error: '', loading: true };
+      renderAi();
+      try {
+        const res = await apiFetch('/api/chat', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            userId,
+            message: '请多维度分析一下' + (currentName || '') + '（' + currentCode + '）',
+          }),
+        });
+        const data = await res.json();
+        if (aiState.code !== currentCode) return; // 已切换股票，丢弃迟到的结果
+        aiState.loading = false;
+        if (data.reply) aiState.text = data.reply;
+        else aiState.error = data.error || '（无回复）';
+      } catch (e) {
+        if (aiState.code !== currentCode) return;
+        aiState.loading = false;
+        aiState.error = '请求失败：' + e.message;
+      }
+      renderAi();
+    }
+
+    function renderAi() {
+      const box = $('ai-result');
+      const btn = $('ai-run');
+      box.replaceChildren();
+      btn.disabled = aiState.loading;
+      btn.textContent = aiState.loading ? '分析中…' : (aiState.text || aiState.error ? '重新生成' : '生成分析');
+      if (aiState.loading) {
+        box.appendChild(el('div', 'ai-hint ai-loading', 'AI 正在聚合多维数据并解读，通常需要十几秒'));
+      } else if (aiState.error) {
+        box.appendChild(el('div', 'block-error', aiState.error));
+      } else if (aiState.text) {
+        box.appendChild(el('div', '', aiState.text));
+      } else {
+        box.appendChild(el('div', 'ai-hint', '点击"生成分析"：AI 将综合行情估值、资金流、技术面、基本面与消息面给出客观解读'));
+      }
     }
 
     function renderQuote(d) {

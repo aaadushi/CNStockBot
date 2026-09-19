@@ -615,3 +615,32 @@
   `_key_levels`（lookback/tol 参数）；加信号 → `_ind_signals`；加均线叠加线 →
   端点 ma 周期集合 + 前端 `MA_DEFS`；F5-2（AI 多维分析）/F5-3（盘后复盘信号摘要）/
   F6-1（形态识别底座）直接复用本端点
+
+## 31. AI 个股多维分析（analyze_stock，F5-2，2026-09-19 新增）
+
+- **定位**：一次对话聚合一只股票的多维数据并交 LLM 解读——不再由 LLM 逐技能多轮调用。
+  红线：技能只返回**客观数据快照**（结果头部内嵌"不得给出买卖建议、目标价或收益承诺"的约束），
+  解读口径与免责声明由 SYSTEM_PROMPT 规则 5/8 约束（分维度客观陈述、标注缺失维度、
+  结尾固定"以上仅供参考，不构成投资建议"）。
+- **技能实现**：[src/skills/bundled/analyze/index.ts](../src/skills/bundled/analyze/index.ts)。
+  参数仅 `code`；`Promise.allSettled` 并发拉六块——行情/估值（getQuote）、公司资料
+  （getProfile）、资金流（getFundFlow，15 天，含近 5 日主力净流入合计）、技术面
+  （getIndicators，250 天，复用 F5-1 端点）、基本面（getFinancials，近两期）、
+  消息面（getNews，5 条**时间倒序**）。各块独立降级：单块失败/方法缺失
+  （data-service 未启动）只在该块标注"暂不可用：原因"，其余块照常返回——
+  与详情聚合 /api/stocks/:code 同一模式。新闻用 time 排序（分析看最新动态，
+  与详情页默认热度序不同）。
+- **SYSTEM_PROMPT 引导**（[src/agent/loop.ts](../src/agent/loop.ts) 规则 5）：
+  "分析/全面评价/怎么看/能不能买"→ analyze_stock；只问行情数字 → get_stock_quote，
+  避免大材小用（analyze 一次触发 6 个数据调用 + 2 轮 LLM，注意 P8 限流）。
+- **详情页入口**（[public/stocks/index.html](../public/stocks/index.html) 技术指标卡下方
+  "AI 多维分析"卡）：点击"生成分析"→ **复用 /api/chat 链路**（POST 当前页 localStorage
+  userId + "请多维度分析一下{name}（{code}）"），回复渲染在卡内（textContent + pre-wrap）。
+  因走 /api/chat，分析结果**同步出现在聊天页会话历史**，可去聊天页追问细节。
+  切换股票时清空上一只的结果；请求中禁用按钮防重发；迟到响应按 code 校验丢弃。
+- **代码位置**：技能 src/skills/bundled/analyze/（SKILL.md + index.ts）、注册
+  [src/skills/registry.ts](../src/skills/registry.ts)、SYSTEM_PROMPT
+  [src/agent/loop.ts](../src/agent/loop.ts)、页面 public/stocks/index.html
+  （ai-card / runAiAnalysis / renderAi）、测试 [tests/analyze.test.ts](../tests/analyze.test.ts)
+- **改动入口**：改聚合维度/每块取数 → analyze/index.ts 的 Promise.allSettled 列表与
+  fmt* 格式化函数；改解读口径 → SYSTEM_PROMPT 规则 5；改前端交互 → renderAi/runAiAnalysis
