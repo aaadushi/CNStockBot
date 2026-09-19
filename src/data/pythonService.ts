@@ -4,7 +4,7 @@
  */
 import { config } from '../config.js';
 import { EastmoneyProvider } from './eastmoney.js';
-import type { Announcement, CompanyProfile, DataProvider, DividendRecord, EtfQuote, FinancialReport, FundFlow, FundInfo, FundRankItem, FundSearchItem, HistoryBar, Intraday, MarketNewsItem, NewsItem, NewsSort, Quote, TechnicalIndicators } from './provider.js';
+import type { Announcement, CompanyProfile, DataProvider, DividendRecord, EtfQuote, FinancialReport, FundFlow, FundInfo, FundRankItem, FundSearchItem, HistoryBar, Intraday, MarketNewsItem, NewsItem, NewsSort, Quote, SectorCons, SectorFundFlow, SectorHistory, SectorRank, StockSectorInfo, TechnicalIndicators } from './provider.js';
 
 /** 微服务显式超时：AKShare 爬网页较慢，放宽到 60s；防上游挂起拖死调度链（审计 A-301/A-506） */
 const FETCH_TIMEOUT_MS = 60_000;
@@ -103,6 +103,28 @@ export class PythonServiceProvider implements DataProvider {
 
   async getEtfRank(limit = 50): Promise<EtfQuote[]> {
     return this.get<EtfQuote[]>(`/funds/etf?limit=${limit}`);
+  }
+
+  async getSectorRank(limit = 30): Promise<SectorRank> {
+    return this.get<SectorRank>(`/sectors/rank?limit=${limit}`);
+  }
+
+  async getSectorFundFlow(limit = 30): Promise<SectorFundFlow> {
+    return this.get<SectorFundFlow>(`/sectors/fund-flow?limit=${limit}`);
+  }
+
+  async getSectorCons(name: string, limit = 50): Promise<SectorCons> {
+    return this.get<SectorCons>(`/sectors/cons?name=${encodeURIComponent(name)}&limit=${limit}`);
+  }
+
+  async getSectorHistory(name: string, days = 120): Promise<SectorHistory> {
+    return this.get<SectorHistory>(
+      `/sectors/history?name=${encodeURIComponent(name)}&days=${days}`,
+    );
+  }
+
+  async getSectorOfStock(code: string): Promise<StockSectorInfo> {
+    return this.get<StockSectorInfo>(`/sectors/of-stock/${encodeURIComponent(code)}`);
   }
 }
 

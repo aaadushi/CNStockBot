@@ -39,6 +39,7 @@
 | 基金版块（/funds + 基金技能，F4-B） | `public/funds/` + `src/skills/bundled/fundrank/`、`fundinfo/` + data-service `/funds/*` | ✅ 可用 | 开放式基金排行（按类型）/基金搜索/基金详情净值走势/场内 ETF 实时榜；天天基金数据（支付宝同源）经微服务，依赖 data-service 运行；2026-09-15 新增 |
 | 财经快讯（/news + `get_market_news` 技能） | `public/news/` + `src/skills/bundled/marketnews/` + data-service `/market-news` | ✅ 可用 | 全市场财经快讯（区别于个股新闻）；东财全球快讯主源、财联社降级，进程内缓存 90s；网页 60s 自动刷新；依赖 data-service；2026-09-15 新增（F4-A） |
 | AI 个股多维分析（F5-2） | `src/skills/bundled/analyze/` + 详情页"AI 多维分析"卡 | ✅ 可用 | `analyze_stock` 技能一次聚合行情估值/公司资料/资金流/技术面（复用 F5-1）/近两期财报/最新新闻六块（allSettled 独立降级），SYSTEM_PROMPT 规则 5 约束 LLM 分维度客观解读；详情页入口复用 /api/chat 链路（结果同步进聊天会话历史）；2026-09-19 新增 |
+| 板块轮动监控（/sectors，F6-3） | `public/sectors/` + data-service `/sectors/*` + `/api/sectors/*` | ✅ 可用 | 行业板块涨跌排行/资金流排行/板块详情（成分股 + 日 K 走势图）/个股→板块共振（行业匹配当日涨跌与资金流名次，未匹配返回结构化 matched=false）；clist 直连 push2→push2delay 降级（带 source 标注），板块日 K 走 AKShare stock_board_industry_hist_em；依赖 data-service 运行；2026-09-19 新增 |
 
 ## 二、待办优先级总表（下一个 agent 从这里开始）
 
@@ -211,7 +212,7 @@ pattern_analyzer（K 线形态识别 + 历史成绩单）、狙击手模块（�
 |---|---|---|---|
 | F6-1 | **K 线形态识别 + 历史成绩单**（先 20 种经典形态：杯柄/双重底/头肩底/红三兵/上升三角形/口袋支点等） | data-service 基于 `/history` 长窗口（约 3 年日 K）**纯本地计算**：形态匹配 → 统计该形态历史出现次数、出现后 5/10/20 日表现（上涨占比/平均涨跌幅/最大回撤）。**输出模板必须带"过去 N 次中 X 次上涨……历史统计不代表未来表现，仅供参考，不构成投资建议"** | 详情页独立"形态分析"卡片区 + 聊天可查询 |
 | F6-2 | **资金流验货**（"狙击手"模式） | 依赖 F3-4 资金流数据：形态触发时叠加资金流交叉验证（大单方向/主动买卖/尾盘变化），输出分档结论（重点观察 / 存疑 / 观察名单）；分笔 tick 数据（如 `ak.stock_intraday_em`）接入前需实测稳定性，不稳则用日级资金流替代并在 FEATURES 注明口径 | 详情页独立验货区 + 作为 F5-2 多维分析的信号源 |
-| F6-3 | **板块轮动监控** | 东财板块接口（`ak.stock_board_industry_*`）：行业板块涨跌/资金流强弱排行、个股-板块共振判断 | 独立页面区块（/market 扩展或新页面） |
+| F6-3 | ~~**板块轮动监控**~~ | ✅ 2026-09-19 完成（见更新日志）：独立导航页 /sectors（涨跌排行/资金流排行/板块详情/个股→板块共振） | — |
 | F6-4 | **外盘联动监控** | 美股板块异动 + 国际金银价格（AKShare 美股/期货接口，接入前实测），每交易日开盘前生成"A 股相关方向提示"。**范围扩界说明**：外盘仅作参考信息源，行情查询/自选股等主功能仍只做 A 股 | 独立区块 + 盘前推送（可选） |
 
 **依赖与排期**：整体排在 F3 剩余项、F4-B 之后，与 F5 轻量项交错——F6-1 与 F5-1
@@ -236,6 +237,27 @@ pattern_analyzer（K 线形态识别 + 历史成绩单）、狙击手模块（�
 
 ## 更新日志
 
+- 2026-09-19（批次 5）：**F6-3 板块轮动监控完成**——独立导航页 `/sectors`：
+  涨跌排行 / 资金流排行双 Tab、板块详情（成分股表 + 日 K 走势图）、"查个股所属板块"
+  共振查询（代码直查/名称经 /api/search 解析，返回所属行业板块当日涨跌幅名次与资金流名次）。
+  data-service 新增 5 端点：`/sectors/rank`、`/sectors/fund-flow`（缓存 60s）、
+  `/sectors/cons`、`/sectors/history`（缓存 10min）、`/sectors/of-stock/{code}`。
+  **实现选型**（实测 akshare 1.18.94 后确定）：排行/资金流/成分股按 AKShare 同参数
+  **直连东财 clist**（封装丢弃成交额/领涨股代码/板块代码等必需字段），宿主降级
+  push2 → push2delay（响应带 source 标注，页面标"延时约 15 分钟"）；板块日 K 走
+  AKShare `stock_board_industry_hist_em`（BK 代码直传跳过内部名称解析）；of-stock
+  行业复用 /profile 端点，匹配精确优先 + 罗马数字后缀归一化兜底，未匹配返回
+  matched=false 而非报错；资金流名次失败仅省略该字段（端点内独立降级）。
+  主服务：provider.ts 加 SectorRank 等 5 类型与 5 方法、CompositeProvider 接线；
+  webchat.ts 挂 /sectors 静态页 + /api/sectors/*（口令鉴权后）；前端复用 theme.css
+  与手写 SVG 折线，/stocks、/market、/news、/funds 页头加"🏭 板块"导航。
+  验证：typecheck + 176 测试全绿（新增 9 条：URL 拼接/透传/未匹配结构化/404/连接失败）+
+  py_compile 通过；端到端实测（验证端口 8122/18822 + 独立临时数据目录，验后已停并清理）：
+  rank/fund-flow/cons/of-stock 均返回真实数据（实测 600519→白酒Ⅱ 名次 351/496、
+  资金流名次 152/496；002594→乘用车），401/400 正常，/sectors 静态页 200，
+  内联 JS node --check 通过。**未覆盖**：板块日 K 端到端未复验——验证窗口内 push2his
+  对本机 IP 断连限流（间歇性，本批早前同机直接调用 stock_board_industry_hist_em 实测
+  返回 14 行、列名与归一化映射一致），限流期该端点返回结构化 502 只影响走势图区块。
 - 2026-09-19（批次 4）：**F5-4 多条件监控提醒完成（F5 轻量项收官）**——异动提醒从单一
   全局涨跌幅阈值升级为用户可配置的多条件规则：新增 `manage_alerts` 技能
   （`src/skills/bundled/alerts/`，add/list/remove/enable/disable 白名单 action），
