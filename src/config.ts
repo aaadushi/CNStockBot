@@ -60,6 +60,11 @@ export const config = {
     intervalMinutes: numEnv('ALERT_INTERVAL_MINUTES', 5, 1),
   },
 
+  /** 收盘日报：true 时日报附加自选股技术面信号摘要（F5-3，复用 F5-1 /indicators 端点，需 data-service） */
+  dailyReport: {
+    signals: process.env.DAILY_REPORT_SIGNALS !== 'false',
+  },
+
   /** 行情健康探针：定时探测常青股票，连续失败即判定行情链路故障并告警 */
   healthProbe: {
     enabled: process.env.HEALTH_PROBE_ENABLED !== 'false',

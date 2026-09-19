@@ -1,6 +1,8 @@
 /**
  * 定时任务：
- * 1. 收盘日报：A 股收盘后（15:30 北京时间）向所有用户推送自选股日报。
+ * 1. 收盘日报：A 股收盘后（15:30 北京时间）向所有用户推送自选股日报；
+ *    2026-09-19 起附加技术面信号摘要（F5-3，复用 F5-1 /indicators 端点的客观信号，
+ *    需 data-service 运行；可用 DAILY_REPORT_SIGNALS=false 关闭）。
  * 2. 异动提醒：盘中（9:30-11:30 / 13:00-15:00）每 N 分钟轮询全部自选股，
  *    涨跌幅绝对值超阈值即推送，每股每日只报一次防刷屏。
  * 用 setTimeout 实现的极简调度器，避免引入 cron 依赖；
@@ -67,18 +69,75 @@ async function notifyUser(channels: Channel[], userId: string, text: string): Pr
   return allOk;
 }
 
-async function buildDailyReport(store: Store, data: DataProvider, userId: string): Promise<string> {
-  const codes = store.getWatchlist(userId);
-  const lines = await Promise.all(
-    codes.map(async (c) => {
+/** 单只股票在日报信号区最多展示的信号条数（防超长推送刷屏） */
+const MAX_SIGNALS_PER_STOCK = 3;
+
+/**
+ * 日报的技术面信号区（F5-3）：逐股并发拉 F5-1 指标端点，只列出有客观信号的股票
+ * （金叉/死叉/超买超卖/突破布林轨等状态描述，口径与 F5-1 一致，不含买卖建议）。
+ * 返回 null = 本节不出现（全部无信号且零失败，或被配置关闭）；
+ * 数据源整体不可用时返回一行降级说明（与详情页"单块失败只标注自己"同一模式）。
+ */
+async function buildSignalSection(
+  data: DataProvider,
+  codes: string[],
+  quotes: (Quote | null)[],
+): Promise<string | null> {
+  if (!config.dailyReport.signals) return null;
+  if (typeof data.getIndicators !== 'function') {
+    return '【技术面信号】暂不可用（当前数据源无指标能力，需启动 data-service）';
+  }
+  // failed 标记与"无信号"区分：全部失败时给降级说明而不是静默消失
+  const results: ({ line: string } | { failed: true } | null)[] = await Promise.all(
+    codes.map(async (c, i) => {
       try {
-        return formatQuoteLine(await data.getQuote(c));
+        const ind = await data.getIndicators!(c);
+        if (ind.signals.length === 0) return null;
+        const name = quotes[i]?.name ?? c;
+        const shown = ind.signals
+          .slice(0, MAX_SIGNALS_PER_STOCK)
+          .map((s) => s.text)
+          .join('；');
+        return { line: `· ${name}（${c}）：${shown}` };
       } catch {
-        return `⚠️ ${c} 行情获取失败`;
+        return { failed: true };
       }
     }),
   );
-  return `【收盘日报】你的自选股今日表现：\n${lines.join('\n')}\n\n以上仅供参考，不构成投资建议。`;
+  const lines = results.flatMap((r) => (r && 'line' in r ? [r.line] : []));
+  const failedCount = results.filter((r) => r && 'failed' in r).length;
+  if (lines.length === 0 && failedCount === 0) return null; // 全市场平静，不占版面
+  if (lines.length === 0) return '【技术面信号】暂不可用（data-service 未运行或指标计算失败）';
+  const header = '【技术面信号】（客观状态描述，非买卖建议）';
+  const tail = failedCount > 0 ? `\n（${failedCount} 只技术面数据获取失败，已跳过）` : '';
+  return `${header}\n${lines.join('\n')}${tail}`;
+}
+
+/** 组装一个用户的收盘日报（行情 + 技术面信号摘要）。导出供单测使用。 */
+export async function buildDailyReport(
+  store: Store,
+  data: DataProvider,
+  userId: string,
+): Promise<string> {
+  const codes = store.getWatchlist(userId);
+  const quotes: (Quote | null)[] = await Promise.all(
+    codes.map(async (c) => {
+      try {
+        return await data.getQuote(c);
+      } catch {
+        return null;
+      }
+    }),
+  );
+  const lines = codes.map((c, i) =>
+    quotes[i] ? formatQuoteLine(quotes[i]!) : `⚠️ ${c} 行情获取失败`,
+  );
+  let report = `【收盘日报】你的自选股今日表现：\n${lines.join('\n')}`;
+  if (codes.length > 0) {
+    const section = await buildSignalSection(data, codes, quotes);
+    if (section) report += `\n\n${section}`;
+  }
+  return `${report}\n\n以上仅供参考，不构成投资建议。`;
 }
 
 /** 盘中异动提醒轮询 */
