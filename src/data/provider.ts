@@ -307,6 +307,32 @@ export interface TechnicalIndicators {
   };
 }
 
+// ---- 外盘联动监控（F6-4，2026-09-19 新增；仅微服务模式提供） ----
+
+/** 外盘单条报价（美股指数/中概股/国际商品共用）；字段缺失为 null 而非 0 */
+export interface OverseasQuote {
+  code: string;          // 数据源代码（.DJI / BABA.OQ / XAU 等）
+  name: string;          // 展示名
+  price: number | null;  // 最新价/最新收盘
+  changePct: number | null; // 涨跌幅 %
+  time?: string | null;  // 数据源原始时间（美股为美东时间，非北京时间）
+}
+
+/** 外盘信息块：块级独立降级——失败时 error 非空、items 为空，其余块照常返回 */
+export interface OverseasBlock {
+  source: 'tencent' | 'sina' | 'eastmoney' | null; // 实际数据源（失败为 null）
+  error: string | null;
+  items: OverseasQuote[];
+}
+
+/** 隔夜外盘参考信息汇总（data-service /overseas/summary，缓存 10 分钟） */
+export interface OverseasSummary {
+  generatedAt: string;          // 快照生成时间（北京时间 YYYY-MM-DD HH:MM:SS）
+  usIndices: OverseasBlock;     // 美股三大指数
+  usHot: OverseasBlock;         // 中概股/美股热门
+  commodities: OverseasBlock;   // 国际金银原油
+}
+
 export interface DataProvider {
   readonly name: string;
   getQuote(code: string): Promise<Quote>;
@@ -343,4 +369,6 @@ export interface DataProvider {
   searchFunds?(keyword: string, limit?: number): Promise<FundSearchItem[]>;
   /** 场内 ETF 实时行情榜（按涨跌幅降序）；仅微服务模式提供 */
   getEtfRank?(limit?: number): Promise<EtfQuote[]>;
+  /** 隔夜外盘参考信息汇总（美股指数/中概股/国际商品，F6-4）；仅微服务模式提供 */
+  getOverseasSummary?(): Promise<OverseasSummary>;
 }

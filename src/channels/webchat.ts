@@ -5,6 +5,7 @@
  * - GET  /market                  全市场涨跌榜静态页面（public/market/），不鉴权
  * - GET  /funds                   基金版块静态页面（public/funds/），不鉴权
  * - GET  /news                    财经快讯静态页面（public/news/），不鉴权
+ * - GET  /overseas                外盘联动静态页面（public/overseas/，F6-4），不鉴权
  * - GET  /shared                  前端共享静态资源（public/shared/），不鉴权
  * - POST /api/chat                { userId, message } -> { reply }
  * - GET  /api/inbox?userId=       拉取离线通知（读后即删）
@@ -23,6 +24,7 @@
  * - GET  /api/funds/search?keyword=     基金搜索（名称/代码/拼音缩写，需 data-service）
  * - GET  /api/funds/etf?limit=          场内 ETF 实时行情榜（需 data-service）
  * - GET  /api/funds/:code?days=         单只基金详情 + 单位净值走势（需 data-service）
+ * - GET  /api/overseas/summary          隔夜外盘参考信息 + A 股相关方向提示（需 data-service，F6-4）
  *
  * 鉴权：所有 /api/* 请求需带请求头 `Authorization: Bearer <ACCESS_TOKEN>`，
  * 口令来自 config.accessToken（.env 的 ACCESS_TOKEN，未配置时启动时随机生成并打印）。
@@ -43,6 +45,7 @@ import type { Channel } from './types.js';
 import type { Agent } from '../agent/loop.js';
 import type { Store } from '../storage/store.js';
 import type { DataProvider, Quote, HistoryBar } from '../data/provider.js';
+import { buildOverseasHints } from '../data/overseasHints.js';
 import { config } from '../config.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -52,6 +55,7 @@ const STOCKS_ROOT = path.resolve(__dirname, '../../public/stocks');
 const MARKET_ROOT = path.resolve(__dirname, '../../public/market');
 const FUNDS_ROOT = path.resolve(__dirname, '../../public/funds');
 const NEWS_ROOT = path.resolve(__dirname, '../../public/news');
+const OVERSEAS_ROOT = path.resolve(__dirname, '../../public/overseas');
 const SHARED_ROOT = path.resolve(__dirname, '../../public/shared');
 
 /** 股票代码统一校验：6 位数字 */
@@ -135,6 +139,7 @@ export class WebChatChannel implements Channel {
     app.use('/market', express.static(MARKET_ROOT));
     app.use('/funds', express.static(FUNDS_ROOT));
     app.use('/news', express.static(NEWS_ROOT));
+    app.use('/overseas', express.static(OVERSEAS_ROOT));
     app.use('/shared', express.static(SHARED_ROOT));
 
     // 只保护 /api/*，静态资源（/webchat、/stocks、/market、/news、/shared）不鉴权
@@ -456,6 +461,23 @@ export class WebChatChannel implements Channel {
       const days = Number.isNaN(parsed) ? 260 : Math.min(1000, Math.max(1, parsed));
       try {
         res.json(await this.data.getFundInfo(code, days));
+      } catch (err) {
+        res.status(500).json({ error: errText(err) });
+      }
+    });
+
+    // 隔夜外盘参考信息（F6-4）：依赖可选方法 getOverseasSummary（微服务 /overseas/summary）。
+    // 响应在原始块结构上附加 hints（规则化客观方向提示，仅供参考，非买卖建议）。
+    app.get('/api/overseas/summary', async (_req, res) => {
+      if (!this.data.getOverseasSummary) {
+        res
+          .status(503)
+          .json({ error: '外盘数据需要 data-service（AKShare 微服务），请确认已启动' });
+        return;
+      }
+      try {
+        const summary = await this.data.getOverseasSummary();
+        res.json({ ...summary, hints: buildOverseasHints(summary) });
       } catch (err) {
         res.status(500).json({ error: errText(err) });
       }

@@ -1,0 +1,212 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>股助手 - 外盘联动</title>
+  <link rel="stylesheet" href="/shared/theme.css" />
+  <style>
+    /* ---- 外盘页面（F6-4） ---- */
+    .card h2 { font-size: 15px; font-weight: 600; margin-bottom: 12px; }
+    .card .block-note { font-size: 12px; color: var(--text-3); margin-top: 12px; }
+    .quote-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 10px; }
+    .quote-tile {
+      border: 1px solid var(--border); border-radius: 10px; padding: 10px 12px;
+      display: flex; flex-direction: column; gap: 2px;
+    }
+    .quote-tile .name { font-size: 12px; color: var(--text-2); }
+    .quote-tile .price { font-size: 16px; font-weight: 600; font-variant-numeric: tabular-nums; }
+    .quote-tile .time { font-size: 11px; color: var(--text-3); }
+    .hint-list { display: flex; flex-direction: column; gap: 8px; }
+    .hint-list .hint { font-size: 13px; line-height: 1.7; padding-left: 14px; position: relative; }
+    .hint-list .hint::before { content: '·'; position: absolute; left: 2px; color: var(--text-3); }
+    .block-error { color: var(--text-3); font-size: 13px; padding: 8px 0; }
+    .toolbar { display: flex; align-items: center; gap: 10px; }
+    .toolbar .time { font-size: 12px; color: var(--text-3); }
+    .toolbar .side { margin-left: auto; }
+  </style>
+</head>
+<body>
+  <header class="page-header">
+    <div class="inner">
+      <span class="brand">📈 股助手</span>
+      <span class="sub">外盘联动</span>
+      <span class="spacer"></span>
+      <a class="nav" href="/stocks">⭐ 自选股</a>
+      <a class="nav" href="/market">📊 涨跌榜</a>
+      <a class="nav" href="/funds">💰 基金</a>
+      <a class="nav" href="/news">📰 快讯</a>
+      <a class="nav" href="/webchat">💬 聊天</a>
+    </div>
+  </header>
+
+  <main class="page">
+    <div class="card">
+      <div class="toolbar">
+        <span class="time" id="data-time"></span>
+        <div class="side">
+          <button class="btn btn-ghost" id="refresh-btn">刷新</button>
+        </div>
+      </div>
+    </div>
+
+    <div class="card">
+      <h2>🧭 A 股相关方向提示</h2>
+      <div id="hint-list" class="hint-list"></div>
+      <div class="block-note">方向提示为基于历史相关性的客观规则映射，不是预测，不含任何买卖建议。</div>
+    </div>
+
+    <div class="card">
+      <h2>🇺🇸 美股三大指数</h2>
+      <div id="us-indices" class="quote-grid"></div>
+      <div class="block-note">时间为美东时间；A 股开盘前看到的是隔夜收盘数据。</div>
+    </div>
+
+    <div class="card">
+      <h2>🀄 中概股与美股热门</h2>
+      <div id="us-hot" class="quote-grid"></div>
+      <div class="block-note">固定观察篮子（中概股 + 美股科技），时间为美东时间。</div>
+    </div>
+
+    <div class="card">
+      <h2>🪙 国际金银原油</h2>
+      <div id="commodities" class="quote-grid"></div>
+      <div class="block-note">时间为主数据源（新浪）原始时间，非北京时间。</div>
+    </div>
+
+    <div class="disclaimer">外盘数据仅作参考信息源，不构成投资建议</div>
+  </main>
+
+  <!-- 口令鉴权浮层（与其他页面共用 localStorage 键） -->
+  <div class="auth-overlay" id="auth-overlay" hidden>
+    <div class="auth-card">
+      <h2>输入访问口令</h2>
+      <p>口令见服务端启动日志或 .env 的 ACCESS_TOKEN</p>
+      <input id="auth-input" class="input" type="password" placeholder="ACCESS_TOKEN" />
+      <div class="error" id="auth-error"></div>
+      <button class="btn btn-primary" id="auth-confirm">确认</button>
+    </div>
+  </div>
+
+  <script>
+    'use strict';
+    const $ = (id) => document.getElementById(id);
+
+    /* ================= 鉴权（与 webchat/stocks 等页面共用 localStorage 键） ================= */
+    let accessToken = localStorage.getItem('cnstockbot_token') || '';
+
+    const authOverlay = $('auth-overlay');
+    let authResolve = null;
+    function showAuth(hasError) {
+      $('auth-error').textContent = hasError ? '口令错误，请重新输入' : '';
+      authOverlay.hidden = false;
+      $('auth-input').focus();
+      return new Promise((resolve) => { authResolve = resolve; });
+    }
+    function submitAuth() {
+      const t = $('auth-input').value.trim();
+      if (!t) return;
+      accessToken = t;
+      localStorage.setItem('cnstockbot_token', t);
+      $('auth-input').value = '';
+      authOverlay.hidden = true;
+      if (authResolve) { authResolve(); authResolve = null; }
+    }
+    $('auth-confirm').onclick = submitAuth;
+    $('auth-input').onkeydown = (e) => { if (e.key === 'Enter') submitAuth(); };
+
+    async function apiFetch(url, options = {}) {
+      if (!accessToken) await showAuth(false);
+      options.headers = Object.assign({}, options.headers, { 'Authorization': 'Bearer ' + accessToken });
+      const res = await fetch(url, options);
+      if (res.status === 401) {
+        accessToken = '';
+        localStorage.removeItem('cnstockbot_token');
+        await showAuth(true);
+        return apiFetch(url, options);
+      }
+      return res;
+    }
+
+    /* ================= 工具 ================= */
+    function el(tag, cls, text) {
+      const e = document.createElement(tag);
+      if (cls) e.className = cls;
+      if (text !== undefined) e.textContent = text; // 一律 textContent，防 XSS
+      return e;
+    }
+
+    function pctBadge(changePct) {
+      if (typeof changePct !== 'number' || !isFinite(changePct)) return el('span', 'badge badge-flat', '—');
+      const cls = changePct > 0 ? 'badge badge-up' : changePct < 0 ? 'badge badge-down' : 'badge badge-flat';
+      return el('span', cls, (changePct >= 0 ? '+' : '') + changePct.toFixed(2) + '%');
+    }
+
+    function quoteTile(item) {
+      const tile = el('div', 'quote-tile');
+      tile.appendChild(el('span', 'name', item.name + '（' + item.code + '）'));
+      const row = el('div');
+      row.style.display = 'flex';
+      row.style.alignItems = 'center';
+      row.style.justifyContent = 'space-between';
+      const price = typeof item.price === 'number' && isFinite(item.price) ? String(item.price) : '—';
+      row.appendChild(el('span', 'price', price));
+      row.appendChild(pctBadge(item.changePct));
+      tile.appendChild(row);
+      if (item.time) tile.appendChild(el('span', 'time', item.time));
+      return tile;
+    }
+
+    function renderBlock(id, block, emptyText) {
+      const box = $(id);
+      box.replaceChildren();
+      if (!block) {
+        box.appendChild(el('div', 'block-error', emptyText));
+        return;
+      }
+      if (block.error) {
+        box.appendChild(el('div', 'block-error', '暂不可用：' + block.error));
+        return;
+      }
+      if (!block.items || block.items.length === 0) {
+        box.appendChild(el('div', 'block-error', '暂无数据'));
+        return;
+      }
+      for (const item of block.items) box.appendChild(quoteTile(item));
+    }
+
+    function renderHints(hints) {
+      const box = $('hint-list');
+      box.replaceChildren();
+      for (const h of hints || []) box.appendChild(el('div', 'hint', h));
+    }
+
+    let loading = false;
+    async function load() {
+      if (loading) return;
+      loading = true;
+      $('refresh-btn').disabled = true;
+      try {
+        const res = await apiFetch('/api/overseas/summary');
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.error || ('HTTP ' + res.status));
+        renderBlock('us-indices', data.usIndices, '暂无数据');
+        renderBlock('us-hot', data.usHot, '暂无数据');
+        renderBlock('commodities', data.commodities, '暂无数据');
+        renderHints(data.hints);
+        $('data-time').textContent = '快照生成于 ' + (data.generatedAt || '—') + '（北京时间，服务端缓存约 10 分钟）';
+      } catch (e) {
+        renderHints([]);
+        $('hint-list').replaceChildren(el('div', 'block-error', '外盘数据加载失败：' + e.message));
+        $('data-time').textContent = '';
+      } finally {
+        loading = false;
+        $('refresh-btn').disabled = false;
+      }
+    }
+
+    $('refresh-btn').onclick = load;
+    load();
+  </script>
+</body>
+</html>
