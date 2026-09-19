@@ -12,9 +12,10 @@ import fundrank from './bundled/fundrank/index.js';
 import fundinfo from './bundled/fundinfo/index.js';
 import analyze from './bundled/analyze/index.js';
 import alerts from './bundled/alerts/index.js';
+import patterns from './bundled/patterns/index.js';
 
 /** 所有已注册技能。新增技能时在此追加。 */
-const skills: Skill[] = [quote, news, watchlist, search, announcement, financials, marketIndex, marketNews, fundrank, fundinfo, analyze, alerts];
+const skills: Skill[] = [quote, news, watchlist, search, announcement, financials, marketIndex, marketNews, fundrank, fundinfo, analyze, alerts, patterns];
 
 const byName = new Map(skills.map((s) => [s.name, s]));
 

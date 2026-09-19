@@ -693,3 +693,57 @@
 - **注意事项**：`ALERT_ENABLED=false` 时全局阈值与自定义规则都停止轮询；规则触发文案中的
   价格/涨跌幅是触发时刻的客观状态，推送末尾固定免责声明，不得改写为买卖建议；
   轮询每轮全量读启用规则（行数小，无需缓存）。
+
+## 33. K 线形态识别 + 历史成绩单（F6-1，2026-09-19 新增）
+
+- **数据层（纯本地计算，无新外部依赖）**：data-service `GET /patterns/{code}?days=`
+  （默认 750≈3 年、范围 30~1500，按 (code,days) 缓存 6h）。输入是与 /history 同源的
+  前复权日 K（`_load_bars`：东财→新浪降级，响应带 `source`）。形态库 17 种
+  （定义清晰优先于数量；杯柄/口袋支点定义把握不足未纳入）：
+  - **K 线组合 11 种**：十字星（中性，实体≤振幅 10% 且振幅≥1%）、锤子线/上吊线
+    （下影线≥2 倍实体、上影线≤0.5 倍实体，背景分别为前 5 日累计下跌/上涨）、
+    看涨/看跌吞没（反向背景 + 当日实体完全包住前一根且更大）、早晨/黄昏之星
+    （大实体 + 跳空星线 + 收复/跌破首根实体中点）、乌云盖顶/刺透（高开/低开越前高/低，
+    收盘深入中点以下/以上但未吞没）、红三兵/三只乌鸦（三根饱满同向线，收盘逐级推进，
+    后两根开盘在前一根实体内）；
+  - **价格结构 6 种**：双底/双顶（60 根窗口，两底/顶价差 ≤3%、间隔 ≥10 根、底部/顶部
+    须接近窗口最低/高点（3% 容差，显著极值）、颈线深度 ≥5%，信号日=收盘首次突破颈线）、
+    头肩底/头肩顶（90 根窗口，头即窗口最低/最高点、双肩价差 ≤5%、颈线深度 ≥5%）、
+    上升/下降三角形（40 根窗口，最近 2~3 个分形高点/低点近似水平（≤2%）作压力/支撑线，
+    另一侧分形点逐级抬/降，信号日=收盘首次突破）。
+    结构类信号日的"首次突破"判定（`c[i-1] ≤ neck < c[i]`）天然去重，但同一形态的颈线
+    回踩再突破会各计一次信号（口径见 DATA_SOURCES）。
+  - **无未来函数**：任一形态在第 i 根的判定只用 ≤ i 的数据；分形点右边界留 2 根确认
+    （`_fractals` 的 `min(hi, len-w)`），背景趋势以信号日前一日为锚。
+  - **历史成绩单**：对每个信号日 i，5/10/20 窗口各统计 upRatio（上涨占比 %）/
+    avgRet（平均涨跌幅 %，收盘对收盘）/avgMaxDrawdown（窗口内最低价相对信号日收盘的
+    平均最大跌幅 %）；i+w 超出数据末尾的出现不计入该窗口；窗口样本为 0 时各值 null。
+    响应按形态聚合（{key,name,direction,count,recentDates,stats}），只含窗口内出现过
+    的形态，按最近一次出现倒序；recentDates = 近 60 个交易日的信号日；响应带
+    `disclaimer`（历史事实口径 + 不构成投资建议），**展示层必须保留**。
+- **主服务**：`DataProvider` 加 `PatternReport/PatternStat/PatternWindowStats` 类型与
+  `getPatterns`，PythonServiceProvider/CompositeProvider 接线（未启动微服务给带启动提示
+  的错误）；新增 `GET /api/stocks/:code/patterns?days=`（口令鉴权后，days 钳到 30~1500）。
+  **不进详情聚合七块**——形态卡由前端独立拉取，失败只影响自己（同 indicators 模式）。
+- **聊天技能 `get_stock_patterns`**：[src/skills/bundled/patterns/](../src/skills/bundled/patterns/)。
+  参数仅 code；输出 = 头部（数据截至/窗口/数据源）+ 近期出现形态（近 60 日）+ 历史成绩单
+  （逐形态三窗口一行摘要，count<5 附"样本过少"）+ 口径与免责声明，并内嵌对 LLM 的红线指令
+  （不得表述为预测/买卖建议）。股票名称仅用于展示，行情失败退化为代码不阻塞。
+  SYSTEM_PROMPT 规则 9 加 routing（"形态/信号识别/形态后走势"→ 本技能）。
+- **详情页落点**：AI 多维分析卡下方独立"形态分析"卡（`patterns-card`）——近期触发 chips
+  （中性配色同指标信号，避免暗示操作方向）+ 历史成绩单表格（形态/方向/历史次数/
+  信号后 5/10/20 日，每格两行：上涨占比·均涨幅 + 平均最大回撤，count<5 标注样本过少）+
+  口径与免责声明双脚注；数据缺失整块隐藏、失败卡内降级提示；全部文本 textContent 渲染。
+- **代码位置**：端点与检测器 [data-service/main.py](../data-service/main.py)（"K 线形态
+  识别（F6-1）"节，文件末尾）、接口 [src/data/provider.ts](../src/data/provider.ts)、
+  客户端 [src/data/pythonService.ts](../src/data/pythonService.ts)、组合源
+  [src/data/index.ts](../src/data/index.ts)、API [src/channels/webchat.ts](../src/channels/webchat.ts)、
+  页面 [public/stocks/index.html](../public/stocks/index.html)（loadPatterns/renderPatterns）、
+  测试 [tests/pythonService-patterns.test.ts](../tests/pythonService-patterns.test.ts) +
+  [tests/patterns.test.ts](../tests/patterns.test.ts)
+- **改动入口**：调形态阈值/加形态 → main.py 检测器 + `_PATTERN_DEFS`（每个检测器头部注释
+  写明参数口径）；改统计窗口 → `_PATTERN_WINDOWS`；调缓存 → `_PATTERNS_TTL`；
+  改前端列 → renderPatterns 的 winCell；F6-2 资金流验货可复用本端点的信号日输出
+- **注意事项**：结构形态触发频率对阈值敏感（2026-09-19 实测调校：双底/顶从"任意分形对"
+  收紧到"窗口显著极值"后 750 日内触发次数从 26/59 降到 4/9）；改阈值后用合成 K 线
+  重跑定点识别 + 用真实数据看 count 分布两步验证。
