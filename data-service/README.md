@@ -40,6 +40,7 @@ uvicorn main:app --host 127.0.0.1 --port 8000
 | `GET /funds/etf?limit=` | 场内 ETF 实时行情榜（东财全量快照，翻页 30s+ 故超时 120s + 缓存 60s） |
 | `GET /funds/{code}?days=` | 单只基金详情 + 单位净值走势（按代码缓存 6h；须声明在 rank/search/etf 之后） |
 | `GET /market-news?limit=20` | 全市场财经快讯（东财全球快讯主源、财联社降级，缓存 90s，上限 50 条） |
+| `GET /overseas/summary` | 隔夜外盘参考信息汇总（F6-4）：美股三大指数（腾讯 usDJI/usIXIC/usINX 主源、新浪日 K 降级）、中概股与美股热门篮子（腾讯）、国际金银原油（新浪外盘期货主源、东财全球期货当月连续降级）。每块独立降级（失败块带 error 字段、其余照返），整体缓存 10 分钟；时间字段为数据源原始时间（美股为美东时间） |
 
 ## 注意
 

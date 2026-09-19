@@ -39,6 +39,7 @@
 | 基金版块（/funds + 基金技能，F4-B） | `public/funds/` + `src/skills/bundled/fundrank/`、`fundinfo/` + data-service `/funds/*` | ✅ 可用 | 开放式基金排行（按类型）/基金搜索/基金详情净值走势/场内 ETF 实时榜；天天基金数据（支付宝同源）经微服务，依赖 data-service 运行；2026-09-15 新增 |
 | 财经快讯（/news + `get_market_news` 技能） | `public/news/` + `src/skills/bundled/marketnews/` + data-service `/market-news` | ✅ 可用 | 全市场财经快讯（区别于个股新闻）；东财全球快讯主源、财联社降级，进程内缓存 90s；网页 60s 自动刷新；依赖 data-service；2026-09-15 新增（F4-A） |
 | AI 个股多维分析（F5-2） | `src/skills/bundled/analyze/` + 详情页"AI 多维分析"卡 | ✅ 可用 | `analyze_stock` 技能一次聚合行情估值/公司资料/资金流/技术面（复用 F5-1）/近两期财报/最新新闻六块（allSettled 独立降级），SYSTEM_PROMPT 规则 5 约束 LLM 分维度客观解读；详情页入口复用 /api/chat 链路（结果同步进聊天会话历史）；2026-09-19 新增 |
+| 外盘联动监控（/overseas + 盘前推送，F6-4） | `public/overseas/` + data-service `/overseas/summary` + `src/alerts/scheduler.ts` | ✅ 可用 | 隔夜美股三大指数/中概股与美股热门/国际金银原油三块独立降级（失败块带 error），缓存 10 分钟；规则化"A 股相关方向提示"（客观历史相关性映射，非买卖建议）；盘前推送可选（`OVERSEAS_PUSH_ENABLED=true`，交易日约 9:10）；需 data-service；2026-09-19 新增 |
 
 ## 二、待办优先级总表（下一个 agent 从这里开始）
 
@@ -212,7 +213,7 @@ pattern_analyzer（K 线形态识别 + 历史成绩单）、狙击手模块（�
 | F6-1 | **K 线形态识别 + 历史成绩单**（先 20 种经典形态：杯柄/双重底/头肩底/红三兵/上升三角形/口袋支点等） | data-service 基于 `/history` 长窗口（约 3 年日 K）**纯本地计算**：形态匹配 → 统计该形态历史出现次数、出现后 5/10/20 日表现（上涨占比/平均涨跌幅/最大回撤）。**输出模板必须带"过去 N 次中 X 次上涨……历史统计不代表未来表现，仅供参考，不构成投资建议"** | 详情页独立"形态分析"卡片区 + 聊天可查询 |
 | F6-2 | **资金流验货**（"狙击手"模式） | 依赖 F3-4 资金流数据：形态触发时叠加资金流交叉验证（大单方向/主动买卖/尾盘变化），输出分档结论（重点观察 / 存疑 / 观察名单）；分笔 tick 数据（如 `ak.stock_intraday_em`）接入前需实测稳定性，不稳则用日级资金流替代并在 FEATURES 注明口径 | 详情页独立验货区 + 作为 F5-2 多维分析的信号源 |
 | F6-3 | **板块轮动监控** | 东财板块接口（`ak.stock_board_industry_*`）：行业板块涨跌/资金流强弱排行、个股-板块共振判断 | 独立页面区块（/market 扩展或新页面） |
-| F6-4 | **外盘联动监控** | 美股板块异动 + 国际金银价格（AKShare 美股/期货接口，接入前实测），每交易日开盘前生成"A 股相关方向提示"。**范围扩界说明**：外盘仅作参考信息源，行情查询/自选股等主功能仍只做 A 股 | 独立区块 + 盘前推送（可选） |
+| ~~F6-4~~ | ~~**外盘联动监控**~~ | ✅ 2026-09-19 完成（见更新日志）：/overseas 独立页面 + 规则化方向提示 + 可选盘前推送；**范围扩界说明**已遵守：外盘仅作参考信息源，行情查询/自选股等主功能仍只做 A 股 | — |
 
 **依赖与排期**：整体排在 F3 剩余项、F4-B 之后，与 F5 轻量项交错——F6-1 与 F5-1
 共享历史数据/指标计算底座，建议 F5-1 完成后紧接着做；F6-2 依赖 F3-4；F6-3/F6-4
@@ -235,6 +236,35 @@ pattern_analyzer（K 线形态识别 + 历史成绩单）、狙击手模块（�
 ---
 
 ## 更新日志
+
+- 2026-09-19（批次 5）：**F6-4 外盘联动监控完成**——data-service 新增
+  `GET /overseas/summary`（缓存 10 分钟，三块独立降级、失败块带 error）：
+  美股三大指数（腾讯 qt.gtimg.cn usDJI/usIXIC/usINX 主源 → 新浪 `index_us_stock_sina`
+  日 K 降级）、中概股与美股热门篮子 14 只（腾讯固定篮子，无降级源宁缺毋滥）、
+  国际金银原油（新浪 `futures_foreign_commodity_realtime` 交易所代码 XAU/XAG/GC/SI/CL/OIL
+  主源 → 东财 `futures_global_spot_em` 当月连续合约降级，超时放宽 60s）。
+  **选型均经实测**：东财 `index_global_spot_em`（push2 clist 的 i: 市场）与
+  `stock_us_famous_spot_em`（69.push2 子域）本机断连不可用；AKShare 候选函数的中文
+  symbol 触发列数不匹配——均记入 PITFALLS。主服务：`getOverseasSummary` 接入
+  provider/CompositeProvider（客户端超时放宽 90s，商品降级链最坏 30s+32s）；
+  `GET /api/overseas/summary` 挂口令鉴权后，响应附加 `hints`（规则化"A 股相关方向提示"，
+  `src/data/overseasHints.ts` 纯函数：指数/中概篮子/黄金/原油四组阈值规则，
+  措辞全部"历史上与 X 板块情绪相关，仅供参考"，红线遵守）。前端：新增
+  `public/overseas/` 独立导航页（方向提示卡 + 三个报价卡 + 双时间标注），
+  stocks/market/news/funds 四页页头加"🌐 外盘"导航。盘前推送（可选项已做）：
+  scheduler 新增 `startOverseasPush`（交易日约 9:10 北京时间，复用交易日历判断与
+  notify 通道，推送给有自选股 ∪ 有监控规则的用户），`OVERSEAS_PUSH_ENABLED=true`
+  开启（默认 false），文案构造 `buildOverseasPushText` 纯函数导出。
+  验证：typecheck + 180 测试全绿（tests/overseas.test.ts 12 条：provider URL/透传/
+  错误分支、Composite 降级文案、提示规则触发/不触发/块失败跳过、推送文案构造）+
+  py_compile 通过；端到端实测（验证端口 8123/18823，验后已停并清理）：/overseas/summary
+  三块全部真实数据（腾讯指数 3 条/个股 14 条、新浪商品 6 条，2.7s），缓存命中 2.4ms，
+  **降级链实测**：强制腾讯失败 → 指数块走新浪日 K 返回一致数值，强制新浪失败 → 商品块
+  走东财当月连续合约成功，中概块失败 → error 字段正确降级；/api/overseas/summary
+  无口令 401、带口令 200 且 hints 正确生成；/overseas 静态页 200；盘前推送开关开启后
+  调度日志正确（下次触发 41.1 小时后=周一 9:10，周末已跳）；前端内联 JS node --check
+  通过。**未覆盖**：9:10 定时触发本身未实测（今日周六，调度结构与收盘日报同款）；
+  生产实例（8000/18790）未动，本分支合入后需重启两个服务生效。
 
 - 2026-09-19（批次 4）：**F5-4 多条件监控提醒完成（F5 轻量项收官）**——异动提醒从单一
   全局涨跌幅阈值升级为用户可配置的多条件规则：新增 `manage_alerts` 技能

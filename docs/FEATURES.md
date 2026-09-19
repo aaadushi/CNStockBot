@@ -693,3 +693,47 @@
 - **注意事项**：`ALERT_ENABLED=false` 时全局阈值与自定义规则都停止轮询；规则触发文案中的
   价格/涨跌幅是触发时刻的客观状态，推送末尾固定免责声明，不得改写为买卖建议；
   轮询每轮全量读启用规则（行数小，无需缓存）。
+
+## 33. 外盘联动监控（/overseas，F6-4，2026-09-19 新增）
+
+- **定位**：隔夜外盘参考信息聚合（美股三大指数 / 中概股与美股热门 / 国际金银原油）+
+  规则化"A 股相关方向提示"。**范围扩界红线**：外盘仅作参考信息源，行情查询/自选股等
+  主功能仍只做 A 股；方向提示是"历史上与 X 板块情绪相关"的客观映射，禁止买卖建议。
+- **数据层**（data-service `GET /overseas/summary`，main.py 文件末尾"外盘联动监控"节）：
+  三块**独立降级**——单块失败返回 `{source: null, error: 原因, items: []}`，其余块照常；
+  整体进程内缓存 10 分钟。数据源选型（2026-09-19 逐一实测，口径见 DATA_SOURCES）：
+  - 美股三大指数：主源腾讯行情 qt.gtimg.cn（usDJI/usIXIC/usINX，GBK 文本，下标与 A 股
+    同款 1=名称 3=最新价 30=时间 32=涨跌幅）；降级新浪 `ak.index_us_stock_sina`
+    （全量日 K 取最后两根收盘算涨跌幅）。东财系不可用：`index_global_spot_em` 走
+    push2 clist 的 i: 市场本机实测被掐，`stock_us_famous_spot_em` 走 69.push2 子域断连。
+  - 中概股/美股热门：腾讯行情固定篮子 14 只（BABA/PDD/JD/NTES/BIDU/NIO/XPEV/LI/BILI/TCOM
+    + AAPL/MSFT/NVDA/TSLA），单次请求；**代码不带交易所后缀**（带 .OQ 反而 none_match）；
+    无降级源（宁缺毋滥）。
+  - 国际金银原油：主源新浪 `ak.futures_foreign_commodity_realtime([XAU,XAG,GC,SI,CL,OIL])`
+    （**必须用交易所代码**，中文名触发 AKShare 1.18.94 列数不匹配 ValueError；涨跌幅已是
+    % 单位）；降级东财 `ak.futures_global_spot_em`（全量翻页约 32s，超时放宽 60s，
+    取 GC00Y/SI00Y/CL00Y 当月连续合约行）。
+- **主服务**：`DataProvider.getOverseasSummary()`（provider.ts 类型 OverseasSummary/
+  OverseasBlock/OverseasQuote），PythonServiceProvider 透传（超时放宽 90s——商品块
+  降级链最坏 30s+32s），CompositeProvider 接线带启动提示降级错误。
+- **方向提示**（[src/data/overseasHints.ts](../src/data/overseasHints.ts)，纯函数可测）：
+  阈值规则——指数 |涨跌幅|≥1.5% → 科技/大盘情绪提示；中概篮子等权均值 |≥1.5%| →
+  中概/港股联动提示；黄金 |≥1%| → 贵金属板块提示；原油 |≥2%| → 石油石化/航运提示；
+  无触发返回一条"波动不大"说明；失败块不参与映射；所有文案以"仅供参考"结尾。
+- **API**：`GET /api/overseas/summary`（口令鉴权后，webchat.ts），响应 = 微服务原始三块
+  + `hints`（主服务侧生成，供网页与盘前推送共用同一口径）。
+- **网页**：`public/overseas/`（/overseas）：方向提示卡 + 三个报价卡（tile 网格，
+  涨跌徽章），快照生成时间（北京时间）与各条目数据源原始时间（美股为美东）分别标注；
+  stocks/market/news/funds 四页页头加"🌐 外盘"导航；全部 textContent 渲染。
+- **盘前推送（可选）**：scheduler.ts `startOverseasPush`——交易日约 9:10（北京时间，
+  复用 msUntilNextRun + tradeCalendar 触发时判断）向"有自选股 ∪ 有监控规则"的用户
+  推送外盘摘要 + 方向提示；`OVERSEAS_PUSH_ENABLED=true` 开启（默认 false）；
+  文案构造 `buildOverseasPushText` 纯函数导出（块失败降级"暂不可用"行）。
+- **代码位置**：端点 data-service/main.py 末尾节、类型 src/data/provider.ts、提示
+  src/data/overseasHints.ts、调度 src/alerts/scheduler.ts、API src/channels/webchat.ts、
+  前端 public/overseas/index.html、测试 tests/overseas.test.ts
+- **改动入口**：换数据源 → main.py 对应 `_block_*` 函数；调提示阈值 → overseasHints.ts
+  顶部常量；改篮子 → `_TENCENT_US_HOT`；改缓存 → `_OVERSEAS_TTL`
+- **注意事项**：东财 push2 对本机间歇性断连（2026-09-19 复现，见 PITFALLS），外盘三块
+  特意全部不走 push2 主路径；主服务 60s 默认超时对"新浪 30s 超时 + 东财翻页 32s"的
+  最坏降级链不够，getOverseasSummary 客户端超时已放宽 90s。

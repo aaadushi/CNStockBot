@@ -12,10 +12,11 @@
  */
 import { config } from '../config.js';
 import type { Channel } from '../channels/types.js';
-import type { DataProvider, Quote } from '../data/provider.js';
+import type { DataProvider, OverseasSummary, Quote } from '../data/provider.js';
 import type { Store } from '../storage/store.js';
 import { TradeCalendar } from '../data/pythonService.js';
 import { describeCondition, evaluateRule } from './rules.js';
+import { buildOverseasHints } from '../data/overseasHints.js';
 
 /** 交易日历单例：判断当日是否 A 股交易日（跳法定节假日），服务不可用时降级为只跳周末 */
 const tradeCalendar = new TradeCalendar();
@@ -273,4 +274,88 @@ export function startScheduler(store: Store, data: DataProvider, channels: Chann
   };
   scheduleDaily();
   if (config.alerts.enabled) startPriceAlerts(store, data, channels);
+  if (config.overseasPush.enabled) startOverseasPush(store, data, channels);
+}
+
+// ---- 盘前外盘推送（F6-4，可选，OVERSEAS_PUSH_ENABLED=true 开启） ----
+
+/** 外盘报价行：`· 名称 价格  涨跌幅`；价格/涨跌幅缺失显示 —（不补 0，同 A-310 原则） */
+function formatOverseasLine(it: { name: string; price: number | null; changePct: number | null }): string {
+  const price = typeof it.price === 'number' && Number.isFinite(it.price) ? String(it.price) : '—';
+  if (typeof it.changePct !== 'number' || !Number.isFinite(it.changePct)) {
+    return `· ${it.name} ${price}  涨跌幅 —`;
+  }
+  return `· ${it.name} ${price}  ${it.changePct >= 0 ? '+' : ''}${it.changePct.toFixed(2)}%`;
+}
+
+/** 组装盘前外盘推送文案（纯函数，导出供单测）。块失败降级为一行说明，不阻塞其余块。 */
+export function buildOverseasPushText(summary: OverseasSummary): string {
+  const parts: string[] = [
+    `【盘前外盘参考】隔夜外盘与 A 股相关方向提示（快照 ${summary.generatedAt} 北京时间）`,
+  ];
+
+  if (summary.usIndices.error) {
+    parts.push('美股三大指数：暂不可用');
+  } else {
+    parts.push(`美股三大指数（美东收盘）：\n${summary.usIndices.items.map(formatOverseasLine).join('\n')}`);
+  }
+
+  if (!summary.usHot.error && summary.usHot.items.length > 0) {
+    const valid = summary.usHot.items.filter(
+      (it) => typeof it.changePct === 'number' && Number.isFinite(it.changePct),
+    );
+    if (valid.length > 0) {
+      const avg = valid.reduce((s, it) => s + (it.changePct ?? 0), 0) / valid.length;
+      const upCount = valid.filter((it) => (it.changePct ?? 0) > 0).length;
+      parts.push(
+        `中概股与美股热门篮子：${valid.length} 只平均 ${avg >= 0 ? '+' : ''}${avg.toFixed(2)}%（涨 ${upCount} / 跌 ${valid.length - upCount}）`,
+      );
+    }
+  }
+
+  if (summary.commodities.error) {
+    parts.push('国际金银原油：暂不可用');
+  } else {
+    parts.push(`国际金银原油：\n${summary.commodities.items.map(formatOverseasLine).join('\n')}`);
+  }
+
+  const hints = buildOverseasHints(summary);
+  parts.push(`【方向提示】（基于历史相关性的客观映射，仅供参考）\n${hints.map((h) => `· ${h}`).join('\n')}`);
+  return `${parts.join('\n\n')}\n\n以上仅供参考，不构成投资建议。`;
+}
+
+/** 盘前外盘推送：交易日约 9:10（北京时间）向有自选股或有监控规则的用户推送外盘摘要 */
+function startOverseasPush(store: Store, data: DataProvider, channels: Channel[]): void {
+  const scheduleNext = () => {
+    const delay = msUntilNextRun(9, 10);
+    console.log(`[scheduler] 下次盘前外盘推送在 ${(delay / 3_600_000).toFixed(1)} 小时后`);
+    setTimeout(async () => {
+      try {
+        // 触发时再判断交易日（与收盘日报同一结构；法定节假日跳过，日历挂掉降级为只跳周末）
+        if (!(await tradeCalendar.isTradeDay(beijingNow()))) {
+          console.log('[scheduler] 今日非交易日，跳过盘前外盘推送');
+          return;
+        }
+        if (typeof data.getOverseasSummary !== 'function') {
+          console.warn('[scheduler] 当前数据源无外盘能力（需 data-service），跳过盘前外盘推送');
+          return;
+        }
+        const summary = await data.getOverseasSummary();
+        const text = buildOverseasPushText(summary);
+        // 用户集合 = 有自选股 ∪ 有监控规则（与异动提醒一致）
+        const users = [
+          ...new Set([...store.allUsers(), ...store.getEnabledAlertRules().map((r) => r.userId)]),
+        ];
+        for (const userId of users) {
+          await notifyUser(channels, userId, text); // 单用户失败只记日志（notifyUser 内部处理）
+        }
+      } catch (err) {
+        console.error('[scheduler] 盘前外盘推送失败:', err);
+      } finally {
+        scheduleNext();
+      }
+    }, delay);
+  };
+  console.log('[scheduler] 盘前外盘推送已启动：交易日约 9:10（北京时间）推送隔夜外盘摘要');
+  scheduleNext();
 }
