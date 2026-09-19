@@ -8,11 +8,14 @@
  *   histories(user_id, messages, updated_at)  会话历史（含工具调用上下文，JSON 数组）
  *   inbox(id, user_id, text, created_at)      离线通知收件箱（WebChat 轮询拉取）
  *   kv(key, value)                            渠道杂项状态（如飞书 openId→chatId 映射）
+ *   alert_rules(id, user_id, code, combinator, conditions, enabled, created_at)
+ *                                             多条件监控规则（F5-4），conditions 为 JSON 数组
  */
 import { mkdirSync, existsSync, readFileSync, renameSync } from 'node:fs';
 import path from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
 import { config } from '../config.js';
+import type { AlertCondition, AlertCombinator, AlertRule } from '../alerts/rules.js';
 
 /** 持久化的一条工具调用（与 OpenAI 兼容协议同构） */
 export interface HistoryToolCall {
@@ -31,6 +34,16 @@ export interface HistoryMessage {
   content: string | null;
   tool_calls?: HistoryToolCall[];
   tool_call_id?: string;
+}
+
+/** alert_rules 表行结构（rowToRule 的入参） */
+interface AlertRuleRow {
+  id: number;
+  user_id: string;
+  code: string;
+  combinator: string;
+  conditions: string;
+  enabled: number;
 }
 
 export class Store {
@@ -59,6 +72,15 @@ export class Store {
       CREATE TABLE IF NOT EXISTS kv (
         key TEXT PRIMARY KEY,
         value TEXT NOT NULL
+      );
+      CREATE TABLE IF NOT EXISTS alert_rules (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        user_id TEXT NOT NULL,
+        code TEXT NOT NULL,
+        combinator TEXT NOT NULL,
+        conditions TEXT NOT NULL,
+        enabled INTEGER NOT NULL DEFAULT 1,
+        created_at INTEGER NOT NULL
       );
     `);
     this.migrateLegacyJson();
@@ -155,6 +177,92 @@ export class Store {
       .all(userId) as { id: number; text: string }[];
     if (rows.length > 0) this.db.prepare('DELETE FROM inbox WHERE user_id = ?').run(userId);
     return rows.map((r) => r.text);
+  }
+
+  // ---- 多条件监控规则（F5-4） ----
+
+  /** 新增监控规则，返回自增 id（conditions 入库前必须已过 validateConditions） */
+  addAlertRule(
+    userId: string,
+    code: string,
+    combinator: AlertCombinator,
+    conditions: AlertCondition[],
+  ): number {
+    const res = this.db
+      .prepare(
+        'INSERT INTO alert_rules (user_id, code, combinator, conditions, enabled, created_at) VALUES (?, ?, ?, ?, 1, ?)',
+      )
+      .run(userId, code, combinator, JSON.stringify(conditions), Date.now());
+    return Number(res.lastInsertRowid);
+  }
+
+  private rowToRule(r: AlertRuleRow): AlertRule | null {
+    let conditions: AlertCondition[];
+    try {
+      const parsed = JSON.parse(r.conditions) as unknown;
+      if (!Array.isArray(parsed)) return null; // 数据损坏：宁可跳过该规则也不让轮询挂掉
+      conditions = parsed as AlertCondition[];
+    } catch {
+      return null;
+    }
+    return {
+      id: r.id,
+      userId: r.user_id,
+      code: r.code,
+      combinator: r.combinator === 'all' ? 'all' : 'any',
+      conditions,
+      enabled: r.enabled === 1,
+    };
+  }
+
+  /** 某用户的全部监控规则（含已停用，list 用），按创建顺序 */
+  getAlertRules(userId: string): AlertRule[] {
+    const rows = this.db
+      .prepare(
+        'SELECT id, user_id, code, combinator, conditions, enabled FROM alert_rules WHERE user_id = ? ORDER BY id',
+      )
+      .all(userId) as unknown as AlertRuleRow[];
+    return rows.flatMap((r) => {
+      const rule = this.rowToRule(r);
+      return rule ? [rule] : [];
+    });
+  }
+
+  /** 全部用户的启用中规则（盘中轮询用） */
+  getEnabledAlertRules(): AlertRule[] {
+    const rows = this.db
+      .prepare(
+        'SELECT id, user_id, code, combinator, conditions, enabled FROM alert_rules WHERE enabled = 1 ORDER BY id',
+      )
+      .all() as unknown as AlertRuleRow[];
+    return rows.flatMap((r) => {
+      const rule = this.rowToRule(r);
+      return rule ? [rule] : [];
+    });
+  }
+
+  /** 某用户的规则条数（配合 MAX_RULES_PER_USER 防滥用） */
+  countAlertRules(userId: string): number {
+    const row = this.db
+      .prepare('SELECT COUNT(*) AS n FROM alert_rules WHERE user_id = ?')
+      .get(userId) as { n: number };
+    return Number(row.n);
+  }
+
+  /** 删除规则（按 userId 隔离，删别人的规则返回 false） */
+  removeAlertRule(userId: string, id: number): boolean {
+    const res = this.db
+      .prepare('DELETE FROM alert_rules WHERE user_id = ? AND id = ?')
+      .run(userId, id);
+    return Number(res.changes) > 0;
+  }
+
+  /** 启用/停用规则（按 userId 隔离），规则不存在返回 false */
+  setAlertRuleEnabled(userId: string, id: number, enabled: boolean): boolean {
+    const res = this.db
+      .prepare('UPDATE alert_rules SET enabled = ? WHERE user_id = ? AND id = ?')
+      .run(enabled ? 1 : 0, userId, id);
+    return Number(res.changes) > 0;
   }
 
   /** 渠道杂项状态读写（如飞书 openId→chatId 映射，key 形如 "feishu:chat:<openId>"） */
