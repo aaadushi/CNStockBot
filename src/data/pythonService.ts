@@ -4,7 +4,7 @@
  */
 import { config } from '../config.js';
 import { EastmoneyProvider } from './eastmoney.js';
-import type { Announcement, CompanyProfile, DataProvider, DividendRecord, EtfQuote, FinancialReport, FundFlow, FundInfo, FundRankItem, FundSearchItem, HistoryBar, Intraday, MarketNewsItem, NewsItem, NewsSort, Quote, SectorCons, SectorFundFlow, SectorHistory, SectorRank, StockSectorInfo, TechnicalIndicators } from './provider.js';
+import type { Announcement, CompanyProfile, DataProvider, DividendRecord, EtfQuote, FinancialReport, FundFlow, FundInfo, FundRankItem, FundSearchItem, HistoryBar, Intraday, MarketNewsItem, NewsItem, NewsSort, PatternReport, Quote, SectorCons, SectorFundFlow, SectorHistory, SectorRank, StockSectorInfo, TechnicalIndicators } from './provider.js';
 
 /** 微服务显式超时：AKShare 爬网页较慢，放宽到 60s；防上游挂起拖死调度链（审计 A-301/A-506） */
 const FETCH_TIMEOUT_MS = 60_000;
@@ -125,6 +125,10 @@ export class PythonServiceProvider implements DataProvider {
 
   async getSectorOfStock(code: string): Promise<StockSectorInfo> {
     return this.get<StockSectorInfo>(`/sectors/of-stock/${encodeURIComponent(code)}`);
+  }
+
+  async getPatterns(code: string, days = 750): Promise<PatternReport> {
+    return this.get<PatternReport>(`/patterns/${encodeURIComponent(code)}?days=${days}`);
   }
 }
 

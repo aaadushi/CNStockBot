@@ -413,6 +413,43 @@ export interface StockSectorInfo {
   } | null;
 }
 
+// ---- K 线形态识别 + 历史成绩单（F6-1，2026-09-19 新增；仅微服务模式提供） ----
+
+/** 形态方向标签 */
+export type PatternDirection = '看涨' | '看跌' | '中性';
+
+/**
+ * 单个统计窗口（信号日后 N 个交易日）的历史表现。
+ * 全部为历史事实统计口径：upRatio=上涨占比（%）、avgRet=平均涨跌幅（%，相对信号日收盘）、
+ * avgMaxDrawdown=平均最大回撤（%，窗口内最低价相对信号日收盘）；样本为 0 时各值为 null。
+ */
+export interface PatternWindowStats {
+  count: number; // 该窗口样本数（信号日后有足够交易日才计入）
+  upRatio: number | null;
+  avgRet: number | null;
+  avgMaxDrawdown: number | null;
+}
+
+/** 单种形态的聚合结果；count 为窗口内出现总次数（count < 5 时展示层应提示样本过少） */
+export interface PatternStat {
+  key: string;                // 形态英文键，如 bull_engulf
+  name: string;               // 形态中文名，如 看涨吞没
+  direction: PatternDirection;
+  count: number;              // 统计窗口（days）内出现总次数
+  recentDates: string[];      // 近约 60 个交易日内的信号日（YYYY-MM-DD，升序）
+  stats: Record<'5' | '10' | '20', PatternWindowStats>;
+}
+
+/** 形态识别结果（F6-1）；source 标注日 K 数据源（与 /history 降级链一致：eastmoney/sina） */
+export interface PatternReport {
+  code: string;
+  source: 'eastmoney' | 'sina';
+  days: number;    // 统计窗口（交易日数）
+  asOf: string;    // 最后一根日 K 日期 YYYY-MM-DD
+  patterns: PatternStat[]; // 只含窗口内出现过的形态，按最近一次出现倒序
+  disclaimer: string;      // 历史统计口径与免责声明（展示层必须保留）
+}
+
 export interface DataProvider {
   readonly name: string;
   getQuote(code: string): Promise<Quote>;
@@ -459,4 +496,6 @@ export interface DataProvider {
   getSectorHistory?(name: string, days?: number): Promise<SectorHistory>;
   /** 个股→板块共振（所属行业在当日涨跌/资金流排行中的位置，F6-3）；仅微服务模式提供 */
   getSectorOfStock?(code: string): Promise<StockSectorInfo>;
+  /** K 线形态识别 + 历史成绩单（F6-1）；东财直连无此能力，仅微服务模式提供 */
+  getPatterns?(code: string, days?: number): Promise<PatternReport>;
 }

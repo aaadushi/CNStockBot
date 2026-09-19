@@ -16,7 +16,7 @@
 - 🚨 异动提醒：盘中自选股涨跌幅超阈值（默认 ±5%）主动推送；支持自定义多条件监控规则（"涨到 X 元 / 跌幅超 Y% 提醒我"，对话中设置，AND/OR 组合，每日去重）
 - 🩺 行情健康探针：定时探测行情链路，接口失效主动告警
 - 🌐 内置网页聊天界面（WebChat，API 访问口令保护）；飞书渠道已实现（验签/回复/主动推送），默认关闭
-- 📊 股票浏览页（/stocks）：自选股卡片列表 + 页内搜索 + 个股详情页（行情含估值与市值、成交额/换手率/量比、涨跌停价/52 周高低、公司资料、资金流向、分红送配、分时/日K 走势图（含 VWAP 均价线与成交量副图）、技术指标面板与均线叠加（MA/MACD/RSI/KDJ/BOLL + 支撑/压力位）、AI 多维分析（一键生成，复用聊天链路）、新闻/公告/财报）
+- 📊 股票浏览页（/stocks）：自选股卡片列表 + 页内搜索 + 个股详情页（行情含估值与市值、成交额/换手率/量比、涨跌停价/52 周高低、公司资料、资金流向、分红送配、分时/日K 走势图（含 VWAP 均价线与成交量副图）、技术指标面板与均线叠加（MA/MACD/RSI/KDJ/BOLL + 支撑/压力位）、形态分析（17 种经典 K 线形态识别 + 历史成绩单，历史统计口径）、AI 多维分析（一键生成，复用聊天链路）、新闻/公告/财报）
 - 🚀 全市场涨跌榜（/market）：今日涨幅榜/跌幅榜/平盘 + 涨跌平家数总览，点卡片跳个股详情
 - 📰 财经快讯（/news + `get_market_news` 技能）：全市场财经快讯滚动列表，60s 自动刷新（需 data-service）
 - 💰 基金版块（/funds）：开放式基金排行（按类型）/基金搜索/净值走势图/场内 ETF 实时榜，对标支付宝财富页基金内容；对话可查"基金排行""某基金怎么样"
@@ -52,7 +52,7 @@ channels/          渠道适配：HTTP <-> 统一消息
    │
 agent/loop.ts      Agent 循环：LLM function calling 调度技能
    │
-skills/bundled/    技能（quote / search / news / announcement / financials / watchlist / index / marketnews / fundrank / fundinfo / analyze），每个含 SKILL.md 说明
+skills/bundled/    技能（quote / search / news / announcement / financials / watchlist / index / marketnews / fundrank / fundinfo / analyze / alerts / patterns），每个含 SKILL.md 说明
    │
 data/              数据源抽象：东财直连（行情/指数）+ Python AKShare 微服务（新闻/公告/财报/搜索/历史K线/交易日历）
    │

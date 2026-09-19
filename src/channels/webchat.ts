@@ -17,6 +17,7 @@
  * - GET  /api/stocks/:code/history?days=  历史 K 线（需 data-service 提供 getHistory）
  * - GET  /api/stocks/:code/intraday       今日分时 1 分钟线（需 data-service 提供 getIntraday，F3-5）
  * - GET  /api/stocks/:code/indicators?days=  技术指标（需 data-service 提供 getIndicators，F5-1）
+ * - GET  /api/stocks/:code/patterns?days=    K 线形态识别 + 历史成绩单（需 data-service 提供 getPatterns，F6-1）
  * - GET  /api/market/movers?limit=  全市场今日涨跌榜（上涨/下跌/平盘 + 家数统计）
  * - GET  /api/market/news?limit=    全市场财经快讯（需 data-service 提供 getMarketNews）
  * - GET  /api/search?keyword=     股票搜索（薄封装 provider.search，上限 20 条）
@@ -333,6 +334,29 @@ export class WebChatChannel implements Channel {
       const days = Number.isNaN(parsed) ? 250 : Math.min(1500, Math.max(1, parsed));
       try {
         res.json({ indicators: await this.data.getIndicators(code, days) });
+      } catch (err) {
+        res.status(500).json({ error: errText(err) });
+      }
+    });
+
+    // K 线形态识别 + 历史成绩单（F6-1）：依赖可选方法 getPatterns（仅 data-service 模式提供）。
+    // 不进详情聚合块——前端独立拉取、失败只影响形态卡片（同 history/intraday/indicators 模式）。
+    app.get('/api/stocks/:code/patterns', async (req, res) => {
+      const code = req.params.code;
+      if (!CODE_RE.test(code)) {
+        res.status(400).json({ error: 'code 必须是 6 位数字' });
+        return;
+      }
+      if (!this.data.getPatterns) {
+        res
+          .status(503)
+          .json({ error: '形态识别需要 data-service（AKShare 微服务），请确认已启动' });
+        return;
+      }
+      const parsed = Number.parseInt(String(req.query.days ?? ''), 10);
+      const days = Number.isNaN(parsed) ? 750 : Math.min(1500, Math.max(30, parsed));
+      try {
+        res.json({ patterns: await this.data.getPatterns(code, days) });
       } catch (err) {
         res.status(500).json({ error: errText(err) });
       }
