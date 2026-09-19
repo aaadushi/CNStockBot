@@ -38,6 +38,7 @@
 | 全市场涨跌榜（/market） | `public/market/` + `src/channels/webchat.ts` `/api/market/movers` | ✅ 可用 | 今日涨幅榜/跌幅榜/平盘三 Tab + 涨跌平家数总览（沪深京）；东财 clist/ulist 接口，push2 限流自动降级 push2delay（延时 15 分钟，页面标注）；不依赖 data-service；2026-09-15 新增 |
 | 基金版块（/funds + 基金技能，F4-B） | `public/funds/` + `src/skills/bundled/fundrank/`、`fundinfo/` + data-service `/funds/*` | ✅ 可用 | 开放式基金排行（按类型）/基金搜索/基金详情净值走势/场内 ETF 实时榜；天天基金数据（支付宝同源）经微服务，依赖 data-service 运行；2026-09-15 新增 |
 | 财经快讯（/news + `get_market_news` 技能） | `public/news/` + `src/skills/bundled/marketnews/` + data-service `/market-news` | ✅ 可用 | 全市场财经快讯（区别于个股新闻）；东财全球快讯主源、财联社降级，进程内缓存 90s；网页 60s 自动刷新；依赖 data-service；2026-09-15 新增（F4-A） |
+| AI 个股多维分析（F5-2） | `src/skills/bundled/analyze/` + 详情页"AI 多维分析"卡 | ✅ 可用 | `analyze_stock` 技能一次聚合行情估值/公司资料/资金流/技术面（复用 F5-1）/近两期财报/最新新闻六块（allSettled 独立降级），SYSTEM_PROMPT 规则 5 约束 LLM 分维度客观解读；详情页入口复用 /api/chat 链路（结果同步进聊天会话历史）；2026-09-19 新增 |
 
 ## 二、待办优先级总表（下一个 agent 从这里开始）
 
@@ -177,7 +178,7 @@
 | # | 功能 | 实现要点 | 落点 |
 |---|---|---|---|
 | ~~F5-1~~ | ~~**技术指标分析**：MA/EMA/MACD/RSI/KDJ/BOLL + 关键价位（支撑/压力）~~ | ✅ 2026-09-16 完成（见更新日志） | — |
-| F5-2 | **AI 个股多维分析** | 新聊天技能 `analyze_stock`：一次聚合行情/估值/财报/新闻/技术面（F5-1）结构化数据，交 LLM 生成多维度解读；详情页加"AI 分析"入口（复用 /api/chat 链路） | 对话 + 详情页 |
+| ~~F5-2~~ | ~~**AI 个股多维分析**~~ | ✅ 2026-09-19 完成（见更新日志） | — |
 | F5-3 | **盘后复盘推送** | 收盘日报（15:30）升级：附加自选股技术面信号摘要（如 MA 金叉/死叉、RSI 超买超卖、突破关键价位），走现有 notify 链路；信号口径与 F5-1 一致 | alerts/scheduler |
 | F5-4 | **多条件监控提醒** | 异动提醒从单一涨跌幅阈值升级为**可配置多条件**（价格上下限 / 涨跌幅 / 指标信号），AND/OR 组合；沿用"每股每条件每日一次"去重与推送失败补报机制；条件配置存 SQLite | alerts/scheduler + storage |
 
@@ -235,6 +236,22 @@ pattern_analyzer（K 线形态识别 + 历史成绩单）、狙击手模块（�
 
 ## 更新日志
 
+- 2026-09-19（批次 2）：**F5-2 AI 个股多维分析完成**——新技能 `analyze_stock`
+  （`src/skills/bundled/analyze/`）：`Promise.allSettled` 并发聚合六块（行情/估值、
+  公司资料、资金流 15 天含近 5 日主力净流入合计、技术面复用 F5-1 /indicators 250 天、
+  近两期财报、最新 5 条新闻按时间倒序），单块失败/方法缺失只在该块标注"暂不可用"
+  不拖垮整体；结果头部内嵌红线约束（不得给出买卖建议/目标价/收益承诺），
+  SYSTEM_PROMPT 新增规则 5（"分析/怎么看/能不能买"→ analyze_stock 分维度客观解读，
+  只问行情数字仍走 get_stock_quote）。详情页技术指标卡下方新增"AI 多维分析"卡：
+  点击后**复用 /api/chat 链路**（localStorage userId + 预填分析请求），回复渲染卡内
+  （textContent + pre-wrap），并同步进聊天页会话历史可追问；切换股票清空旧结果、
+  请求中禁重发、迟到响应按 code 丢弃。验证：typecheck + 143 测试全绿（analyze 7 条
+  新用例：格式化/六块齐全/单块降级/可选方法缺失/新浪口径标注/取数参数）+ 详情页内联
+  JS node --check 通过；端到端实测（验证端口 18808 + 生产 data-service 8000，验后已停并
+  清理进程与临时数据目录）：/health 技能清单含 analyze_stock、无口令 401、
+  /api/chat"帮我多维度分析一下600519"实测 LLM 调用 analyze_stock 并输出六维度解读
+  （含超卖/支撑位等客观描述与固定免责声明，无买卖建议）。**未覆盖**：无（全链路含
+  data-service 真实数据实测通过）。
 - 2026-09-19：**解决 P9、关闭 P10**——按 P9 建议修法第 1 条执行恢复：杀掉残留旧进程
   （PID 26168，2026-09-15 20:48 启动，含子进程 2164），以最新 main 代码重启主服务
   （`npx tsx src/index.ts` 无 watch，避开 tsx watch 不重载的坑）并拉起 data-service
