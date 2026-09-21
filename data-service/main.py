@@ -2608,6 +2608,9 @@ _MB_WAIT_RETRY_SEC = 1800      # 盘后数据未齐时的重试间隔（30 分�
 _MB_WAIT_DEADLINE_HOUR = 21    # 盘后等待截止（北京时间 21:00，过时放弃等当日数据）
 _MB_TODAY_READY_RATIO = 0.5    # 当日 bar 覆盖率达到该比例才判"今日数据已齐"
 _MB_FAILED_KEEP = 200          # 状态里保留的失败名单上限（条）
+_MB_CIRCUIT_BREAK = 20         # 连续失败多少票判定 baostock 连接已死，中断本轮触发重新登录
+_MB_RECONNECT_MAX = 5          # 单次更新任务允许的断线重连次数上限
+_MB_RECONNECT_WAIT_SEC = 30    # 断线重连前的等待（秒）
 
 _BJ_TZ = timezone(timedelta(hours=8))
 
@@ -2731,13 +2734,21 @@ def _mb_today_coverage(conn, today: str) -> float:
     return got / total
 
 
+class _MbReconnectNeeded(Exception):
+    """baostock 连接疑似已死（连续多票"网络接收错误"）：中断本轮，由外层重新登录续跑。
+    实测（2026-09-21）：socket 断开后不抛连接异常、每票都报"网络接收错误"，
+    票级重试（2s/5s）无效，必须重新 login 才能恢复。"""
+
+
 def _mb_update_pass(conn, bs, codes: list, full: bool, today: str) -> None:
     """单轮过票：断点续跑（每票从本地最后日期回退 _MB_REFETCH_CAL_DAYS 天补起），
-    单票失败重试 2 次后记入失败名单继续，绝不中断全量任务。"""
+    单票失败重试 2 次后记入失败名单继续，绝不中断全量任务；
+    但连续 _MB_CIRCUIT_BREAK 票失败判定连接已死，抛 _MbReconnectNeeded 中断本轮。"""
     st = _update_state
     st["done"] = 0
     pending_rows = []
     pending_codes = 0
+    consecutive_fail = 0
 
     def flush(force=False):
         nonlocal pending_codes
@@ -2782,20 +2793,27 @@ def _mb_update_pass(conn, bs, codes: list, full: bool, today: str) -> None:
                 pending_rows.extend((code, *r) for r in rows)
             pending_codes += 1
             st["done"] += 1
+            consecutive_fail = 0
             flush()
             time.sleep(_MB_THROTTLE_SEC)
         except Exception as e:
             st["failedCount"] += 1
+            consecutive_fail += 1
+            if consecutive_fail >= _MB_CIRCUIT_BREAK:
+                flush(force=True)
+                raise _MbReconnectNeeded(f"连续 {consecutive_fail} 票失败，判定连接已死: {e}")
             if len(st["failed"]) < _MB_FAILED_KEEP:
                 st["failed"].append({"code": code, "error": str(e)[:200]})
             logger.warning("market-bars 更新跳过失败票: code=%s err=%s", code, e)
     flush(force=True)
 
 
-def _mb_update_run(full: bool) -> None:
+def _mb_update_run(codes: list, is_trade_day: bool, full: bool) -> None:
     """盘后更新主流程（独立线程内执行，不堵事件循环）。含"数据未齐"等待重试循环：
     baostock 当日日 K 通常 17:00-18:00 后才齐，15:40 触发时今日数据可能未到——未齐则
-    每 30 分钟重跑一轮增量（已入库票按断点天然跳过），至北京时间 21:00 封顶。"""
+    每 30 分钟重跑一轮增量（已入库票按断点天然跳过），至北京时间 21:00 封顶。
+    票池与交易日判断由调用方（async 端点）经 run_ak 超时包装预热后传入——
+    本线程内禁止裸调 AKShare（其底层 requests 无默认超时，挂起会永久占住线程）。"""
     st = _update_state
     st.update({
         "running": True, "phase": "backfill" if full else "incremental",
@@ -2806,18 +2824,10 @@ def _mb_update_run(full: bool) -> None:
     conn = _mb_db()
     today = datetime.now(_BJ_TZ).strftime("%Y-%m-%d")
     try:
-        codes = _mb_pool()
         st["total"] = len(codes)
         bs = _bs_mod()
-        # 交易日历失败时降级为"不做等待重试"（单轮跑完即收），不阻断更新本身
-        try:
-            trade_dates = set(pd.to_datetime(_load_trade_dates()["trade_date"]).dt.strftime("%Y-%m-%d"))
-            is_trade_day = today in trade_dates
-        except Exception as e:
-            logger.warning("交易日历获取失败，本轮不做盘后等待重试: %s", e)
-            is_trade_day = False
+        reconnects = 0
         while True:
-            lg = None
             for attempt in range(3):  # login 失败重试 3 次（间隔 2s），仍失败整任务 failed
                 try:
                     lg = bs.login()
@@ -2830,8 +2840,22 @@ def _mb_update_run(full: bool) -> None:
                     time.sleep(2)
             try:
                 _mb_update_pass(conn, bs, codes, full, today)
+            except _MbReconnectNeeded as e:
+                # 连接死亡：登出重连续跑（断点续跑，已入库票天然跳过），超限才整任务失败
+                reconnects += 1
+                if reconnects > _MB_RECONNECT_MAX:
+                    raise RuntimeError(f"baostock 连接反复中断（重连 {_MB_RECONNECT_MAX} 次仍未恢复）: {e}")
+                logger.warning("market-bars 连接中断，%ds 后重新登录续跑（第 %d 次）: %s",
+                               _MB_RECONNECT_WAIT_SEC, reconnects, e)
+                time.sleep(_MB_RECONNECT_WAIT_SEC)
+                full = False  # 重连轮一律增量
+                continue
             finally:
-                bs.logout()  # 等待重试间隔长达 30 分钟，登出避免 socket 被服务端挂死
+                try:
+                    bs.logout()  # 等待重试间隔长达 30 分钟，登出避免 socket 被服务端挂死
+                except Exception:
+                    pass
+            reconnects = 0
             full = False  # 重试轮一律增量
             if is_trade_day:
                 ratio = _mb_today_coverage(conn, today)
@@ -2864,12 +2888,30 @@ def _mb_update_run(full: bool) -> None:
 @app.post("/market-bars/update")
 async def market_bars_update(full: bool = Query(default=False)):
     """触发本地日 K 库更新（后台异步执行）：默认增量（断点续跑），full=true 强制全量回填。
-    单飞行：已有任务在跑返回 409。进度查询见 GET /market-bars/status。"""
+    单飞行：已有任务在跑返回 409。进度查询见 GET /market-bars/status。
+    票池与交易日历在此经 run_ak 超时包装预热后传入工作线程——线程内裸调 AKShare
+    无超时保护，上游挂起会永久占住线程（与 run_ak 头注释同一动机）。
+    代码表走东财全量接口、限流期响应很慢（实测超 30s），预热放宽到 120s（缓存 24h，
+    一次成功全天复用）。"""
     global _update_task
     if _update_state["running"]:
         raise HTTPException(status_code=409,
                             detail="更新任务正在进行中，进度见 /market-bars/status")
-    _update_task = asyncio.create_task(asyncio.to_thread(_mb_update_run, full))
+    try:
+        codes = await run_ak(_mb_pool, timeout=120)
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=502, detail=f"全市场代码表获取失败: {e}")
+    # 交易日历失败时降级为"不做等待重试"（单轮跑完即收），不阻断更新本身
+    try:
+        trade_df = await run_ak(_load_trade_dates)
+        trade_dates = set(pd.to_datetime(trade_df["trade_date"]).dt.strftime("%Y-%m-%d"))
+        is_trade_day = datetime.now(_BJ_TZ).strftime("%Y-%m-%d") in trade_dates
+    except Exception as e:
+        logger.warning("交易日历获取失败，本轮不做盘后等待重试: %s", e)
+        is_trade_day = False
+    _update_task = asyncio.create_task(asyncio.to_thread(_mb_update_run, codes, is_trade_day, full))
     return {"started": True, "full": full}
 
 
@@ -2893,3 +2935,295 @@ def market_bars_status():
     except OSError:
         out["dbSizeMb"] = None
     return out
+
+
+# ================= 全市场扫描（F5-5，2026-09-21） =================
+# 在本地日 K 库上做预设策略的全市场指标扫描。实现要点：
+# - **不逐票调用 _compute_indicators**（5000+ 票逐票 pandas 实测太慢），改为宽表向量化：
+#   SQLite 一次读出全部票最近 _SCAN_PANEL_BARS 根 bar，pivot 成 index=date、columns=code
+#   的宽表，rolling/ewm 整帧按列计算，策略只取最后一/二行做布尔掩码——单策略秒级。
+# - 指标口径与 _compute_indicators（F5-1，见"技术指标"节头注释与 docs/DATA_SOURCES.md）
+#   **逐条一致**：MA rolling mean、EMA ewm(span, adjust=False)、MACD DIF=EMA12-EMA26/
+#   DEA=DIF 的 EMA9、RSI6 ewm(alpha=1/6, min_periods=6) Wilder 平滑、BOLL(20, 2σ, ddof=0)。
+#   唯一差异是窗口长度（扫描固定读最近 _SCAN_PANEL_BARS 根，/indicators 默认 250 根），
+#   EMA 类指标在窗口前段有收敛差异，最后一行数值差异可忽略（sanity check 对拍验证）。
+# - 策略为**固定预设模板**（v1 七个，不做自由条件组合——红线安全与口径可控的取舍，
+#   用户 2026-09-21 确认）。所有策略输出都是客观指标状态，不含买卖建议。
+# - 结果缓存键含数据 asOf 日期：盘后更新完成（MAX(date) 变化）即自然失效，不设 TTL。
+# - 名称含 ST/退 的股票默认剔除（名称表取自 _load_code_name_table；表暂不可用时降级为
+#   不剔除并在响应 note 字段注明）。
+
+_SCAN_PANEL_BARS = 150  # 每票读入的最近 bar 数：覆盖 MA60/BOLL 周期 + EMA/MACD 收敛余量
+
+_scan_cache: dict = {"asOf": None, "results": {}}
+
+
+def _load_panel(min_bars: int = _SCAN_PANEL_BARS):
+    """SQLite 一次读出全部票最近 min_bars 个交易日的 bar，pivot 成宽表 dict。
+    返回 {field: DataFrame(index=date 升序, columns=code)}；库内数据不足 min_bars 天返回 None。"""
+    conn = _mb_db()
+    row = conn.execute(
+        "SELECT DISTINCT date FROM bars ORDER BY date DESC LIMIT 1 OFFSET ?",
+        (min_bars - 1,),
+    ).fetchone()
+    if row is None:
+        return None
+    cutoff = row[0]
+    df = pd.read_sql_query(
+        "SELECT code, date, open, close, high, low, volume FROM bars WHERE date >= ?"
+        " ORDER BY date",
+        conn, params=(cutoff,),
+    )
+    return {f: df.pivot(index="date", columns="code", values=f)
+            for f in ("open", "close", "high", "low", "volume")}
+
+
+def _wide_indicators(panel: dict) -> dict:
+    """宽表整帧向量化指标（口径与 _compute_indicators 逐条一致，见本节头注释）。"""
+    close, high, low, volume = panel["close"], panel["high"], panel["low"], panel["volume"]
+    ind = {f"ma{n}": close.rolling(n).mean() for n in (5, 10, 20, 60)}
+    ema12 = close.ewm(span=12, adjust=False).mean()
+    ema26 = close.ewm(span=26, adjust=False).mean()
+    ind["dif"] = ema12 - ema26
+    ind["dea"] = ind["dif"].ewm(span=9, adjust=False).mean()
+    delta = close.diff()
+    gain = delta.clip(lower=0)
+    loss = -delta.clip(upper=0)
+    avg_gain = gain.ewm(alpha=1 / 6, adjust=False, min_periods=6).mean()
+    avg_loss = loss.ewm(alpha=1 / 6, adjust=False, min_periods=6).mean()
+    ind["rsi6"] = 100 * avg_gain / (avg_gain + avg_loss)  # 分母 0 → NaN，比较掩码天然不命中
+    mid = close.rolling(20).mean()
+    std = close.rolling(20).std(ddof=0)
+    ind["boll_up"] = mid + 2 * std
+    ind["boll_dn"] = mid - 2 * std
+    ind["vol_ma20"] = volume.rolling(20).mean()
+    ind["high_20d"] = high.shift(1).rolling(20).max()  # 前 20 日最高（不含当日，供"突破"判定）
+    return ind
+
+
+# ---- 预设策略（每个 run(panel, ind) 返回 (掩码 Series, extra 文案函数, 排序 Series 或 None)） ----
+# 掩码/排序中的 NaN 比较天然为 False；排序 Series 返回 None 时默认按当日涨跌幅降序。
+
+def _scan_ma_bull(panel, ind):
+    c = panel["close"].iloc[-1]
+    m5, m10, m20, m60 = (ind[k].iloc[-1] for k in ("ma5", "ma10", "ma20", "ma60"))
+    mask = (c > m5) & (m5 > m10) & (m10 > m20) & (m20 > m60)
+
+    def extra(code):
+        return (f"收盘 {c[code]:.2f}，MA5 {m5[code]:.2f} ＞ MA10 {m10[code]:.2f}"
+                f" ＞ MA20 {m20[code]:.2f} ＞ MA60 {m60[code]:.2f}")
+
+    return mask, extra, None
+
+
+def _scan_macd_gold(panel, ind):
+    dif, dea = ind["dif"], ind["dea"]
+    d_prev, d_cur = dif.iloc[-2], dif.iloc[-1]
+    e_prev, e_cur = dea.iloc[-2], dea.iloc[-1]
+    mask = (d_prev <= e_prev) & (d_cur > e_cur)
+
+    def extra(code):
+        return f"DIF {d_cur[code]:.3f} 上穿 DEA {e_cur[code]:.3f}"
+
+    return mask, extra, None
+
+
+def _scan_rsi_oversold(panel, ind):
+    r = ind["rsi6"].iloc[-1]
+    mask = r <= 20
+
+    def extra(code):
+        return f"RSI6={r[code]:.1f}，处于超卖区间（≤20）"
+
+    return mask, extra, None
+
+
+def _scan_vol_break_20d(panel, ind):
+    c = panel["close"].iloc[-1]
+    v = panel["volume"].iloc[-1]
+    h20 = ind["high_20d"].iloc[-1]
+    vm = ind["vol_ma20"].iloc[-1]
+    ratio = v / vm
+    mask = (c > h20) & (v > 2 * vm)
+
+    def extra(code):
+        return (f"收盘 {c[code]:.2f} 突破前 20 日最高 {h20[code]:.2f}，"
+                f"成交量为 20 日均量的 {ratio[code]:.1f} 倍")
+
+    return mask, extra, ratio  # 按量比降序
+
+
+def _scan_pullback_ma20(panel, ind):
+    c = panel["close"].iloc[-1]
+    v = panel["volume"].iloc[-1]
+    vm = ind["vol_ma20"].iloc[-1]
+    m20 = ind["ma20"]
+    m_cur, m_5ago = m20.iloc[-1], m20.iloc[-6] if len(m20) >= 6 else m20.iloc[0] * float("nan")
+    dist = c / m_cur - 1
+    mask = (dist.abs() <= 0.02) & (v < 0.8 * vm) & (m_cur > m_5ago)
+
+    def extra(code):
+        return (f"收盘 {c[code]:.2f} 距 MA20（{m_cur[code]:.2f}）{dist[code] * 100:+.1f}%，"
+                f"成交量为 20 日均量的 {(v / vm)[code]:.2f} 倍")
+
+    return mask, extra, None
+
+
+def _scan_boll_lower(panel, ind):
+    c = panel["close"].iloc[-1]
+    dn = ind["boll_dn"].iloc[-1]
+    mask = c < dn
+
+    def extra(code):
+        return f"收盘 {c[code]:.2f} 低于布林下轨 {dn[code]:.2f}"
+
+    return mask, extra, None
+
+
+def _scan_ma_cross_up(panel, ind):
+    m5, m20 = ind["ma5"], ind["ma20"]
+    a_prev, a_cur = m5.iloc[-2], m5.iloc[-1]
+    b_prev, b_cur = m20.iloc[-2], m20.iloc[-1]
+    mask = (a_prev <= b_prev) & (a_cur > b_cur)
+
+    def extra(code):
+        return f"MA5 {a_cur[code]:.2f} 上穿 MA20 {b_cur[code]:.2f}"
+
+    return mask, extra, None
+
+
+_SCAN_STRATEGIES = [
+    {"key": "ma_bull", "name": "MA 多头排列", "run": _scan_ma_bull,
+     "description": "收盘价 ＞ MA5 ＞ MA10 ＞ MA20 ＞ MA60（各周期均线自上而下排列的客观状态）"},
+    {"key": "macd_gold", "name": "MACD 金叉", "run": _scan_macd_gold,
+     "description": "MACD DIF 当日上穿 DEA（前一交易日 DIF ≤ DEA 且当日 DIF ＞ DEA）"},
+    {"key": "rsi_oversold", "name": "RSI 超卖", "run": _scan_rsi_oversold,
+     "description": "RSI6 ≤ 20，处于超卖区间（客观状态描述，非买入信号）"},
+    {"key": "vol_break_20d", "name": "放量突破 20 日新高", "run": _scan_vol_break_20d,
+     "description": "收盘价突破前 20 个交易日最高价，且当日成交量超过 20 日均量 2 倍（按量比降序）"},
+    {"key": "pullback_ma20", "name": "缩量回踩 MA20", "run": _scan_pullback_ma20,
+     "description": "收盘价距 MA20 在 ±2% 以内、成交量低于 20 日均量 0.8 倍，且 MA20 向上（高于 5 个交易日前）"},
+    {"key": "boll_lower", "name": "触及布林下轨", "run": _scan_boll_lower,
+     "description": "收盘价低于 BOLL(20, 2σ) 下轨（客观状态描述，非买入信号）"},
+    {"key": "ma_cross_up", "name": "MA5 金叉 MA20", "run": _scan_ma_cross_up,
+     "description": "MA5 当日上穿 MA20（前一交易日 MA5 ≤ MA20 且当日 MA5 ＞ MA20）"},
+]
+_SCAN_STRATEGY_MAP = {s["key"]: s for s in _SCAN_STRATEGIES}
+
+_SCAN_DISCLAIMER = ("扫描结果是客观指标条件在历史数据上的筛选命中名单，不构成买卖建议或"
+                    "任何推荐；仅供参考，不构成投资建议。")
+
+
+def _latest_trade_date():
+    """最近一个交易日（YYYY-MM-DD）；交易日历不可用时返回 None（stale 字段降级为 null）。"""
+    df = _load_trade_dates()
+    dates = pd.to_datetime(df["trade_date"]).dt.strftime("%Y-%m-%d")
+    today = datetime.now(_BJ_TZ).strftime("%Y-%m-%d")
+    past = [d for d in dates if d <= today]
+    return past[-1] if past else None
+
+
+def _sort_key(series, code):
+    """排序取值：缺失/NaN 排最后。"""
+    v = series.get(code)
+    if v is None or v != v:
+        return float("-inf")
+    return v
+
+
+def _run_scan(strategy: str, limit: int, as_of: str, names: dict, note, latest_td) -> dict:
+    """执行一个预设策略的全市场扫描（线程内运行）。返回端点响应主体。
+    names/note/latest_td 由调用方（async 端点）经 run_ak 超时包装预热后传入——
+    本线程内禁止裸调 AKShare（无超时保护，上游挂起会永久占住线程）。"""
+    panel = _load_panel()
+    if panel is None or panel["close"].shape[1] == 0:
+        raise HTTPException(status_code=503,
+                            detail="本地日 K 库数据不足，请先触发 POST /market-bars/update 回填")
+    ind = _wide_indicators(panel)
+
+    defn = _SCAN_STRATEGY_MAP[strategy]
+    mask, extra_fn, sort_series = defn["run"](panel, ind)
+    codes = list(mask.index[mask])
+    if names:
+        codes = [c for c in codes
+                 if "ST" not in names.get(c, "") and "退" not in names.get(c, "")]
+    close_last = panel["close"].iloc[-1]
+    close_prev = panel["close"].iloc[-2]
+    pct = (close_last / close_prev - 1) * 100
+    codes.sort(key=lambda c: _sort_key(sort_series if sort_series is not None else pct, c),
+               reverse=True)
+    total = len(codes)
+    items = []
+    for c in codes[:limit]:
+        items.append({
+            "code": c,
+            "name": names.get(c),
+            "close": _f3(close_last.get(c)),
+            "changePct": _f3(pct.get(c)),
+            "extra": extra_fn(c),
+        })
+    stale = (as_of < latest_td) if latest_td else None
+    out = {
+        "strategy": strategy, "name": defn["name"], "description": defn["description"],
+        "asOf": as_of, "stale": stale, "total": total, "items": items,
+        "disclaimer": _SCAN_DISCLAIMER,
+    }
+    if note:
+        out["note"] = note
+    return out
+
+
+def _scan_cached(strategy: str, limit: int, names: dict, note, latest_td) -> dict:
+    """扫描结果缓存：键含数据 asOf（盘后更新完成即自然失效），不设 TTL。"""
+    conn = _mb_db()
+    as_of = conn.execute("SELECT MAX(date) FROM bars").fetchone()[0]
+    if as_of is None:
+        raise HTTPException(status_code=503,
+                            detail="本地日 K 库为空，请先触发 POST /market-bars/update 回填数据")
+    if _scan_cache["asOf"] != as_of:
+        _scan_cache["asOf"] = as_of
+        _scan_cache["results"] = {}
+    key = (strategy, limit)
+    if key not in _scan_cache["results"]:
+        _scan_cache["results"][key] = _run_scan(strategy, limit, as_of, names, note, latest_td)
+    return _scan_cache["results"][key]
+
+
+@app.get("/scan/strategies")
+def scan_strategies():
+    """预设扫描策略元信息（key/name/description）。前端 Tab 与技能描述共用此单一事实源。"""
+    return [{"key": s["key"], "name": s["name"], "description": s["description"]}
+            for s in _SCAN_STRATEGIES]
+
+
+@app.get("/scan")
+async def scan(strategy: str = Query(min_length=1), limit: int = Query(default=50, ge=1, le=200)):
+    """全市场选股扫描（F5-5）：基于本地日 K 库的预设策略客观指标筛选。
+    返回 {strategy, name, description, asOf, stale, total, items, disclaimer}；
+    items 每条 {code, name, close, changePct, extra(触发条件的具体数值)}。
+    数据截至日期 asOf 早于最近交易日时 stale=true（数据非最新，知情降级）。
+    结果全部按历史数据客观计算，不构成投资建议（红线）。"""
+    if strategy not in _SCAN_STRATEGY_MAP:
+        raise HTTPException(
+            status_code=400,
+            detail=f"未知策略: {strategy}，可选: {', '.join(_SCAN_STRATEGY_MAP)}")
+    # 名称表（ST/退 剔除与名称展示）与交易日历（stale 判断）在 async 侧经 run_ak
+    # 超时包装预热；失败不阻断扫描——降级为不剔除/无名称/未知 stale，note 注明
+    names, note, latest_td = {}, None, None
+    try:
+        # 代码表走东财全量接口、限流期很慢（实测超 30s），放宽到 120s（缓存 24h）
+        name_df = await run_ak(_load_code_name_table, timeout=120)
+        names = {str(r["code"]).zfill(6): str(r["name"]) for _, r in name_df.iterrows()}
+    except Exception as e:
+        note = f"股票名称表暂不可用（{e}），结果未剔除 ST/退市股且缺少名称"
+        logger.warning("scan 名称表获取失败: %s", e)
+    try:
+        latest_td = await run_ak(_latest_trade_date)
+    except Exception:
+        pass
+    try:
+        return await asyncio.to_thread(_scan_cached, strategy, limit, names, note, latest_td)
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=502, detail=f"扫描计算失败: {e}")
