@@ -893,3 +893,68 @@
 - **注意事项**：资金流源（东财 ~100 日 / 新浪 num=100）覆盖范围外的早期信号日会判
   "未覆盖"（neutral），不是 bug；`_fund_flow_cache` 缓存全量 items，/fund-flow 截尾、
   /verify 按日期索引，两入口共用同一份缓存。
+
+## 37. 选股扫描（/scanner + scan_market，F5-5，2026-09-21 新增）
+
+- **定位**：在本地全市场日 K 库上按**预设策略模板**做全市场客观指标筛选，产出
+  "符合客观条件的股票名单"。红线：结果只是指标条件的命中名单，所有输出带
+  "仅供参考，不构成投资建议"，不含买卖建议/推荐暗示。**范围裁剪（用户 2026-09-21 确认）**：
+  仅沪深 A 股（北交所无免费批量数据源）、固定 7 个预设策略（不做自由条件编辑器）。
+- **数据底座（本地日 K 库，本服务首个磁盘持久化）**：baostock 批量前复权日 K →
+  SQLite `data-service/data/market_bars.db`（stdlib sqlite3，WAL 单写者，
+  `bars(code,date,…)` WITHOUT ROWID + meta 表；750 个交易日窗口，实测约 5221 只/300-500MB）。
+  字段口径（volume 股÷100→手、amount 元、turn→turnover、pctChg→change_pct、停牌票
+  turn 存 NULL）与已知坑（长窗口慢/连接熔断/会话互斥）见 DATA_SOURCES 与 PITFALLS
+  2026-09-21 条目。
+- **更新器**（[data-service/main.py](../data-service/main.py) "本地日 K 库"节）：
+  `POST /market-bars/update?full=` 触发（单飞行 409）、`GET /market-bars/status` 查进度
+  （running/phase/done/total/failed/coverage/lastBarDate/dbSizeMb）。断点续跑
+  （每票 MAX(date) 续起，回退 10 个日历日覆盖上游修正）；单票失败重试 2 次记名单不中断；
+  **连续 20 票失败熔断**（baostock socket 死亡后票级重试无效）→ 登出重连续跑（上限 5 次）；
+  盘后数据未齐（baostock 当日 K 约 17-18 点齐）每 30 分钟重跑增量至北京时间 21:00 封顶。
+  **线程内禁止裸调 AKShare**：票池/交易日历在 async 端点经 run_ak 超时包装预热后传入
+  （东财全量代码表限流期实测超 30s，预热放宽 120s，缓存 24h）。
+- **扫描引擎**（"全市场扫描"节）：`_load_panel` 一次读出全票最近 150 根 bar pivot 成
+  宽表，`_wide_indicators` 整帧向量化（口径与 F5-1 `_compute_indicators` 逐条一致，
+  合成数据对拍验证）；策略取末行布尔掩码，单策略秒级（实测 2.5s @ 约 1600 票部分回填）。
+  结果缓存键含数据 asOf（更新完成即自然失效，无 TTL）。**7 个预设策略**（key 与口径的
+  单一事实源是 `/scan/strategies` 端点）：ma_bull=MA 多头排列 / macd_gold=MACD 金叉 /
+  rsi_oversold=RSI6≤20 / vol_break_20d=放量突破 20 日新高（量比降序）/ pullback_ma20=
+  缩量回踩 MA20 / boll_lower=触及布林下轨 / ma_cross_up=MA5 金叉 MA20。ST/退按名称剔除
+  （名称表不可用时降级不剔除 + note 注明）。
+- **主服务**：`DataProvider` 加 `ScanStrategyMeta/ScanResultItem/ScanResult/MarketBarsStatus`
+  与 4 个可选方法（getScanStrategies/runScan/getMarketBarsStatus/triggerMarketBarsUpdate，
+  [src/data/provider.ts](../src/data/provider.ts)）；pythonService.ts 加 `post<T>` 私有方法
+  （与 get 同包装）；runScan/trigger 客户端超时放宽 150s（冷启动名称表预热最坏约 120s）。
+  webchat.ts 挂 `/scanner` 静态页与 4 个 API（/api/scanner/strategies、scan、status、
+  update，口令鉴权后；update 的上游 409 原样透传）。
+- **调度**：`startScannerUpdate`（[src/alerts/scheduler.ts](../src/alerts/scheduler.ts)，
+  仿 startOverseasPush）：交易日约 15:40 触发增量更新（fire-and-forget；
+  `SCANNER_AUTO_UPDATE=false` 关闭）。`SCANNER_PUSH_ENABLED=true`（默认关）时轮询
+  status 至完成后对 7 策略各扫 5 条组装摘要（`buildScanPushText` 纯函数：命中数 +
+  前 3 只，全零命中不推送），推送给有自选股 ∪ 有监控规则的用户；21:30 未完放弃当日推送。
+- **技能**：`scan_market`（[src/skills/bundled/scanner/](../src/skills/bundled/scanner/)）：
+  参数 strategy（七 key 枚举）+ limit（硬钳 10）；输出 TOP 10 + 总数 + asOf +
+  "/scanner 页面"引导 + 口径与免责声明（总长 <1200 字符截断线）。SYSTEM_PROMPT 规则 10
+  routing + 红线约束。
+- **网页**：`/scanner` 独立导航页（[public/scanner/index.html](../public/scanner/index.html)）：
+  状态条（数据截至/覆盖票数/stale 黄标/更新进度 5s 轮询/"立即更新"按钮）+ 策略 Tab
+  （/scan/strategies 动态渲染 + 口径描述行）+ 结果卡列表（代码/名称/收盘/涨跌幅/触发数值，
+  点击跳详情页）；空态区分"库为空（引导首更）/无命中/服务未启动"；全 textContent。
+  8 个页面页头加"🔍 扫描"导航，顺带补齐 funds 缺快讯、sectors/overseas 互链。
+- **测试**：[tests/pythonService-scanner.test.ts](../tests/pythonService-scanner.test.ts)
+  7 条（4 方法 URL/POST/透传/409/连接失败）+ [tests/scanner.test.ts](../tests/scanner.test.ts)
+  7 条（白名单/降级/格式化/截断/钳制/长度上限/key 清单一源）+ scheduler.test.ts 追加
+  5 条（buildScanPushText 文案 3 条 + SCANNER_* 配置解析 2 条）。**策略判定在 Python 侧**：
+  宽表口径对拍（vs _compute_indicators，5 票×9 指标）、7 策略暴力复算一致、工程化定点
+  触发、ST 剔除、缓存失效、熔断等由合成数据 sanity check 覆盖（2026-09-21 实测 28+28
+  项全过，临时脚本未提交）。
+- **改动入口**：调策略阈值 → main.py `_SCAN_STRATEGIES` + /scan/strategies 文案 + 技能
+  description + 本节同步；加策略 → 同四处 + sanity 定点用例；调回填窗口 →
+  `_MB_BACKFILL_CAL_DAYS`；调熔断/重连 → `_MB_CIRCUIT_BREAK`/`_MB_RECONNECT_MAX`；
+  调面板宽度 → `_SCAN_PANEL_BARS`（注意 MA60/BOLL 周期 + EMA 收敛余量）
+- **注意事项**：扫描口径是 baostock 前复权，个股页 /indicators 是东财/新浪前复权，
+  复权因子精度差异致数值微小偏差（<0.5%），两者不作逐位一致性承诺；前复权历史值随新
+  除权平移，增量更新只回退 10 个日历日，更早期历史逐渐陈旧——扫描只用近期 150 根，
+  影响有限，需要精确时 `POST /market-bars/update?full=true` 全量刷新。
+

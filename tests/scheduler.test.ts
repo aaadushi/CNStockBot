@@ -1,9 +1,10 @@
 /**
  * 调度器时间函数单测：beijingNow / msUntilNextRun / isTradingTime。
  * 用 vi.setSystemTime 冻结系统时间，覆盖时区换算、跨周末调度、盘中时段边界。
+ * 另含 F5-5 盘后扫描推送文案（buildScanPushText）与 SCANNER_* 配置解析。
  */
 import { describe, it, expect, vi, afterEach } from 'vitest';
-import { beijingNow, msUntilNextRun, isTradingTime } from '../src/alerts/scheduler.js';
+import { beijingNow, msUntilNextRun, isTradingTime, buildScanPushText } from '../src/alerts/scheduler.js';
 
 afterEach(() => {
   vi.useRealTimers();
@@ -70,5 +71,69 @@ describe('isTradingTime', () => {
   it('周末不在盘中（无论时段）', () => {
     expect(isTradingTime(at(12, 10, 0))).toBe(false); // 周六
     expect(isTradingTime(at(13, 14, 0))).toBe(false); // 周日
+  });
+});
+
+describe('buildScanPushText（F5-5 盘后扫描推送文案）', () => {
+  const results = [
+    {
+      name: 'MA 多头排列',
+      total: 12,
+      items: [
+        { code: '600519', name: '贵州茅台' },
+        { code: '000001', name: '平安银行' },
+        { code: '300750', name: '宁德时代' },
+        { code: '600036', name: '招商银行' },
+      ],
+    },
+    { name: 'RSI 超卖', total: 0, items: [] },
+    { name: 'MACD 金叉', total: 2, items: [{ code: '601318', name: null }, { code: '600030', name: '中信证券' }] },
+  ];
+
+  it('零命中策略不占行；命中策略列命中数 + 前 3 只（超出加"等"）', () => {
+    const text = buildScanPushText(results, '2026-09-18')!;
+    expect(text).toContain('数据截至 2026-09-18');
+    expect(text).toContain('MA 多头排列：12 只命中（贵州茅台（600519）、平安银行（000001）、宁德时代（300750） 等）');
+    expect(text).not.toContain('RSI 超卖');
+    expect(text).toContain('MACD 金叉：2 只命中（（601318）、中信证券（600030））'); // 不超过 3 只不加"等"
+  });
+
+  it('名称为 null 退化为只有代码；红线文案与免责声明在尾', () => {
+    const text = buildScanPushText(results, '2026-09-18')!;
+    expect(text).toContain('（601318）');
+    expect(text).toContain('不代表推荐');
+    expect(text).toContain('不构成投资建议');
+  });
+
+  it('全部策略零命中返回 null（不占版面）', () => {
+    const empty = [
+      { name: 'MA 多头排列', total: 0, items: [] },
+      { name: 'RSI 超卖', total: 0, items: [] },
+    ];
+    expect(buildScanPushText(empty, '2026-09-18')).toBeNull();
+  });
+});
+
+describe('SCANNER_* 配置解析（F5-5）', () => {
+  afterEach(() => {
+    delete process.env.SCANNER_AUTO_UPDATE;
+    delete process.env.SCANNER_PUSH_ENABLED;
+    vi.resetModules();
+  });
+
+  it('默认：autoUpdate 开、pushEnabled 关', async () => {
+    vi.resetModules();
+    const { config } = await import('../src/config.js');
+    expect(config.scanner.autoUpdate).toBe(true);
+    expect(config.scanner.pushEnabled).toBe(false);
+  });
+
+  it('SCANNER_AUTO_UPDATE=false 关闭自动更新；SCANNER_PUSH_ENABLED=true 开启推送', async () => {
+    process.env.SCANNER_AUTO_UPDATE = 'false';
+    process.env.SCANNER_PUSH_ENABLED = 'true';
+    vi.resetModules();
+    const { config } = await import('../src/config.js');
+    expect(config.scanner.autoUpdate).toBe(false);
+    expect(config.scanner.pushEnabled).toBe(true);
   });
 });

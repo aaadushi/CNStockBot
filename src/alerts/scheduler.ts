@@ -275,6 +275,7 @@ export function startScheduler(store: Store, data: DataProvider, channels: Chann
   scheduleDaily();
   if (config.alerts.enabled) startPriceAlerts(store, data, channels);
   if (config.overseasPush.enabled) startOverseasPush(store, data, channels);
+  if (config.scanner.autoUpdate) startScannerUpdate(store, data, channels);
 }
 
 // ---- 盘前外盘推送（F6-4，可选，OVERSEAS_PUSH_ENABLED=true 开启） ----
@@ -357,5 +358,119 @@ function startOverseasPush(store: Store, data: DataProvider, channels: Channel[]
     }, delay);
   };
   console.log('[scheduler] 盘前外盘推送已启动：交易日约 9:10（北京时间）推送隔夜外盘摘要');
+  scheduleNext();
+}
+
+// ---- 选股扫描盘后更新与可选推送（F5-5，2026-09-21） ----
+
+/** 扫描推送摘要里每个策略最多列出的股票数（防超长推送刷屏） */
+const SCAN_PUSH_TOP_N = 3;
+/** 更新完成后推送摘要时，每个策略扫描返回的条数 */
+const SCAN_PUSH_PER_STRATEGY = 5;
+/** 等待更新完成的轮询间隔（毫秒）与封顶时刻（北京时间 21:30，过时放弃当日推送） */
+const SCAN_PUSH_POLL_MS = 5 * 60_000;
+const SCAN_PUSH_DEADLINE_MINUTES = 21 * 60 + 30;
+
+/**
+ * 组装盘后扫描推送文案（纯函数，导出供单测）。
+ * 每个策略一行命中数 + 前 SCAN_PUSH_TOP_N 只（代码+名称），全部策略零命中返回 null（不占版面）。
+ * 红线：文案只陈述"客观指标条件命中名单"，不含任何推荐/买卖暗示。
+ */
+export function buildScanPushText(
+  results: { name: string; total: number; items: { code: string; name: string | null }[] }[],
+  asOf: string,
+): string | null {
+  const nonEmpty = results.filter((r) => r.total > 0);
+  if (nonEmpty.length === 0) return null;
+  const lines = nonEmpty.map((r) => {
+    const top = r.items
+      .slice(0, SCAN_PUSH_TOP_N)
+      .map((it) => `${it.name ?? ''}（${it.code}）`)
+      .join('、');
+    return `· ${r.name}：${r.total} 只命中${top ? `（${top}${r.total > SCAN_PUSH_TOP_N ? ' 等' : ''}）` : ''}`;
+  });
+  return (
+    `【盘后扫描摘要】本地日 K 库数据截至 ${asOf}，以下预设条件的客观命中情况：\n` +
+    `${lines.join('\n')}\n\n命中名单是客观指标条件的筛选结果，不代表推荐；` +
+    `完整结果见 /scanner 页面。\n\n以上仅供参考，不构成投资建议。`
+  );
+}
+
+/**
+ * 盘后扫描更新：交易日约 15:40（北京时间）触发 data-service 增量更新本地日 K 库
+ * （fire-and-forget，结果只记日志）。SCANNER_PUSH_ENABLED=true 时轮询更新状态，
+ * 完成后对全部预设策略跑扫描并把摘要推送给有自选股 ∪ 有监控规则的用户；
+ * 到北京时间 21:30 仍未完成则放弃当日推送（只记日志）。
+ */
+function startScannerUpdate(store: Store, data: DataProvider, channels: Channel[]): void {
+  const pollAndPush = async (): Promise<void> => {
+    const bj = beijingNow();
+    if (bj.getHours() * 60 + bj.getMinutes() > SCAN_PUSH_DEADLINE_MINUTES) {
+      console.warn('[scheduler] 扫描更新到 21:30 仍未完成，放弃当日扫描推送');
+      return;
+    }
+    const status = await data.getMarketBarsStatus!();
+    if (status.running) {
+      setTimeout(() => void pollAndPush(), SCAN_PUSH_POLL_MS);
+      return;
+    }
+    if (status.phase !== 'done') {
+      console.warn(`[scheduler] 扫描更新未正常完成（phase=${status.phase}），跳过当日扫描推送`);
+      return;
+    }
+    if (!data.getScanStrategies || !data.runScan) return;
+    const strategies = await data.getScanStrategies();
+    let asOf = '';
+    const results = await Promise.all(
+      strategies.map(async (s) => {
+        const r = await data.runScan!(s.key, SCAN_PUSH_PER_STRATEGY);
+        asOf = asOf || r.asOf;
+        return { name: r.name, total: r.total, items: r.items };
+      }),
+    );
+    const text = buildScanPushText(results, asOf);
+    if (!text) {
+      console.log('[scheduler] 今日全部扫描策略零命中，不推送');
+      return;
+    }
+    const users = [
+      ...new Set([...store.allUsers(), ...store.getEnabledAlertRules().map((r) => r.userId)]),
+    ];
+    for (const userId of users) {
+      await notifyUser(channels, userId, text); // 单用户失败只记日志（notifyUser 内部处理）
+    }
+  };
+
+  const scheduleNext = () => {
+    const delay = msUntilNextRun(15, 40);
+    console.log(`[scheduler] 下次盘后扫描更新在 ${(delay / 3_600_000).toFixed(1)} 小时后`);
+    setTimeout(async () => {
+      try {
+        // 触发时再判断交易日（与收盘日报同一结构；法定节假日跳过，日历挂掉降级为只跳周末）
+        if (!(await tradeCalendar.isTradeDay(beijingNow()))) {
+          console.log('[scheduler] 今日非交易日，跳过盘后扫描更新');
+          return;
+        }
+        if (typeof data.triggerMarketBarsUpdate !== 'function') {
+          console.warn('[scheduler] 当前数据源无扫描能力（需 data-service），跳过盘后扫描更新');
+          return;
+        }
+        await data.triggerMarketBarsUpdate(false); // 单飞行：已在跑时上游 409，视为已触发
+        console.log('[scheduler] 已触发盘后日 K 库增量更新');
+        if (config.scanner.pushEnabled) {
+          setTimeout(() => void pollAndPush(), SCAN_PUSH_POLL_MS);
+        }
+      } catch (err) {
+        // 409（更新已在进行中）也走这里：等价于已触发，只记日志不告警
+        console.log('[scheduler] 盘后扫描更新触发结果：', err instanceof Error ? err.message : err);
+      } finally {
+        scheduleNext();
+      }
+    }, delay);
+  };
+  console.log(
+    `[scheduler] 盘后扫描更新已启动：交易日约 15:40（北京时间）触发日 K 库增量更新` +
+      (config.scanner.pushEnabled ? '（完成后推送扫描摘要）' : '（推送关闭）'),
+  );
   scheduleNext();
 }

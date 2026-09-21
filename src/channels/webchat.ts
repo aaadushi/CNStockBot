@@ -7,6 +7,7 @@
  * - GET  /news                    财经快讯静态页面（public/news/），不鉴权
  * - GET  /overseas                外盘联动静态页面（public/overseas/，F6-4），不鉴权
  * - GET  /sectors                 板块轮动静态页面（public/sectors/），不鉴权
+ * - GET  /scanner                 选股扫描静态页面（public/scanner/，F5-5），不鉴权
  * - GET  /shared                  前端共享静态资源（public/shared/），不鉴权
  * - POST /api/chat                { userId, message } -> { reply }
  * - GET  /api/inbox?userId=       拉取离线通知（读后即删）
@@ -33,6 +34,10 @@
  * - GET  /api/sectors/cons?name=&limit=  板块成分股（需 data-service，F6-3）
  * - GET  /api/sectors/history?name=&days= 板块日 K 走势（需 data-service，F6-3）
  * - GET  /api/sectors/of-stock/:code     个股→板块共振（需 data-service，F6-3）
+ * - GET  /api/scanner/strategies          预设扫描策略清单（需 data-service，F5-5）
+ * - GET  /api/scanner/scan?strategy=&limit=  全市场选股扫描（需 data-service，F5-5）
+ * - GET  /api/scanner/status              本地日 K 库更新状态（需 data-service，F5-5）
+ * - POST /api/scanner/update              触发日 K 库更新 {full?}（需 data-service，F5-5）
  *
  * 鉴权：所有 /api/* 请求需带请求头 `Authorization: Bearer <ACCESS_TOKEN>`，
  * 口令来自 config.accessToken（.env 的 ACCESS_TOKEN，未配置时启动时随机生成并打印）。
@@ -65,6 +70,7 @@ const FUNDS_ROOT = path.resolve(__dirname, '../../public/funds');
 const NEWS_ROOT = path.resolve(__dirname, '../../public/news');
 const OVERSEAS_ROOT = path.resolve(__dirname, '../../public/overseas');
 const SECTORS_ROOT = path.resolve(__dirname, '../../public/sectors');
+const SCANNER_ROOT = path.resolve(__dirname, '../../public/scanner');
 const SHARED_ROOT = path.resolve(__dirname, '../../public/shared');
 
 /** 股票代码统一校验：6 位数字 */
@@ -150,6 +156,7 @@ export class WebChatChannel implements Channel {
     app.use('/news', express.static(NEWS_ROOT));
     app.use('/overseas', express.static(OVERSEAS_ROOT));
     app.use('/sectors', express.static(SECTORS_ROOT));
+    app.use('/scanner', express.static(SCANNER_ROOT));
     app.use('/shared', express.static(SHARED_ROOT));
 
     // 只保护 /api/*，静态资源（/webchat、/stocks、/market、/news、/shared）不鉴权
@@ -629,6 +636,71 @@ export class WebChatChannel implements Channel {
         res.json(await this.data.getSectorOfStock(code));
       } catch (err) {
         res.status(500).json({ error: errText(err) });
+      }
+    });
+
+    // ---- 选股扫描 API（F5-5，2026-09-21；全部依赖 data-service 微服务的可选方法） ----
+    const noScannerService = (res: express.Response) =>
+      res.status(503).json({ error: '选股扫描需要 data-service（AKShare 微服务），请确认已启动' });
+
+    // 预设扫描策略清单（前端 Tab 与技能描述共用）
+    app.get('/api/scanner/strategies', async (_req, res) => {
+      if (!this.data.getScanStrategies) {
+        noScannerService(res);
+        return;
+      }
+      try {
+        res.json({ strategies: await this.data.getScanStrategies() });
+      } catch (err) {
+        res.status(500).json({ error: errText(err) });
+      }
+    });
+
+    // 执行全市场扫描（本地日 K 库 + 预设策略客观指标筛选，结果带 disclaimer）
+    app.get('/api/scanner/scan', async (req, res) => {
+      if (!this.data.runScan) {
+        noScannerService(res);
+        return;
+      }
+      const strategy = String(req.query.strategy ?? '').trim();
+      if (!strategy || strategy.length > 30) {
+        res.status(400).json({ error: '需要 strategy 参数（策略 key）' });
+        return;
+      }
+      const parsed = Number.parseInt(String(req.query.limit ?? ''), 10);
+      const limit = Number.isNaN(parsed) ? 50 : Math.min(200, Math.max(1, parsed));
+      try {
+        res.json(await this.data.runScan(strategy, limit));
+      } catch (err) {
+        res.status(500).json({ error: errText(err) });
+      }
+    });
+
+    // 本地日 K 库状态（更新进度/覆盖票数/数据截至日期）
+    app.get('/api/scanner/status', async (_req, res) => {
+      if (!this.data.getMarketBarsStatus) {
+        noScannerService(res);
+        return;
+      }
+      try {
+        res.json(await this.data.getMarketBarsStatus());
+      } catch (err) {
+        res.status(500).json({ error: errText(err) });
+      }
+    });
+
+    // 触发日 K 库更新（body {full?: boolean}；更新进行中时上游 409 原样透传错误文本）
+    app.post('/api/scanner/update', async (req, res) => {
+      if (!this.data.triggerMarketBarsUpdate) {
+        noScannerService(res);
+        return;
+      }
+      const full = (req.body as { full?: boolean })?.full === true;
+      try {
+        res.json(await this.data.triggerMarketBarsUpdate(full));
+      } catch (err) {
+        const msg = errText(err);
+        res.status(msg.includes('409') ? 409 : 500).json({ error: msg });
       }
     });
   }

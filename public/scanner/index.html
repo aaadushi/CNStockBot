@@ -1,0 +1,314 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>股助手 - 选股扫描</title>
+  <link rel="stylesheet" href="/shared/theme.css" />
+  <style>
+    /* ---- 数据状态条 ---- */
+    .status-bar { display: flex; align-items: center; gap: 18px; flex-wrap: wrap; }
+    .status-bar .stat { display: flex; align-items: baseline; gap: 6px; }
+    .status-bar .stat .num { font-size: 18px; font-weight: 700; font-variant-numeric: tabular-nums; }
+    .status-bar .stat .unit { font-size: 12px; color: var(--text-3); }
+    .status-bar .side { margin-left: auto; display: flex; align-items: center; gap: 10px; }
+    .status-bar .note { font-size: 12px; color: var(--text-3); }
+    .badge-stale {
+      display: inline-block; font-size: 12px; padding: 2px 8px; border-radius: 999px;
+      background: #fef3c7; color: #92400e; border: 1px solid #fcd34d;
+    }
+    .progress { font-size: 12px; color: var(--accent); }
+
+    /* ---- 策略 Tab ---- */
+    .tabs { display: flex; gap: 4px; border-bottom: 1px solid var(--border); margin-bottom: 4px; flex-wrap: wrap; }
+    .tabs button {
+      border: none; background: none; font-family: var(--font); font-size: 14px; color: var(--text-2);
+      padding: 8px 14px; cursor: pointer; border-bottom: 2px solid transparent; margin-bottom: -1px;
+      transition: color 150ms ease; white-space: nowrap;
+    }
+    .tabs button:hover { color: var(--text); }
+    .tabs button.active { color: var(--accent); font-weight: 600; border-bottom-color: var(--accent); }
+    .strategy-desc { font-size: 12px; color: var(--text-3); padding: 8px 2px 14px; }
+
+    /* ---- 结果表 ---- */
+    .result-list { display: flex; flex-direction: column; gap: 10px; }
+    .result-card {
+      display: flex; align-items: center; gap: 12px;
+      background: var(--card); border: 1px solid var(--border); border-radius: var(--radius);
+      box-shadow: var(--shadow-sm); padding: 12px 18px; cursor: pointer;
+      transition: box-shadow 150ms ease, transform 150ms ease;
+    }
+    .result-card:hover { box-shadow: var(--shadow-md); transform: translateY(-1px); }
+    .result-card .meta { flex: 0 0 auto; min-width: 130px; }
+    .result-card .name { font-size: 15px; font-weight: 600; }
+    .result-card .code { font-size: 12px; color: var(--text-2); font-variant-numeric: tabular-nums; }
+    .result-card .extra { flex: 1; min-width: 0; font-size: 13px; color: var(--text-2); }
+    .result-card .quote { text-align: right; font-variant-numeric: tabular-nums; }
+    .result-card .price { font-size: 15px; font-weight: 600; margin-bottom: 2px; }
+
+    .list-note { font-size: 12px; color: var(--text-3); margin-top: 12px; text-align: center; }
+    .block-error { color: var(--text-3); font-size: 13px; padding: 16px 4px; }
+  </style>
+</head>
+<body>
+  <header class="page-header">
+    <div class="inner">
+      <span class="brand">📈 股助手</span>
+      <span class="sub">选股扫描</span>
+      <span class="spacer"></span>
+      <a class="nav" href="/stocks">⭐ 自选股</a>
+      <a class="nav" href="/market">📊 涨跌榜</a>
+      <a class="nav" href="/funds">💰 基金</a>
+      <a class="nav" href="/news">📰 快讯</a>
+      <a class="nav" href="/sectors">🏭 板块</a>
+      <a class="nav" href="/overseas">🌐 外盘</a>
+      <a class="nav" href="/webchat">💬 聊天</a>
+    </div>
+  </header>
+
+  <main class="page">
+    <!-- 本地日 K 库状态条 -->
+    <div class="card" style="margin-bottom: 16px;">
+      <div class="status-bar">
+        <div class="stat"><span class="num" id="as-of">—</span><span class="unit">数据截至</span></div>
+        <div class="stat"><span class="num" id="coverage">—</span><span class="unit">只股票</span></div>
+        <span class="badge-stale" id="stale-badge" hidden>数据非最新交易日</span>
+        <span class="progress" id="progress" hidden></span>
+        <div class="side">
+          <span class="note" id="status-note"></span>
+          <button class="btn btn-ghost" id="update-btn">立即更新</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- 策略 + 结果 -->
+    <div class="card">
+      <div class="tabs" id="tabs"></div>
+      <div class="strategy-desc" id="strategy-desc"></div>
+      <div id="result-list" class="result-list"></div>
+      <div class="list-note" id="list-note"></div>
+    </div>
+
+    <div class="disclaimer">
+      扫描结果是客观指标条件在历史数据上的筛选命中名单（本地日 K 库，沪深 A 股，不含北交所与 ST/退市股），
+      不代表任何推荐；数据仅供参考，不构成投资建议
+    </div>
+  </main>
+
+  <!-- 口令鉴权浮层（与 webchat/stocks 共用 localStorage 键） -->
+  <div class="auth-overlay" id="auth-overlay" hidden>
+    <div class="auth-card">
+      <h2>输入访问口令</h2>
+      <p>口令见服务端启动日志或 .env 的 ACCESS_TOKEN</p>
+      <input id="auth-input" class="input" type="password" placeholder="ACCESS_TOKEN" />
+      <div class="error" id="auth-error"></div>
+      <button class="btn btn-primary" id="auth-confirm">确认</button>
+    </div>
+  </div>
+
+  <script>
+    'use strict';
+    const $ = (id) => document.getElementById(id);
+
+    /* ================= 鉴权（与 webchat/stocks 共用 localStorage 键） ================= */
+    let accessToken = localStorage.getItem('cnstockbot_token') || '';
+
+    const authOverlay = $('auth-overlay');
+    let authResolve = null;
+    function showAuth(hasError) {
+      $('auth-error').textContent = hasError ? '口令错误，请重新输入' : '';
+      authOverlay.hidden = false;
+      $('auth-input').focus();
+      return new Promise((resolve) => { authResolve = resolve; });
+    }
+    function submitAuth() {
+      const t = $('auth-input').value.trim();
+      if (!t) return;
+      accessToken = t;
+      localStorage.setItem('cnstockbot_token', t);
+      $('auth-input').value = '';
+      authOverlay.hidden = true;
+      if (authResolve) { authResolve(); authResolve = null; }
+    }
+    $('auth-confirm').onclick = submitAuth;
+    $('auth-input').onkeydown = (e) => { if (e.key === 'Enter') submitAuth(); };
+
+    async function apiFetch(url, options = {}) {
+      if (!accessToken) await showAuth(false);
+      options.headers = Object.assign({}, options.headers, { 'Authorization': 'Bearer ' + accessToken });
+      const res = await fetch(url, options);
+      if (res.status === 401) {
+        accessToken = '';
+        localStorage.removeItem('cnstockbot_token');
+        await showAuth(true);
+        return apiFetch(url, options); // 重输口令后重试一次（新口令已带上）
+      }
+      return res;
+    }
+
+    /* ================= 工具 ================= */
+    function el(tag, cls, text) {
+      const e = document.createElement(tag);
+      if (cls) e.className = cls;
+      if (text !== undefined) e.textContent = text; // 一律 textContent，防 XSS
+      return e;
+    }
+    function fmtPrice(v) { return typeof v === 'number' && isFinite(v) ? v.toFixed(2) : '—'; }
+    function pctBadge(v) {
+      const ok = typeof v === 'number' && isFinite(v);
+      const badge = el('span', 'badge', ok ? (v > 0 ? '+' : '') + v.toFixed(2) + '%' : '—');
+      badge.classList.add(!ok ? 'badge-flat' : v > 0 ? 'badge-up' : v < 0 ? 'badge-down' : 'badge-flat');
+      return badge;
+    }
+    function upDownClass(v) { return v > 0 ? 'text-up' : v < 0 ? 'text-down' : 'text-2'; }
+    const PHASE_LABEL = {
+      backfill: '全量回填中', incremental: '增量更新中', 'waiting-data': '等待当日数据',
+      done: '已完成', failed: '失败', idle: '',
+    };
+
+    /* ================= 状态条 ================= */
+    let pollTimer = null;
+
+    async function loadStatus() {
+      try {
+        const res = await apiFetch('/api/scanner/status');
+        const s = await res.json();
+        if (!res.ok) throw new Error(s.error || ('HTTP ' + res.status));
+        $('as-of').textContent = s.lastBarDate || '—';
+        $('coverage').textContent = s.coverage == null ? '—' : String(s.coverage);
+        $('status-note').textContent =
+          s.failedCount > 0 ? `上次更新 ${s.failedCount} 只失败（下轮自动补）` : '';
+        const prog = $('progress');
+        if (s.running) {
+          prog.hidden = false;
+          prog.textContent =
+            (PHASE_LABEL[s.phase] || s.phase) + (s.total ? ` ${s.done}/${s.total}` : '') + '…';
+          schedulePoll();
+        } else {
+          prog.hidden = true;
+          stopPoll();
+        }
+        return s;
+      } catch (e) {
+        $('status-note').textContent = e.message;
+        return null;
+      }
+    }
+
+    function schedulePoll() {
+      if (pollTimer) return;
+      pollTimer = setInterval(async () => {
+        const s = await loadStatus();
+        if (s && !s.running) {
+          stopPoll();
+          loadScan(); // 更新完成后刷新结果
+        }
+      }, 5000);
+    }
+    function stopPoll() { if (pollTimer) { clearInterval(pollTimer); pollTimer = null; } }
+
+    $('update-btn').onclick = async () => {
+      const btn = $('update-btn');
+      btn.disabled = true;
+      try {
+        const res = await apiFetch('/api/scanner/update', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}' });
+        const data = await res.json();
+        if (res.status === 409) {
+          $('status-note').textContent = '更新任务已在进行中';
+        } else if (!res.ok) {
+          throw new Error(data.error || ('HTTP ' + res.status));
+        } else {
+          $('status-note').textContent = '已触发更新（首次回填约需数小时，增量约 10-30 分钟）';
+        }
+        loadStatus();
+      } catch (e) {
+        $('status-note').textContent = '触发失败：' + e.message;
+      } finally {
+        btn.disabled = false;
+      }
+    };
+
+    /* ================= 策略 Tab + 扫描结果 ================= */
+    let strategies = [];
+    let activeStrategy = '';
+
+    function renderTabs() {
+      const tabs = $('tabs');
+      tabs.replaceChildren();
+      for (const s of strategies) {
+        const b = el('button', s.key === activeStrategy ? 'active' : '', s.name);
+        b.dataset.key = s.key;
+        tabs.appendChild(b);
+      }
+      const cur = strategies.find((s) => s.key === activeStrategy);
+      $('strategy-desc').textContent = cur ? cur.description : '';
+    }
+
+    function resultCard(item) {
+      const card = el('div', 'result-card');
+      const meta = el('div', 'meta');
+      meta.appendChild(el('div', 'name', item.name || item.code));
+      meta.appendChild(el('div', 'code', item.code));
+      card.appendChild(meta);
+      card.appendChild(el('div', 'extra', item.extra));
+      const quote = el('div', 'quote');
+      quote.appendChild(el('div', 'price ' + upDownClass(item.changePct), fmtPrice(item.close)));
+      quote.appendChild(pctBadge(item.changePct));
+      card.appendChild(quote);
+      card.onclick = () => { location.href = '/stocks?code=' + encodeURIComponent(item.code); };
+      return card;
+    }
+
+    async function loadScan() {
+      if (!activeStrategy) return;
+      const box = $('result-list');
+      box.replaceChildren(el('div', 'block-error', '扫描中…'));
+      $('list-note').textContent = '';
+      try {
+        const res = await apiFetch('/api/scanner/scan?strategy=' + encodeURIComponent(activeStrategy) + '&limit=100');
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.error || ('HTTP ' + res.status));
+        box.replaceChildren();
+        $('stale-badge').hidden = !data.stale;
+        $('as-of').textContent = data.asOf || '—';
+        if (data.items.length === 0) {
+          box.appendChild(el('div', 'block-error', '该条件当前无命中股票'));
+        } else {
+          for (const item of data.items) box.appendChild(resultCard(item));
+        }
+        $('list-note').textContent =
+          (data.total > data.items.length ? `共 ${data.total} 只命中，显示前 ${data.items.length} 只。` : '') +
+          (data.note ? data.note : '');
+      } catch (e) {
+        box.replaceChildren(el('div', 'block-error', e.message));
+      }
+    }
+
+    $('tabs').addEventListener('click', (e) => {
+      const btn = e.target.closest('button[data-key]');
+      if (!btn) return;
+      activeStrategy = btn.dataset.key;
+      renderTabs();
+      loadScan();
+    });
+
+    async function boot() {
+      loadStatus();
+      try {
+        const res = await apiFetch('/api/scanner/strategies');
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.error || ('HTTP ' + res.status));
+        strategies = data.strategies || [];
+        if (strategies.length > 0) {
+          activeStrategy = strategies[0].key;
+          renderTabs();
+          loadScan();
+        }
+      } catch (e) {
+        $('result-list').replaceChildren(el('div', 'block-error', e.message));
+      }
+    }
+    boot();
+  </script>
+</body>
+</html>

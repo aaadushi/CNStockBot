@@ -2735,15 +2735,74 @@ def _mb_today_coverage(conn, today: str) -> float:
 
 
 class _MbReconnectNeeded(Exception):
-    """baostock 连接疑似已死（连续多票"网络接收错误"）：中断本轮，由外层重新登录续跑。
+    """baostock 连接疑似已死（连续多票失败）：中断本轮，由外层重建会话续跑。
     实测（2026-09-21）：socket 断开后不抛连接异常、每票都报"网络接收错误"，
     票级重试（2s/5s）无效，必须重新 login 才能恢复。"""
 
 
-def _mb_update_pass(conn, bs, codes: list, full: bool, today: str) -> None:
+def _call_with_timeout(fn, timeout: float, *args, **kwargs):
+    """线程 + 超时跑同步调用（baostock 查询可能永久阻塞在 socket 读上，实测 2026-09-21）。
+    超时后查询线程孤立（session 随即废弃重建，孤儿线程读到死连接会自行报错退出）。"""
+    import concurrent.futures
+    ex = concurrent.futures.ThreadPoolExecutor(max_workers=1)
+    fut = ex.submit(fn, *args, **kwargs)
+    try:
+        return fut.result(timeout=timeout)
+    finally:
+        ex.shutdown(wait=False)
+
+
+class _BsSession:
+    """baostock 会话封装：查询带 30s 超时守护；超时或流损坏（"网络接收错误"）时
+    自动重建会话并重试本票一次（仍失败则抛给上层记入失败名单）。
+    实测：某些代码的查询会毒化会话流，之后所有查询都失败/挂起，必须换会话。"""
+
+    QUERY_TIMEOUT_SEC = 30
+
+    def __init__(self, bs):
+        self.bs = bs
+        self.login()
+
+    def login(self):
+        err = None
+        for attempt in range(3):  # login 失败重试 3 次（间隔 2s），仍失败抛给外层
+            try:
+                lg = self.bs.login()
+                if lg.error_code == "0":
+                    return
+                err = RuntimeError(f"baostock 登录失败: {lg.error_msg}")
+            except Exception as e:
+                err = e
+            time.sleep(2)
+        raise err
+
+    def close(self):
+        """登出（也可能挂起，带超时静默处理）。"""
+        try:
+            _call_with_timeout(self.bs.logout, 10)
+        except Exception:
+            pass
+
+    def fetch(self, bs_code: str, start: str, end: str) -> list:
+        try:
+            return _call_with_timeout(_bs_fetch_bars, self.QUERY_TIMEOUT_SEC,
+                                      self.bs, bs_code, start, end)
+        except Exception as e:
+            poison = isinstance(e, TimeoutError) or "网络接收错误" in str(e)
+            if not poison:
+                raise
+            logger.warning("baostock 会话疑似损坏（%s），重建会话后重试 %s 一次", e, bs_code)
+            self.close()
+            self.login()
+            return _call_with_timeout(_bs_fetch_bars, self.QUERY_TIMEOUT_SEC,
+                                      self.bs, bs_code, start, end)
+
+
+def _mb_update_pass(conn, session: "_BsSession", codes: list, full: bool, today: str) -> None:
     """单轮过票：断点续跑（每票从本地最后日期回退 _MB_REFETCH_CAL_DAYS 天补起），
     单票失败重试 2 次后记入失败名单继续，绝不中断全量任务；
-    但连续 _MB_CIRCUIT_BREAK 票失败判定连接已死，抛 _MbReconnectNeeded 中断本轮。"""
+    但连续 _MB_CIRCUIT_BREAK 票失败判定连接已死，抛 _MbReconnectNeeded 中断本轮。
+    会话级问题（超时/流损坏）由 _BsSession.fetch 内部重建会话处理。"""
     st = _update_state
     st["done"] = 0
     pending_rows = []
@@ -2782,7 +2841,7 @@ def _mb_update_pass(conn, bs, codes: list, full: bool, today: str) -> None:
                 if backoff:
                     time.sleep(backoff)
                 try:
-                    rows = _bs_fetch_bars(bs, _bs_code(code), start, today)
+                    rows = session.fetch(_bs_code(code), start, today)
                     err = None
                     break
                 except Exception as e:
@@ -2828,33 +2887,21 @@ def _mb_update_run(codes: list, is_trade_day: bool, full: bool) -> None:
         bs = _bs_mod()
         reconnects = 0
         while True:
-            for attempt in range(3):  # login 失败重试 3 次（间隔 2s），仍失败整任务 failed
-                try:
-                    lg = bs.login()
-                    if lg.error_code == "0":
-                        break
-                    raise RuntimeError(f"baostock 登录失败: {lg.error_msg}")
-                except Exception:
-                    if attempt == 2:
-                        raise
-                    time.sleep(2)
+            session = _BsSession(bs)  # 含 login 重试 3 次；失败抛给外层整任务 failed
             try:
-                _mb_update_pass(conn, bs, codes, full, today)
+                _mb_update_pass(conn, session, codes, full, today)
             except _MbReconnectNeeded as e:
-                # 连接死亡：登出重连续跑（断点续跑，已入库票天然跳过），超限才整任务失败
+                # 连接死亡：重建会话续跑（断点续跑，已入库票天然跳过），超限才整任务失败
                 reconnects += 1
                 if reconnects > _MB_RECONNECT_MAX:
                     raise RuntimeError(f"baostock 连接反复中断（重连 {_MB_RECONNECT_MAX} 次仍未恢复）: {e}")
-                logger.warning("market-bars 连接中断，%ds 后重新登录续跑（第 %d 次）: %s",
+                logger.warning("market-bars 连接中断，%ds 后重建会话续跑（第 %d 次）: %s",
                                _MB_RECONNECT_WAIT_SEC, reconnects, e)
                 time.sleep(_MB_RECONNECT_WAIT_SEC)
                 full = False  # 重连轮一律增量
                 continue
             finally:
-                try:
-                    bs.logout()  # 等待重试间隔长达 30 分钟，登出避免 socket 被服务端挂死
-                except Exception:
-                    pass
+                session.close()  # 等待重试间隔长达 30 分钟，登出避免 socket 被服务端挂死
             reconnects = 0
             full = False  # 重试轮一律增量
             if is_trade_day:

@@ -22,6 +22,7 @@
 - 💰 基金版块（/funds）：开放式基金排行（按类型）/基金搜索/净值走势图/场内 ETF 实时榜，对标支付宝财富页基金内容；对话可查"基金排行""某基金怎么样"
 - 🌐 外盘联动（/overseas，F6-4）：隔夜美股三大指数 / 中概股与美股热门 / 国际金银原油快照 + 基于规则的"A 股相关方向提示"（客观历史相关性映射，非买卖建议）；可选盘前推送（交易日约 9:10，`OVERSEAS_PUSH_ENABLED=true` 开启，需 data-service）
 - 🏭 板块轮动页（/sectors）：行业板块涨跌排行/资金流排行、板块详情（成分股 + 日 K 走势图）、"查个股所属板块"共振查询（所属行业当日涨跌与资金流名次）；需 data-service
+- 🔍 选股扫描（/scanner + `scan_market` 技能，F5-5）：本地全市场日 K 库（baostock 前复权，沪深约 5200 只，每日盘后自动增量更新）上的 7 个预设策略客观指标筛选（MA 多头排列/MACD 金叉/RSI 超卖/放量突破/缩量回踩/布林下轨/均线金叉），网页独立页 + 对话可查（"帮我扫描 MACD 金叉的股票"）；结果为客观命中名单，不构成投资建议；需 data-service 且首次需触发回填（数小时，断点续跑）
 
 ## 快速开始
 
@@ -35,9 +36,10 @@ npm run dev
 
 打开 http://localhost:18790/webchat 、http://localhost:18790/stocks 、http://localhost:18790/market 、http://localhost:18790/news 、http://localhost:18790/funds 或 http://localhost:18790/overseas ，按提示输入访问口令
 打开 http://localhost:18790/webchat 、http://localhost:18790/stocks 、http://localhost:18790/market 、http://localhost:18790/news 、http://localhost:18790/funds 或 http://localhost:18790/sectors ，按提示输入访问口令
+选股扫描页为 http://localhost:18790/scanner （需 data-service 且已回填日 K 库，见下）。
 （口令 = `.env` 的 `ACCESS_TOKEN`；未配置时启动日志会打印一个随机口令）。
 
-**启用新闻/公告/财报/历史走势/搜索/财经快讯/基金版块/板块轮动功能**（需要 Python ≥ 3.10；行情/指数/涨跌榜不需要 data-service）：
+**启用新闻/公告/财报/历史走势/搜索/财经快讯/基金版块/板块轮动/选股扫描功能**（需要 Python ≥ 3.10；行情/指数/涨跌榜不需要 data-service）：
 
 ```bash
 cd data-service

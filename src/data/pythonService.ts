@@ -4,7 +4,7 @@
  */
 import { config } from '../config.js';
 import { EastmoneyProvider } from './eastmoney.js';
-import type { Announcement, CompanyProfile, DataProvider, DividendRecord, EtfQuote, FinancialReport, FlowVerifyReport, FundFlow, FundInfo, FundRankItem, FundSearchItem, HistoryBar, Intraday, MarketNewsItem, NewsItem, NewsSort, OverseasSummary, PatternReport, Quote, SectorCons, SectorFundFlow, SectorHistory, SectorRank, StockSectorInfo, TechnicalIndicators } from './provider.js';
+import type { Announcement, CompanyProfile, DataProvider, DividendRecord, EtfQuote, FinancialReport, FlowVerifyReport, FundFlow, FundInfo, FundRankItem, FundSearchItem, HistoryBar, Intraday, MarketBarsStatus, MarketNewsItem, NewsItem, NewsSort, OverseasSummary, PatternReport, Quote, ScanResult, ScanStrategyMeta, SectorCons, SectorFundFlow, SectorHistory, SectorRank, StockSectorInfo, TechnicalIndicators } from './provider.js';
 
 /** 微服务显式超时：AKShare 爬网页较慢，放宽到 60s；防上游挂起拖死调度链（审计 A-301/A-506） */
 const FETCH_TIMEOUT_MS = 60_000;
@@ -21,6 +21,29 @@ export class PythonServiceProvider implements DataProvider {
       res = await fetch(`${this.base}${path}`, { signal: AbortSignal.timeout(timeoutMs) });
     } catch (err) {
       // 连接层失败（服务没启动/网络不通/超时）才提示启动（审计 A-309）
+      throw new Error(
+        `数据服务连接失败：${err instanceof Error ? err.message : String(err)}（请确认 data-service 已启动）`,
+      );
+    }
+    if (!res.ok) {
+      const body = await res.text();
+      throw new Error(
+        `数据服务请求失败 ${res.status}: ${body.slice(0, 200)}` +
+          (res.status >= 500 ? '（服务已响应但上游数据源失败，按 PITFALLS.md AKShare 条目排查）' : ''),
+      );
+    }
+    return (await res.json()) as T;
+  }
+
+  /** POST 版本（与 get 同一超时/错误包装；F5-5 起用于触发类端点） */
+  private async post<T>(path: string, timeoutMs: number = FETCH_TIMEOUT_MS): Promise<T> {
+    let res: Response;
+    try {
+      res = await fetch(`${this.base}${path}`, {
+        method: 'POST',
+        signal: AbortSignal.timeout(timeoutMs),
+      });
+    } catch (err) {
       throw new Error(
         `数据服务连接失败：${err instanceof Error ? err.message : String(err)}（请确认 data-service 已启动）`,
       );
@@ -139,6 +162,25 @@ export class PythonServiceProvider implements DataProvider {
 
   async getFlowVerify(code: string, days = 750): Promise<FlowVerifyReport> {
     return this.get<FlowVerifyReport>(`/verify/${encodeURIComponent(code)}?days=${days}`);
+  }
+
+  async getScanStrategies(): Promise<ScanStrategyMeta[]> {
+    return this.get<ScanStrategyMeta[]>('/scan/strategies');
+  }
+
+  /** 扫描为本地 SQLite + 向量化计算（秒级），但冷启动时名称表预热（东财全量接口，
+   *  限流期实测超 30s）放宽到 120s；客户端超时 150s 覆盖最坏情况 */
+  async runScan(strategy: string, limit = 50): Promise<ScanResult> {
+    return this.get<ScanResult>(`/scan?strategy=${encodeURIComponent(strategy)}&limit=${limit}`, 150_000);
+  }
+
+  async getMarketBarsStatus(): Promise<MarketBarsStatus> {
+    return this.get<MarketBarsStatus>('/market-bars/status');
+  }
+
+  /** 触发端点要先把票池/交易日历预热完才返回（最坏约 120s），客户端超时放宽到 150s */
+  async triggerMarketBarsUpdate(full = false): Promise<{ started: boolean; full: boolean }> {
+    return this.post<{ started: boolean; full: boolean }>(`/market-bars/update?full=${full}`, 150_000);
   }
 }
 

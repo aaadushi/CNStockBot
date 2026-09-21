@@ -48,6 +48,15 @@ uvicorn main:app --host 127.0.0.1 --port 8000
 | `GET /sectors/cons?name=&limit=` | 板块成分股（涨跌幅降序；name 支持板块名称或 BK 代码，未知名称 404；按板块缓存 10min） |
 | `GET /sectors/history?name=&days=` | 板块日 K 走势（AKShare stock_board_industry_hist_em，BK 代码直传；bars 结构与 /history 一致；按 code+days 缓存 10min；push2his 限流时返回结构化 502） |
 | `GET /sectors/of-stock/{code}` | 个股→板块共振：所属行业（复用 /profile）在当日板块涨跌/资金流排行中的名次；行业缺失或无同名板块返回 `matched=false` 而非报错 |
+| `POST /market-bars/update?full=` | 触发本地日 K 库更新（F5-5，后台异步）：baostock 前复权日 K 批量落 SQLite `data/market_bars.db`（WAL，750 交易日窗口，仅沪深约 5200 只）；断点续跑 + 失败票名单 + 断线熔断重连 + 盘后数据未齐 30 分钟重试至 21:00；单飞行（进行中 409）；**首次全量回填需数小时**（长窗口查询约 5-6s/票），日常增量约 10-30 分钟 |
+| `GET /market-bars/status` | 日 K 库状态：running/phase/done/total/failedCount + coverage/lastBarDate/dbSizeMb |
+| `GET /scan/strategies` | 预设扫描策略清单（F5-5，7 个：ma_bull/macd_gold/rsi_oversold/vol_break_20d/pullback_ma20/boll_lower/ma_cross_up），口径描述的一源共用 |
+| `GET /scan?strategy=&limit=50` | 全市场选股扫描（F5-5）：本地日 K 库宽表向量化计算（指标口径与 /indicators 一致），返回 {asOf/stale/total/items[code/name/close/changePct/extra]/disclaimer}；ST/退默认剔除；库为空 503、未知策略 400；结果缓存随数据 asOf 失效 |
+
+**选股扫描（F5-5）使用前提**：先启动本服务，再触发一次回填
+（`curl -X POST http://127.0.0.1:8000/market-bars/update`，首次数小时、断点续跑可中断）；
+主服务默认每个交易日 15:40 自动触发增量更新（`SCANNER_AUTO_UPDATE=false` 关闭）。
+库文件位于 `data-service/data/market_bars.db`（已 gitignore，约 300-500MB，删除后需重新回填）。
 
 ## 注意
 

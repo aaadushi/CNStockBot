@@ -71,6 +71,15 @@ export const config = {
     enabled: process.env.OVERSEAS_PUSH_ENABLED === 'true',
   },
 
+  /** 选股扫描（F5-5）：autoUpdate=true 时交易日约 15:40（北京时间）触发 data-service
+   *  盘后增量更新本地日 K 库（默认开启；关闭后仍可手动 POST /api/scanner/update）；
+   *  pushEnabled=true 时更新完成后推送扫描摘要给有自选股 ∪ 有监控规则的用户（默认关闭）。
+   *  两者均需 data-service 运行 */
+  scanner: {
+    autoUpdate: process.env.SCANNER_AUTO_UPDATE !== 'false',
+    pushEnabled: process.env.SCANNER_PUSH_ENABLED === 'true',
+  },
+
   /** 行情健康探针：定时探测常青股票，连续失败即判定行情链路故障并告警 */
   healthProbe: {
     enabled: process.env.HEALTH_PROBE_ENABLED !== 'false',
