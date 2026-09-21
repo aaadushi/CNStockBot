@@ -1,6 +1,6 @@
 {
   "name": "cnstockbot",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "description": "A 股信息助手：通过聊天机器人查询自选股行情、新闻与公告。参考 CloddsBot 架构，仅做信息聚合，不涉及交易。",
   "type": "module",
   "main": "dist/index.js",
