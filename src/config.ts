@@ -65,6 +65,12 @@ export const config = {
     signals: process.env.DAILY_REPORT_SIGNALS !== 'false',
   },
 
+  /** 盘前外盘推送（F6-4，可选）：true 时交易日约 9:10（北京时间）推送隔夜外盘摘要，
+   *  需 data-service 运行；默认关闭 */
+  overseasPush: {
+    enabled: process.env.OVERSEAS_PUSH_ENABLED === 'true',
+  },
+
   /** 行情健康探针：定时探测常青股票，连续失败即判定行情链路故障并告警 */
   healthProbe: {
     enabled: process.env.HEALTH_PROBE_ENABLED !== 'false',

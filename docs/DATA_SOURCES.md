@@ -108,6 +108,24 @@ GET https://qt.gtimg.cn/q=sh600519
 | `ak.stock_zh_a_hist_min_em(symbol, period, adjust)` | 个股分钟 K，东财 push2his（已接入 /intraday 主源；period="1" 当日 1 分钟线仅支持 adjust=""；列：时间/开盘/收盘/最高/最低/涨跌幅/涨跌额/成交量（手）/成交额（元）/振幅/换手率——列名为 AKShare 文档口径，主源限流中未实测） |
 | `ak.stock_zh_a_minute(symbol, period, adjust)` | 个股分钟 K，新浪（已接入 /intraday 降级源；symbol 带市场前缀 sh/sz/bj——**bj 北交所实测覆盖**，与日 K 降级源不同；返回近约 8 个交易日约 1970 行，端点只取最近一日；**成交量单位是股**，端点 ÷100 归一到手；列：day/open/high/low/close/volume/amount） |
 | `ak.stock_history_dividend_detail(symbol, indicator)` | 个股分红送配明细，东财（已接入 /dividends；indicator="分红"，按公告日期倒序，列：公告日期/送股/转增/派息/进度/除权除息日/股权登记日/红股上市日——送股/转增/派息均**每 10 股**口径，派息为元、税前；日期列为 date 对象或 NaT；**无效代码返回空表不报错**，与"从未分红"无法区分；按代码缓存 6h） |
+| `ak.futures_foreign_commodity_realtime(symbol)` | 新浪外盘期货实时（已接入 /overseas/summary 商品块主源，F6-4）：symbol 必须用**交易所代码列表**（XAU 伦敦金/XAG 伦敦银/GC COMEX黄金/SI COMEX白银/CL NYMEX原油/OIL 布伦特原油，全表见 `ak.futures_foreign_commodity_subscribe_exchange_symbol()`）；**传中文名会触发 AKShare 1.18.94 列数不匹配 ValueError**（实测）；列：名称/最新价/涨跌幅（**已是 % 单位**）/昨日结算价/行情时间/日期（数据源原始时间，非北京时间） |
+| `ak.index_us_stock_sina(symbol)` | 新浪美股指数全量日 K（已接入 /overseas/summary 指数块降级源，F6-4）：symbol ∈ {.DJI 道指, .IXIC 纳指综合, .INX 标普500, .NDX 纳指100}；约 1s 返回 2004 年至今全量（5700+ 行），端点取最后两根收盘算涨跌幅 |
+| `ak.futures_global_spot_em()` | 东财全球期货全量实时快照（已接入 /overseas/summary 商品块降级源，F6-4）：全量翻页约 32s（640 行，超时放宽 60s），取"当月连续"行（GC00Y COMEX黄金/SI00Y COMEX白银/CL00Y NYMEX原油）；列：代码/名称/最新价/涨跌幅（%）；走 push2his 翻页，push2his 限流时不可用 |
+| `ak.index_global_spot_em()` | 东财全球指数（**选型放弃**，F6-4 实测）：走 push2 clist 的 `i:` 市场，2026-09-19 本机实测连接被掐（exit 56，与 IP 限流同现象），不可用 |
+| `ak.stock_us_famous_spot_em(symbol)` | 东财美股知名个股（**选型放弃**，F6-4 实测）：走 69.push2.eastmoney.com 子域，2026-09-19 实测断连 |
+
+**腾讯美股行情（直连 requests，非 AKShare，已接入 /overseas/summary 指数块主源与中概股块，F6-4）**
+```
+GET https://qt.gtimg.cn/q=usDJI,usIXIC,usINX        # 美股三大指数
+GET https://qt.gtimg.cn/q=usBABA,usPDD,...          # 美股个股/中概股
+```
+- 与 A 股腾讯行情同一 GBK 文本协议、同一下标：1=名称 2=代码 3=最新价 4=昨收 30=时间
+  31=涨跌额 32=涨跌幅（%）33=最高 34=最低；价格**不放大**
+- **代码不带交易所后缀**（`usBABA`/`usAAPL` 正常；带 `.OQ`/`.N` 后缀反而整批返回
+  `v_pv_none_match`——2026-09-19 实测，详见 PITFALLS）
+- 指数时间为美东时间（如 2026-09-18 17:52:27），非北京时间
+- **境外源稳定性风险提示**：腾讯美股/新浪外盘期货均为非官方公开接口，可用性无保障；
+  /overseas/summary 三块独立降级 + 10 分钟缓存兜底，单块失效不影响其余块 |
 | `ak.stock_board_industry_hist_em(symbol, start_date, end_date, period, adjust)` | 行业板块日 K，东财 push2his kline（secid=90.{BK代码}；已接入 /sectors/history，F6-3；**支持直传 BK 代码**跳过其内部名称→代码解析；列：日期/开盘/收盘/最高/最低/涨跌幅/涨跌额/成交量/成交额/振幅/换手率——与个股 /history 东财源列名一致，端点复用同一套归一化；按 code+days 缓存 10min。push2his 限流时无降级源，返回结构化 502） |
 | `ak.stock_board_industry_name_em()` / `ak.stock_sector_fund_flow_rank(indicator, sector_type)` / `ak.stock_board_industry_cons_em(symbol)` | 行业板块涨跌排行 / 板块资金流排行 / 板块成分股（**未接入 AKShare 封装**：实测其输出丢弃成交额/领涨股代码/板块代码等必需字段，/sectors/rank、/sectors/fund-flow、/sectors/cons 按其同参数同字段直连东财 clist 实现，见上方"行业板块"节） |
 

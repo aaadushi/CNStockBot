@@ -86,6 +86,30 @@
 
 ## 2. 东方财富接口（行情数据源）
 
+### [2026-09-19] 腾讯美股行情代码不能带交易所后缀（.OQ/.N），带了整批 none_match
+- **现象**：`qt.gtimg.cn/q=usAAPL.OQ,usBABA.N,usPDD.OQ` 整批返回 `v_pv_none_match="1"`；
+  去掉后缀 `q=usAAPL,usBABA` 则正常返回全部行情。
+- **根因**：腾讯美股代码规则与直觉相反——纯 `us<代码>` 由腾讯自行判定市场，
+  显式后缀不被该接口接受（与 A 股 sh/sz 前缀必须带完全相反）。
+- **解法**：外盘功能（F6-4）里美股指数/个股一律用不带后缀的代码
+  （usDJI/usIXIC/usINX、usBABA 等）。字段下标与 A 股同款（1=名称 3=最新价 30=时间
+  32=涨跌幅），时间为美东时间。
+- **涉及文件**：`data-service/main.py`（_fetch_tencent_us/_parse_tencent_us）
+- **预防**：接腾讯新市场（港/美）先用单代码 curl 探活，再定批量参数。
+
+### [2026-09-19] 东财全球指数/美股知名个股接口本机断连（clist 的 i: 市场与 69.push2 子域）
+- **现象**：`ak.index_global_spot_em`（push2 clist，`fs=i:100.DJIA,...`）与
+  `ak.stock_us_famous_spot_em`（69.push2.eastmoney.com 子域）均 ConnectionError
+  （连接被掐，无 HTTP 码）；同一时刻 A 股 clist/stock-get 请求有的通有的断——
+  push2 对本机呈间歇性断连（与 IP 限流同现象），其中 `fs=i:` 的全球指数查询
+  实测**全部失败**（A 股 `fs=m:` 间歇可用），69.push2 子域持续不可用。
+- **根因**：疑似东财对全球指数/美股接口的限流策略更严格（或该子域已废弃）；无法确认。
+- **解法**：F6-4 外盘功能**不走东财系**：美股指数与个股用腾讯（qt.gtimg.cn），
+  商品用新浪 `futures_foreign_commodity_realtime`；东财 `futures_global_spot_em`
+  （push2his 翻页）仅作商品块降级源。
+- **涉及文件**：`data-service/main.py`（外盘联动监控节头注释有完整选型记录）
+- **预防**：给东财系新接口选型时，先用 curl 对目标 URL 单独探活再写代码；
+  间歇性断连下"一次通"不代表可用，隔几分钟多测几次。
 ### [2026-09-19] 板块接口选型：AKShare 板块封装丢弃必需字段；push2his 限流是间歇性的
 - **现象**：接入板块轮动（F6-3）时发现——① `ak.stock_board_industry_name_em()` 的输出
   不含成交额与领涨股代码，`stock_sector_fund_flow_rank()` 的输出连板块代码都丢掉了
@@ -226,6 +250,18 @@
 - **涉及文件**：`src/data/eastmoney.ts:14-18`
 
 ## 3. Python / AKShare（data-service）
+
+### [2026-09-19] `futures_foreign_commodity_realtime` 传中文名触发列数不匹配 ValueError
+- **现象**：`ak.futures_foreign_commodity_realtime(symbol=["伦敦金"])` 报
+  `ValueError: Length mismatch: Expected axis has 1 elements, new values have 15 elements`；
+  传交易所代码 `symbol=["XAU","XAG","GC","SI","CL","OIL"]` 则正常（约 2.4s 返回 6 行）。
+- **根因**：AKShare 1.18.94 该函数内部按固定 15 列重命名响应，中文名在新浪上游查不到
+  对应订阅代码，返回结构不符预期。正确代码表由
+  `ak.futures_foreign_commodity_subscribe_exchange_symbol()` 给出（返回 list 而非 DataFrame）。
+- **解法**：只用交易所代码调用；涨跌幅列**已是 % 单位**（0.8446 = +0.84%，实测核对
+  涨跌额/昨结算价比值一致）；行情时间/日期是数据源原始时区，非北京时间。
+- **涉及文件**：`data-service/main.py`（_SINA_COMMODITY_SYMBOLS、_block_commodities）
+- **预防**：AKShare 订阅制行情接口的 symbol 一律先查订阅代码表，不要猜中文名。
 
 ### [2026-09-15] 资金流接口选型：腾讯 ff_ 已下线；push2delay 镜像 fflow 只回 1 行；新浪比率是小数
 - **现象**：接入个股资金流（F3-4）时三路探源——① 腾讯 `qt.gtimg.cn/q=ff_sh600519`

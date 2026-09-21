@@ -4,7 +4,7 @@
  */
 import { config } from '../config.js';
 import { EastmoneyProvider } from './eastmoney.js';
-import type { Announcement, CompanyProfile, DataProvider, DividendRecord, EtfQuote, FinancialReport, FundFlow, FundInfo, FundRankItem, FundSearchItem, HistoryBar, Intraday, MarketNewsItem, NewsItem, NewsSort, PatternReport, Quote, SectorCons, SectorFundFlow, SectorHistory, SectorRank, StockSectorInfo, TechnicalIndicators } from './provider.js';
+import type { Announcement, CompanyProfile, DataProvider, DividendRecord, EtfQuote, FinancialReport, FundFlow, FundInfo, FundRankItem, FundSearchItem, HistoryBar, Intraday, MarketNewsItem, NewsItem, NewsSort, OverseasSummary, PatternReport, Quote, SectorCons, SectorFundFlow, SectorHistory, SectorRank, StockSectorInfo, TechnicalIndicators } from './provider.js';
 
 /** 微服务显式超时：AKShare 爬网页较慢，放宽到 60s；防上游挂起拖死调度链（审计 A-301/A-506） */
 const FETCH_TIMEOUT_MS = 60_000;
@@ -15,10 +15,10 @@ export class PythonServiceProvider implements DataProvider {
   /** 指数行情始终走东财直连（免 key，与微服务可用性无关；审计 A-305） */
   private indexQuote = new EastmoneyProvider();
 
-  private async get<T>(path: string): Promise<T> {
+  private async get<T>(path: string, timeoutMs: number = FETCH_TIMEOUT_MS): Promise<T> {
     let res: Response;
     try {
-      res = await fetch(`${this.base}${path}`, { signal: AbortSignal.timeout(FETCH_TIMEOUT_MS) });
+      res = await fetch(`${this.base}${path}`, { signal: AbortSignal.timeout(timeoutMs) });
     } catch (err) {
       // 连接层失败（服务没启动/网络不通/超时）才提示启动（审计 A-309）
       throw new Error(
@@ -103,6 +103,12 @@ export class PythonServiceProvider implements DataProvider {
 
   async getEtfRank(limit = 50): Promise<EtfQuote[]> {
     return this.get<EtfQuote[]>(`/funds/etf?limit=${limit}`);
+  }
+
+  /** 隔夜外盘参考信息汇总（F6-4）；微服务端点整体缓存 10 分钟。
+   *  客户端超时放宽到 90s：商品块降级链最坏 = 新浪 30s 超时 + 东财全球期货全量翻页约 32s。 */
+  async getOverseasSummary(): Promise<OverseasSummary> {
+    return this.get<OverseasSummary>('/overseas/summary', 90_000);
   }
 
   async getSectorRank(limit = 30): Promise<SectorRank> {

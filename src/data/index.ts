@@ -8,7 +8,7 @@ import { config } from '../config.js';
 import { EastmoneyProvider } from './eastmoney.js';
 import { TencentProvider } from './tencent.js';
 import { PythonServiceProvider } from './pythonService.js';
-import type { Announcement, CompanyProfile, DataProvider, DividendRecord, EtfQuote, FinancialReport, FundFlow, FundInfo, FundRankItem, FundSearchItem, HistoryBar, Intraday, MarketMovers, MarketNewsItem, NewsItem, NewsSort, PatternReport, Quote, SectorCons, SectorFundFlow, SectorHistory, SectorRank, StockSectorInfo, TechnicalIndicators } from './provider.js';
+import type { Announcement, CompanyProfile, DataProvider, DividendRecord, EtfQuote, FinancialReport, FundFlow, FundInfo, FundRankItem, FundSearchItem, HistoryBar, Intraday, MarketMovers, MarketNewsItem, NewsItem, NewsSort, OverseasSummary, PatternReport, Quote, SectorCons, SectorFundFlow, SectorHistory, SectorRank, StockSectorInfo, TechnicalIndicators } from './provider.js';
 
 class CompositeProvider implements DataProvider {
   readonly name = 'composite(eastmoney+python)';
@@ -209,6 +209,18 @@ class CompositeProvider implements DataProvider {
       return await this.python.getEtfRank(limit);
     } catch (err) {
       throw this.fundUnavailable(err);
+    }
+  }
+
+  /** 外盘联动信息（F6-4）只能走微服务（腾讯/新浪/东财聚合），未启动时给出带启动提示的错误 */
+  async getOverseasSummary(): Promise<OverseasSummary> {
+    try {
+      return await this.python.getOverseasSummary();
+    } catch (err) {
+      throw new Error(
+        `外盘数据不可用：${err instanceof Error ? err.message : String(err)}\n` +
+          '提示：进入 data-service 目录运行 `pip install -r requirements.txt && uvicorn main:app` 启动数据微服务。',
+      );
     }
   }
 

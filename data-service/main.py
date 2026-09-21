@@ -1277,6 +1277,231 @@ async def fund_info(code: str, days: int = Query(default=250, ge=1, le=2000)):
     }
 
 
+# ================= 外盘联动监控（F6-4，2026-09-19） =================
+# GET /overseas/summary：聚合隔夜外盘参考信息（美股三大指数 / 中概股与热门美股 /
+# 国际金银原油），**每块独立降级**——一块失败其余照返，失败块带 error 字段。
+# 整体结果进程内缓存 10 分钟（外盘数据变动慢，防刷新打爆上游）。
+# 数据源选型（2026-09-19 逐一实测，结论同时登记在 docs/DATA_SOURCES.md 与 PITFALLS）：
+# - 美股三大指数：主源腾讯行情 qt.gtimg.cn（usDJI/usIXIC/usINX，GBK 文本协议，
+#   字段下标与 A 股同款：3=最新价 4=昨收 30=时间 31=涨跌额 32=涨跌幅 33=最高 34=最低）；
+#   降级新浪 ak.index_us_stock_sina（全量日 K，取最后两根收盘算涨跌幅）。
+#   东财系未采用：ak.index_global_spot_em 走 push2 clist 的 i: 市场，本机实测连接被掐
+#   （exit 56，与 IP 限流同现象）；ak.stock_us_famous_spot_em 走 69.push2 子域同样断连。
+# - 中概股/美股热门：腾讯行情固定篮子（usBABA 等，**代码不带交易所后缀**，带 .OQ 后缀
+#   反而返回 v_pv_none_match）。
+# - 国际金银原油：主源新浪 ak.futures_foreign_commodity_realtime（**必须用交易所代码**
+#   XAU/XAG/GC/SI/CL/OIL——传中文名会触发 AKShare 1.18.94 列数不匹配 ValueError；
+#   涨跌幅已是 % 单位；行情时间是数据源原始时间，非北京时间）；
+#   降级东财 ak.futures_global_spot_em（全量翻页约 32s，超时放宽 60s，取当月连续合约）。
+
+_OVERSEAS_TTL = 600  # 10 分钟
+_overseas_cache: dict = {"ts": 0.0, "data": None}
+
+_TENCENT_TIMEOUT = 10  # 秒；腾讯行情直连（requests，不走 run_ak——非 AKShare 调用）
+
+# 腾讯美股指数/个股代码 -> 展示名（名称为空时的兜底；正常响应自带中文名）
+_TENCENT_US_INDICES = [
+    ("usDJI", ".DJI", "道琼斯工业指数"),
+    ("usIXIC", ".IXIC", "纳斯达克综合指数"),
+    ("usINX", ".INX", "标普500"),
+]
+_TENCENT_US_HOT = [
+    "usBABA", "usPDD", "usJD", "usNTES", "usBIDU",  # 中概股
+    "usNIO", "usXPEV", "usLI", "usBILI", "usTCOM",
+    "usAAPL", "usMSFT", "usNVDA", "usTSLA",  # 美股科技热门
+]
+
+# 新浪外盘期货交易所代码 -> 展示名（顺序即展示顺序）
+_SINA_COMMODITY_SYMBOLS = [
+    ("XAU", "伦敦金"),
+    ("XAG", "伦敦银"),
+    ("GC", "COMEX黄金"),
+    ("SI", "COMEX白银"),
+    ("CL", "NYMEX原油（WTI）"),
+    ("OIL", "布伦特原油"),
+]
+
+# 东财全球期货降级源：当月连续合约名称 -> 展示名
+_EM_COMMODITY_CONTINUOUS = {
+    "COMEX黄金": "COMEX黄金（当月连续）",
+    "COMEX白银": "COMEX白银（当月连续）",
+    "NYMEX原油": "NYMEX原油（当月连续）",
+}
+
+
+def _parse_tencent_us(text: str) -> dict:
+    """解析腾讯行情批量响应（GBK 文本）为 {查询代码: item}。
+    与主服务 tencent.ts 同一下标口径：1=名称 2=代码 3=最新价 4=昨收
+    30=时间 31=涨跌额 32=涨跌幅。缺失/非数值 -> None（不补 0，同 A-310 原则）。
+    停牌/无效代码返回 v_xxx=""（空串），整条跳过。"""
+    out = {}
+    for m in re.finditer(r'v_([A-Za-z0-9.]+)="([^"]*)"', text):
+        qcode, payload = m.group(1), m.group(2)
+        f = payload.split("~")
+        if len(f) < 33 or not f[3]:
+            continue  # 空串或字段不足
+        out[qcode] = {
+            "code": f[2] or qcode,
+            "name": f[1] or qcode,
+            "price": _fnum(f[3]),
+            "changePct": _fnum(f[32]),
+            "time": f[30] or None,
+        }
+    return out
+
+
+def _fetch_tencent_us(codes: list) -> dict:
+    """批量拉腾讯美股行情（单次请求，逗号拼接）。返回 {查询代码: item}。"""
+    r = requests.get(
+        "https://qt.gtimg.cn/q=" + ",".join(codes),
+        timeout=_TENCENT_TIMEOUT,
+    )
+    r.raise_for_status()
+    r.encoding = "gbk"
+    return _parse_tencent_us(r.text)
+
+
+def _overseas_us_indices_items(quotes: dict) -> list:
+    items = []
+    for qcode, _sym, fallback_name in _TENCENT_US_INDICES:
+        it = quotes.get(qcode)
+        if it is None:
+            continue
+        if not it["name"] or it["name"] == qcode:
+            it["name"] = fallback_name
+        items.append(it)
+    if len(items) < len(_TENCENT_US_INDICES):
+        raise ValueError("腾讯美股指数响应不完整")
+    return items
+
+
+async def _block_us_indices() -> dict:
+    """美股三大指数块：腾讯行情主源 -> 新浪日 K 降级。"""
+    try:
+        quotes = await asyncio.to_thread(_fetch_tencent_us, [c for c, _, _ in _TENCENT_US_INDICES])
+        return {"source": "tencent", "error": None,
+                "items": _overseas_us_indices_items(quotes)}
+    except Exception as e:
+        logger.warning("overseas 美股指数腾讯源失败，降级新浪: %s", e)
+        em_err = e
+    # 降级：新浪 ak.index_us_stock_sina 全量日 K，取最后两根算涨跌幅
+    try:
+        items = []
+        for _qcode, sym, name in _TENCENT_US_INDICES:
+            df = await run_ak(ak.index_us_stock_sina, symbol=sym)
+            if df is None or len(df) < 2:
+                raise ValueError(f"新浪 {sym} 日 K 数据不足")
+            c_prev, c_cur = float(df["close"].iloc[-2]), float(df["close"].iloc[-1])
+            items.append({
+                "code": sym,
+                "name": name,
+                "price": _f3(c_cur),
+                "changePct": _f3((c_cur / c_prev - 1) * 100) if c_prev else None,
+                "time": str(df["date"].iloc[-1]),  # 收盘日期 YYYY-MM-DD
+            })
+        return {"source": "sina", "error": None, "items": items}
+    except Exception as e2:
+        return {"source": None, "error": f"美股指数获取失败（腾讯: {em_err}；新浪降级: {e2}）",
+                "items": []}
+
+
+async def _block_us_hot() -> dict:
+    """中概股/美股热门块：腾讯行情固定篮子，单次请求；无降级源（宁缺毋滥）。"""
+    try:
+        quotes = await asyncio.to_thread(_fetch_tencent_us, _TENCENT_US_HOT)
+        items = [quotes[c] for c in _TENCENT_US_HOT if c in quotes]
+        if not items:
+            raise ValueError("腾讯美股个股响应为空")
+        return {"source": "tencent", "error": None, "items": items}
+    except Exception as e:
+        return {"source": None, "error": f"中概股/美股热门获取失败: {e}", "items": []}
+
+
+def _commodities_from_sina(df) -> list:
+    """新浪外盘期货归一化：按订阅代码顺序输出，涨跌幅已是 % 单位（2026-09-19 实测）。"""
+    by_name = {}
+    for _, row in df.iterrows():
+        by_name[str(row.get("名称", ""))] = row
+    items = []
+    for sym, name in _SINA_COMMODITY_SYMBOLS:
+        # 响应"名称"列与订阅代码的中文名对应（XAU->伦敦金、OIL->布伦特原油）
+        row = by_name.get(name.split("（")[0])  # CL 展示名带（WTI）后缀，按原名匹配
+        if row is None:
+            continue
+        t = f"{_cell(row, '日期')} {_cell(row, '行情时间')}".strip()
+        items.append({
+            "code": sym,
+            "name": name,
+            "price": _f3(row.get("最新价")),
+            "changePct": _f3(row.get("涨跌幅")),
+            "time": t or None,
+        })
+    if not items:
+        raise ValueError("新浪外盘期货响应为空")
+    return items
+
+
+async def _block_commodities() -> dict:
+    """国际金银原油块：新浪外盘期货主源 -> 东财全球期货（当月连续）降级。"""
+    try:
+        df = await run_ak(
+            ak.futures_foreign_commodity_realtime,
+            symbol=[s for s, _ in _SINA_COMMODITY_SYMBOLS],
+        )
+        return {"source": "sina", "error": None, "items": _commodities_from_sina(df)}
+    except Exception as e:
+        logger.warning("overseas 商品新浪源失败，降级东财全球期货: %s", e)
+        sina_err = e
+    try:
+        # 全量翻页约 32s（2026-09-19 实测），超时放宽到 60s
+        df = await run_ak(ak.futures_global_spot_em, timeout=60)
+        items = []
+        for _, row in df.iterrows():
+            name = str(row.get("名称", ""))
+            if name not in _EM_COMMODITY_CONTINUOUS:
+                continue
+            items.append({
+                "code": str(row.get("代码", "")),
+                "name": _EM_COMMODITY_CONTINUOUS[name],
+                "price": _fnum(row.get("最新价")),
+                "changePct": _fnum(row.get("涨跌幅")),
+                "time": None,  # 东财全球期货快照无时间列
+            })
+        if not items:
+            raise ValueError("东财全球期货中未找到当月连续合约行")
+        # 按 _EM_COMMODITY_CONTINUOUS 声明顺序排序（金/银/油），与新浪主源展示顺序一致
+        order = {v: i for i, v in enumerate(_EM_COMMODITY_CONTINUOUS.values())}
+        items.sort(key=lambda it: order.get(it["name"], 99))
+        return {"source": "eastmoney", "error": None, "items": items}
+    except Exception as e2:
+        return {"source": None, "error": f"商品获取失败（新浪: {sina_err}；东财降级: {e2}）",
+                "items": []}
+
+
+@app.get("/overseas/summary")
+async def overseas_summary():
+    """隔夜外盘参考信息汇总（F6-4）。返回 {generatedAt, usIndices, usHot, commodities}，
+    每块 {source, error, items: [{code, name, price, changePct, time}]}；
+    块级独立降级：失败块 error 非空、items 为空，其余块照常返回。
+    时间字段为数据源原始时间（美股为美东时间，新浪商品为数据源时区），非北京时间。
+    整体缓存 10 分钟。"""
+    now = time.time()
+    if _overseas_cache["data"] is None or now - _overseas_cache["ts"] > _OVERSEAS_TTL:
+        us_indices, us_hot, commodities = await asyncio.gather(
+            _block_us_indices(), _block_us_hot(), _block_commodities()
+        )
+        # 生成时间固定用北京时间（与时区无关），前端据此标注快照时刻
+        from datetime import timezone
+
+        generated_at = datetime.now(timezone(timedelta(hours=8))).strftime("%Y-%m-%d %H:%M:%S")
+        _overseas_cache["data"] = {
+            "generatedAt": generated_at,
+            "usIndices": us_indices,
+            "usHot": us_hot,
+            "commodities": commodities,
+        }
+        _overseas_cache["ts"] = now
+    return _overseas_cache["data"]
 # ================= 板块轮动监控（F6-3，2026-09-19） =================
 # 东财行业板块（m:90 t:2）四个能力：涨跌排行 / 资金流排行 / 成分股 / 板块日 K + 个股→板块共振。
 # 数据源说明（2026-09-19 实测 akshare 1.18.94）：
