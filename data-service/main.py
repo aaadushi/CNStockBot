@@ -13,7 +13,7 @@ Node 主服务（src/data/pythonService.ts）通过 HTTP 调用本服务。
 需要非回环绑定时应先加 token 校验（审计 A-508）。
 """
 from fastapi import FastAPI, HTTPException, Query
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 import asyncio
 import logging
 import re
@@ -2574,3 +2574,322 @@ async def verify_ep(code: str, days: int = Query(default=750, ge=30, le=1500)):
         hit = {"ts": time.time(), "data": data}
         _verify_cache[key] = hit
     return hit["data"]
+
+
+# ================= 本地日 K 库（F5-5，2026-09-21） =================
+# 全市场选股扫描（F5-5）的数据底座：baostock 批量日 K → 本地 SQLite（WAL）→ 每日盘后增量更新。
+# 为什么不用东财/新浪做批量：东财 push2his 有一分钟内约 10 次请求即 IP 断连限流的前科
+# （封禁 45 分钟~1 天以上且间歇性复发，见 docs/PITFALLS.md），新浪不覆盖北交所且同为单票接口；
+# baostock 是专为批量历史日 K 设计的免费服务，无此限流（2026-09-21 实测 600519 数值与
+# 新浪/东财口径一致）。
+# 口径：前复权（adjustflag='2'）；成交量按股返回 ÷100 归一到"手"（与 _hist_items 新浪源
+# 同一换算）；amount 元直存；pctChg→change_pct(%)；turn→turnover(%，停牌票为空存 None)。
+# 北交所（4/8/920）baostock 不覆盖，票池直接排除（仅沪深，docs/DATA_SOURCES.md 注明）。
+# 持久化先例：这是本服务第一个磁盘持久化（此前全部为进程内 dict 缓存）。约定：
+# 写只发生在更新线程（单写者 + WAL，扫描读不互堵）；连接 check_same_thread=False。
+# 已知口径限制：前复权历史值会随新的除权除息整体平移，增量更新只回退重取最近
+# _MB_REFETCH_CAL_DAYS 天，更早期的历史值会逐渐陈旧——扫描只依赖近期约 120 根 bar，
+# 影响有限；如需精确请用 full=true 全量回填刷新（docs/DATA_SOURCES.md 已注明）。
+
+import json
+import os
+import sqlite3
+import threading
+
+_MB_DB_PATH = os.environ.get(
+    "MARKET_BARS_DB",
+    os.path.join(os.path.dirname(os.path.abspath(__file__)), "data", "market_bars.db"),
+)
+_MB_BACKFILL_CAL_DAYS = 1100   # 回填窗口：750 个交易日 ≈ 1100 个日历日（与 /patterns 默认 days=750 对齐）
+_MB_REFETCH_CAL_DAYS = 10      # 增量更新向前回退的日历日（覆盖上游小幅修正）
+_MB_THROTTLE_SEC = 0.05        # 票与票之间的节流间隔（baostock 无东财式限流，保守取值）
+_MB_COMMIT_EVERY = 100         # 每 100 只票一个事务 commit
+_MB_WAIT_RETRY_SEC = 1800      # 盘后数据未齐时的重试间隔（30 分钟）
+_MB_WAIT_DEADLINE_HOUR = 21    # 盘后等待截止（北京时间 21:00，过时放弃等当日数据）
+_MB_TODAY_READY_RATIO = 0.5    # 当日 bar 覆盖率达到该比例才判"今日数据已齐"
+_MB_FAILED_KEEP = 200          # 状态里保留的失败名单上限（条）
+
+_BJ_TZ = timezone(timedelta(hours=8))
+
+_mb_conn = None
+_mb_write_lock = threading.Lock()
+
+
+def _mb_db():
+    """懒初始化 SQLite 连接并建表（WAL：更新写与扫描读并发不互堵）。"""
+    global _mb_conn
+    if _mb_conn is None:
+        os.makedirs(os.path.dirname(_MB_DB_PATH), exist_ok=True)
+        conn = sqlite3.connect(_MB_DB_PATH, check_same_thread=False)
+        conn.execute("PRAGMA journal_mode=WAL")
+        conn.execute(
+            """CREATE TABLE IF NOT EXISTS bars (
+                 code TEXT NOT NULL, date TEXT NOT NULL,
+                 open REAL, close REAL, high REAL, low REAL,
+                 volume REAL, amount REAL, change_pct REAL, turnover REAL,
+                 PRIMARY KEY (code, date)
+               ) WITHOUT ROWID"""
+        )
+        conn.execute("CREATE TABLE IF NOT EXISTS meta (key TEXT PRIMARY KEY, value TEXT)")
+        conn.execute("INSERT OR IGNORE INTO meta(key, value) VALUES ('schema_version', '1')")
+        conn.commit()
+        _mb_conn = conn
+    return _mb_conn
+
+
+def _mb_meta_set(key: str, value: str):
+    with _mb_write_lock:
+        conn = _mb_db()
+        conn.execute("INSERT OR REPLACE INTO meta(key, value) VALUES (?, ?)", (key, value))
+        conn.commit()
+
+
+def _bs_mod():
+    """baostock 懒加载：缺依赖只影响扫描底座端点，不拖垮新闻/行情等其它端点。"""
+    try:
+        import baostock as bs
+        return bs
+    except ImportError:
+        raise RuntimeError("缺少依赖 baostock：请在 data-service 环境执行 pip install -r requirements.txt")
+
+
+def _bs_code(code: str):
+    """6 位代码 → baostock 格式（sh./sz.）；北交所（4/8/920）返回 None（baostock 不覆盖）。"""
+    if code.startswith(("4", "8", "920")):
+        return None
+    return f"sh.{code}" if code.startswith(("6", "9")) else f"sz.{code}"
+
+
+def _bs_float(s):
+    """baostock 数值单元格：空串/None/非法 → None（停牌票的 turn 等），不静默发 0。"""
+    if s is None or s == "":
+        return None
+    try:
+        return float(s)
+    except (TypeError, ValueError):
+        return None
+
+
+def _bs_fetch_bars(bs, bs_code: str, start: str, end: str) -> list:
+    """单票区间日 K（前复权）。返回 [(date, open, close, high, low, volume手, amount元, change_pct, turnover)]。
+    停牌日行 baostock 也会返回（volume=0），保留——用量条件天然不命中，价格条件由扫描侧自行处理。"""
+    rs = bs.query_history_k_data_plus(
+        bs_code,
+        "date,open,high,low,close,volume,amount,turn,pctChg",
+        start_date=start, end_date=end, frequency="d", adjustflag="2",
+    )
+    if rs.error_code != "0":
+        raise RuntimeError(f"baostock 查询失败: {rs.error_msg}")
+    rows = []
+    while rs.next():
+        d = rs.get_row_data()
+        vol = _bs_float(d[5])
+        rows.append((
+            d[0],                       # date
+            _bs_float(d[1]),            # open
+            _bs_float(d[4]),            # close
+            _bs_float(d[2]),            # high
+            _bs_float(d[3]),            # low
+            vol / 100 if vol is not None else None,  # 股 → 手
+            _bs_float(d[6]),            # amount（元）
+            _bs_float(d[8]),            # pctChg → change_pct（%）
+            _bs_float(d[7]),            # turn → turnover（%）
+        ))
+    return rows
+
+
+# 更新任务状态（进程内；worker 线程写、HTTP 处理读，标量赋值在 GIL 下安全，failed 列表读取方自行拷贝）
+_update_state = {
+    "running": False,
+    "phase": "idle",       # idle | backfill | incremental | waiting-data | done | failed
+    "startedAt": None, "finishedAt": None,
+    "total": 0, "done": 0, "failedCount": 0,
+    "failed": [],          # [{code, error}]，最多 _MB_FAILED_KEEP 条
+    "todayBarsReady": None,
+    "lastError": None,
+}
+_update_task = None  # 保留 asyncio.Task 引用，防 GC 提前回收后台任务
+
+
+def _mb_pool() -> list:
+    """扫描票池：全量 A 股代码表（_load_code_name_table，进程内缓存 24h）剔除北交所。"""
+    df = _load_code_name_table()
+    codes = []
+    for _, row in df.iterrows():
+        code = str(row["code"]).zfill(6)
+        if _bs_code(code) is not None:
+            codes.append(code)
+    return codes
+
+
+def _mb_today_coverage(conn, today: str) -> float:
+    """当日有 bar 的票数占库内总票数的比例（盘后数据是否到齐的判断依据）。"""
+    total = conn.execute("SELECT COUNT(DISTINCT code) FROM bars").fetchone()[0]
+    if not total:
+        return 0.0
+    got = conn.execute("SELECT COUNT(DISTINCT code) FROM bars WHERE date = ?", (today,)).fetchone()[0]
+    return got / total
+
+
+def _mb_update_pass(conn, bs, codes: list, full: bool, today: str) -> None:
+    """单轮过票：断点续跑（每票从本地最后日期回退 _MB_REFETCH_CAL_DAYS 天补起），
+    单票失败重试 2 次后记入失败名单继续，绝不中断全量任务。"""
+    st = _update_state
+    st["done"] = 0
+    pending_rows = []
+    pending_codes = 0
+
+    def flush(force=False):
+        nonlocal pending_codes
+        if pending_rows and (force or pending_codes >= _MB_COMMIT_EVERY):
+            with _mb_write_lock:
+                conn.executemany(
+                    "INSERT OR REPLACE INTO bars(code, date, open, close, high, low,"
+                    " volume, amount, change_pct, turnover)"
+                    " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                    pending_rows,
+                )
+                conn.commit()
+            pending_rows.clear()
+            pending_codes = 0
+
+    for code in codes:
+        try:
+            last = None if full else conn.execute(
+                "SELECT MAX(date) FROM bars WHERE code = ?", (code,)
+            ).fetchone()[0]
+            if last is not None and last >= today:
+                st["done"] += 1
+                continue  # 已是最新（ISO 日期字符串可直接比较）
+            if last is None:
+                start = (datetime.now() - timedelta(days=_MB_BACKFILL_CAL_DAYS)).strftime("%Y-%m-%d")
+            else:
+                start = (datetime.strptime(last, "%Y-%m-%d")
+                         - timedelta(days=_MB_REFETCH_CAL_DAYS)).strftime("%Y-%m-%d")
+            rows, err = None, None
+            for backoff in (0, 2, 5):  # 最多 3 次：首次 + 退避 2s/5s 重试
+                if backoff:
+                    time.sleep(backoff)
+                try:
+                    rows = _bs_fetch_bars(bs, _bs_code(code), start, today)
+                    err = None
+                    break
+                except Exception as e:
+                    err = e
+            if err is not None:
+                raise err
+            if rows:
+                pending_rows.extend((code, *r) for r in rows)
+            pending_codes += 1
+            st["done"] += 1
+            flush()
+            time.sleep(_MB_THROTTLE_SEC)
+        except Exception as e:
+            st["failedCount"] += 1
+            if len(st["failed"]) < _MB_FAILED_KEEP:
+                st["failed"].append({"code": code, "error": str(e)[:200]})
+            logger.warning("market-bars 更新跳过失败票: code=%s err=%s", code, e)
+    flush(force=True)
+
+
+def _mb_update_run(full: bool) -> None:
+    """盘后更新主流程（独立线程内执行，不堵事件循环）。含"数据未齐"等待重试循环：
+    baostock 当日日 K 通常 17:00-18:00 后才齐，15:40 触发时今日数据可能未到——未齐则
+    每 30 分钟重跑一轮增量（已入库票按断点天然跳过），至北京时间 21:00 封顶。"""
+    st = _update_state
+    st.update({
+        "running": True, "phase": "backfill" if full else "incremental",
+        "startedAt": datetime.now(_BJ_TZ).isoformat(timespec="seconds"),
+        "finishedAt": None, "total": 0, "done": 0, "failedCount": 0,
+        "failed": [], "todayBarsReady": None, "lastError": None,
+    })
+    conn = _mb_db()
+    today = datetime.now(_BJ_TZ).strftime("%Y-%m-%d")
+    try:
+        codes = _mb_pool()
+        st["total"] = len(codes)
+        bs = _bs_mod()
+        # 交易日历失败时降级为"不做等待重试"（单轮跑完即收），不阻断更新本身
+        try:
+            trade_dates = set(pd.to_datetime(_load_trade_dates()["trade_date"]).dt.strftime("%Y-%m-%d"))
+            is_trade_day = today in trade_dates
+        except Exception as e:
+            logger.warning("交易日历获取失败，本轮不做盘后等待重试: %s", e)
+            is_trade_day = False
+        while True:
+            lg = None
+            for attempt in range(3):  # login 失败重试 3 次（间隔 2s），仍失败整任务 failed
+                try:
+                    lg = bs.login()
+                    if lg.error_code == "0":
+                        break
+                    raise RuntimeError(f"baostock 登录失败: {lg.error_msg}")
+                except Exception:
+                    if attempt == 2:
+                        raise
+                    time.sleep(2)
+            try:
+                _mb_update_pass(conn, bs, codes, full, today)
+            finally:
+                bs.logout()  # 等待重试间隔长达 30 分钟，登出避免 socket 被服务端挂死
+            full = False  # 重试轮一律增量
+            if is_trade_day:
+                ratio = _mb_today_coverage(conn, today)
+                st["todayBarsReady"] = ratio >= _MB_TODAY_READY_RATIO
+                if not st["todayBarsReady"] and datetime.now(_BJ_TZ).hour < _MB_WAIT_DEADLINE_HOUR:
+                    st["phase"] = "waiting-data"
+                    logger.info("market-bars 当日数据未齐（覆盖率 %.1f%%），%d 分钟后重试",
+                                ratio * 100, _MB_WAIT_RETRY_SEC // 60)
+                    time.sleep(_MB_WAIT_RETRY_SEC)
+                    st["phase"] = "incremental"
+                    continue
+            break
+        last_bar = conn.execute("SELECT MAX(date) FROM bars").fetchone()[0]
+        _mb_meta_set("last_update_started", st["startedAt"])
+        _mb_meta_set("last_update_finished", datetime.now(_BJ_TZ).isoformat(timespec="seconds"))
+        if last_bar:
+            _mb_meta_set("last_bar_date", last_bar)
+        _mb_meta_set("last_update_failed_codes",
+                     json.dumps(st["failed"][:100], ensure_ascii=False))
+        st["phase"] = "done"
+    except Exception as e:
+        st["phase"] = "failed"
+        st["lastError"] = str(e)[:300]
+        logger.error("market-bars 更新任务失败: %s", e)
+    finally:
+        st["running"] = False
+        st["finishedAt"] = datetime.now(_BJ_TZ).isoformat(timespec="seconds")
+
+
+@app.post("/market-bars/update")
+async def market_bars_update(full: bool = Query(default=False)):
+    """触发本地日 K 库更新（后台异步执行）：默认增量（断点续跑），full=true 强制全量回填。
+    单飞行：已有任务在跑返回 409。进度查询见 GET /market-bars/status。"""
+    global _update_task
+    if _update_state["running"]:
+        raise HTTPException(status_code=409,
+                            detail="更新任务正在进行中，进度见 /market-bars/status")
+    _update_task = asyncio.create_task(asyncio.to_thread(_mb_update_run, full))
+    return {"started": True, "full": full}
+
+
+@app.get("/market-bars/status")
+def market_bars_status():
+    """本地日 K 库状态：更新任务进度（running/phase/done/total/failed）+ 库覆盖情况
+    （coverage 票数 / lastBarDate / dbSizeMb）。"""
+    out = dict(_update_state)
+    out["failed"] = list(_update_state["failed"])  # 拷贝，避免与 worker 线程共享引用
+    try:
+        conn = _mb_db()
+        out["coverage"] = conn.execute("SELECT COUNT(DISTINCT code) FROM bars").fetchone()[0]
+        out["lastBarDate"] = conn.execute("SELECT MAX(date) FROM bars").fetchone()[0]
+    except Exception as e:
+        out["coverage"] = None
+        out["lastBarDate"] = None
+        out["dbError"] = str(e)[:200]
+    try:
+        out["dbSizeMb"] = (round(os.path.getsize(_MB_DB_PATH) / 1024 / 1024, 1)
+                           if os.path.exists(_MB_DB_PATH) else 0)
+    except OSError:
+        out["dbSizeMb"] = None
+    return out

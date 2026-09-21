@@ -2,6 +2,7 @@ node_modules/
 dist/
 data/*.json
 data/*.db
+data-service/data/
 !.gitkeep
 .env
 *.log
