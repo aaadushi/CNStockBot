@@ -333,6 +333,149 @@ export interface OverseasSummary {
   commodities: OverseasBlock;   // 国际金银原油
 }
 
+// ---- 板块轮动监控（F6-3，2026-09-19 新增；仅微服务模式提供） ----
+
+/** 板块数据源标注：eastmoney=东财 push2 实时；eastmoney-delay=push2delay 延时镜像（约 15 分钟） */
+export type SectorSource = 'eastmoney' | 'eastmoney-delay';
+
+/** 行业板块涨跌排行条目（东财行业板块，按涨跌幅降序；字段缺失为 null 而非 0） */
+export interface SectorRankItem {
+  rank: number;                 // 涨跌幅名次（1 起始）
+  code: string;                 // 板块代码，如 BK0420
+  name: string;                 // 板块名称
+  price: number | null;         // 板块指数最新价
+  changePct: number | null;     // 涨跌幅 %
+  change: number | null;        // 涨跌额
+  amount: number | null;        // 成交额（元）
+  turnover: number | null;      // 换手率 %
+  totalMarketCap: number | null;// 总市值（元）
+  upCount: number | null;       // 板块内上涨家数
+  downCount: number | null;     // 板块内下跌家数
+  leadStock: string | null;     // 领涨股票名称
+  leadStockCode: string | null; // 领涨股票代码
+  leadStockChangePct: number | null; // 领涨股票涨跌幅 %
+}
+
+export interface SectorRank {
+  source: SectorSource;
+  items: SectorRankItem[];
+}
+
+/** 行业板块资金流排行条目（按今日主力净流入降序；金额为元、占比为 %，缺失为 null） */
+export interface SectorFundFlowItem {
+  rank: number;                 // 主力净流入名次（1 起始）
+  code: string;
+  name: string;
+  price: number | null;
+  changePct: number | null;
+  mainNetInflow: number | null;        // 主力净流入（元）
+  mainNetInflowPct: number | null;     // 主力净占比（%）
+  superLargeNetInflow: number | null;
+  superLargeNetInflowPct: number | null;
+  largeNetInflow: number | null;
+  largeNetInflowPct: number | null;
+  mediumNetInflow: number | null;
+  mediumNetInflowPct: number | null;
+  smallNetInflow: number | null;
+  smallNetInflowPct: number | null;
+  topStock: string | null;      // 主力净流入最大个股名称
+  topStockCode: string | null;
+}
+
+export interface SectorFundFlow {
+  source: SectorSource;
+  items: SectorFundFlowItem[];
+}
+
+/** 板块成分股条目（涨跌幅降序；字段缺失为 null） */
+export interface SectorConsItem {
+  code: string;
+  name: string;
+  price: number | null;
+  changePct: number | null;
+  change: number | null;
+  volume: number | null;    // 成交量（手）
+  amount: number | null;    // 成交额（元）
+  amplitude: number | null; // 振幅 %
+  turnover: number | null;  // 换手率 %
+  peDynamic: number | null; // 市盈率（动）
+  pb: number | null;        // 市净率
+}
+
+export interface SectorCons {
+  code: string;   // 板块代码
+  name: string;   // 板块名称
+  source: SectorSource;
+  items: SectorConsItem[];
+}
+
+/** 板块日 K 走势；bars 结构与个股 HistoryBar 一致（日期升序） */
+export interface SectorHistory {
+  code: string;
+  name: string;
+  source: SectorSource;
+  bars: HistoryBar[];
+}
+
+/** 个股→板块共振（F6-3）：matched=false 时 sector 为 null（行业缺失或排行表无同名板块） */
+export interface StockSectorInfo {
+  code: string;
+  name: string | null;      // 股票名称
+  industry: string | null;  // 所属行业（东财行业分类）
+  matched: boolean;
+  source?: SectorSource;
+  sector: {
+    code: string;
+    name: string;
+    rank: number;           // 当日涨跌幅名次（1 起始）
+    total: number;          // 板块总数
+    changePct: number | null;
+    upCount: number | null;
+    downCount: number | null;
+    fundFlowRank?: number;  // 今日主力净流入名次（资金流排行失败时省略）
+    fundFlowTotal?: number;
+    mainNetInflow?: number | null;
+    mainNetInflowPct?: number | null;
+  } | null;
+}
+
+// ---- K 线形态识别 + 历史成绩单（F6-1，2026-09-19 新增；仅微服务模式提供） ----
+
+/** 形态方向标签 */
+export type PatternDirection = '看涨' | '看跌' | '中性';
+
+/**
+ * 单个统计窗口（信号日后 N 个交易日）的历史表现。
+ * 全部为历史事实统计口径：upRatio=上涨占比（%）、avgRet=平均涨跌幅（%，相对信号日收盘）、
+ * avgMaxDrawdown=平均最大回撤（%，窗口内最低价相对信号日收盘）；样本为 0 时各值为 null。
+ */
+export interface PatternWindowStats {
+  count: number; // 该窗口样本数（信号日后有足够交易日才计入）
+  upRatio: number | null;
+  avgRet: number | null;
+  avgMaxDrawdown: number | null;
+}
+
+/** 单种形态的聚合结果；count 为窗口内出现总次数（count < 5 时展示层应提示样本过少） */
+export interface PatternStat {
+  key: string;                // 形态英文键，如 bull_engulf
+  name: string;               // 形态中文名，如 看涨吞没
+  direction: PatternDirection;
+  count: number;              // 统计窗口（days）内出现总次数
+  recentDates: string[];      // 近约 60 个交易日内的信号日（YYYY-MM-DD，升序）
+  stats: Record<'5' | '10' | '20', PatternWindowStats>;
+}
+
+/** 形态识别结果（F6-1）；source 标注日 K 数据源（与 /history 降级链一致：eastmoney/sina） */
+export interface PatternReport {
+  code: string;
+  source: 'eastmoney' | 'sina';
+  days: number;    // 统计窗口（交易日数）
+  asOf: string;    // 最后一根日 K 日期 YYYY-MM-DD
+  patterns: PatternStat[]; // 只含窗口内出现过的形态，按最近一次出现倒序
+  disclaimer: string;      // 历史统计口径与免责声明（展示层必须保留）
+}
+
 export interface DataProvider {
   readonly name: string;
   getQuote(code: string): Promise<Quote>;
@@ -371,4 +514,16 @@ export interface DataProvider {
   getEtfRank?(limit?: number): Promise<EtfQuote[]>;
   /** 隔夜外盘参考信息汇总（美股指数/中概股/国际商品，F6-4）；仅微服务模式提供 */
   getOverseasSummary?(): Promise<OverseasSummary>;
+  /** 行业板块涨跌排行（F6-3）；仅微服务模式提供 */
+  getSectorRank?(limit?: number): Promise<SectorRank>;
+  /** 行业板块资金流排行（今日主力净流入降序，F6-3）；仅微服务模式提供 */
+  getSectorFundFlow?(limit?: number): Promise<SectorFundFlow>;
+  /** 板块成分股（F6-3，name 支持板块名称或 BK 代码）；仅微服务模式提供 */
+  getSectorCons?(name: string, limit?: number): Promise<SectorCons>;
+  /** 板块日 K 走势（F6-3）；仅微服务模式提供 */
+  getSectorHistory?(name: string, days?: number): Promise<SectorHistory>;
+  /** 个股→板块共振（所属行业在当日涨跌/资金流排行中的位置，F6-3）；仅微服务模式提供 */
+  getSectorOfStock?(code: string): Promise<StockSectorInfo>;
+  /** K 线形态识别 + 历史成绩单（F6-1）；东财直连无此能力，仅微服务模式提供 */
+  getPatterns?(code: string, days?: number): Promise<PatternReport>;
 }

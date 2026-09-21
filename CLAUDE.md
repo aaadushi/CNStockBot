@@ -68,6 +68,7 @@ public/stocks/        股票浏览页 + 个股详情页 SPA（F1/F2，手写 SVG
 public/market/        全市场涨跌榜页（涨幅/跌幅/平盘三 Tab + 家数总览，东财 clist/ulist）
 public/funds/         基金版块页（F4-B：排行/ETF Tab + 搜索 + 净值走势图，数据经 data-service）
 public/overseas/      外盘联动页（F6-4：美股指数/中概股/国际金银原油 + 方向提示，数据经 data-service）
+public/sectors/       板块轮动页（F6-3：涨跌/资金流排行 + 板块详情（成分股+走势图）+ 个股→板块共振，数据经 data-service）
 public/shared/        前端共享设计系统 theme.css（各页面共用，/shared 静态挂载）
 tests/                vitest 单测（npm test）；fixtures/eastmoney/ 为真实接口响应回放
 docs/                 文档库：STATUS（功能与问题）/ FEATURES（实现手册）/ PITFALLS（踩坑病例）/ AUDIT（代码审计）/ 架构与数据源
@@ -166,6 +167,8 @@ uvicorn main:app --host 127.0.0.1 --port 8000
    监控。**各功能网页端独立区块/入口呈现**（用户明确要求）；概率数字按历史统计口径表述。
    **进度：F6-4 外盘联动监控 2026-09-19 完成**（/overseas 独立页 + 规则化方向提示 +
    可选盘前推送 OVERSEAS_PUSH_ENABLED）。
+   **进度：F6-1 于 2026-09-19 完成**（/patterns 端点 17 种形态 + get_stock_patterns 技能 +
+   详情页"形态分析"卡）；**F6-3 板块轮动监控 2026-09-19 完成**（/sectors 独立导航页）。
    详见 [docs/STATUS.md](docs/STATUS.md) 第四节。
 6. S3-3 多用户体系（仅公网部署前必须做，落地时一并解决 A-601 同口令无身份隔离）；
    A-508 微服务 token（仅非回环部署时需要）。

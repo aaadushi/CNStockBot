@@ -737,3 +737,101 @@
 - **注意事项**：东财 push2 对本机间歇性断连（2026-09-19 复现，见 PITFALLS），外盘三块
   特意全部不走 push2 主路径；主服务 60s 默认超时对"新浪 30s 超时 + 东财翻页 32s"的
   最坏降级链不够，getOverseasSummary 客户端超时已放宽 90s。
+## 34. 板块轮动监控（/sectors，F6-3，2026-09-19 新增）
+
+- **定位**：东财行业板块（m:90 t:2，含多级行业约 500 个）的轮动监控独立导航页：
+  涨跌排行 / 资金流排行 / 板块详情（成分股 + 日 K 走势图）/ "查个股所属板块"共振查询。
+  纯客观数据呈现，**不做任何板块推荐**；页面注明数据口径与"仅供参考，不构成投资建议"。
+- **data-service**（[data-service/main.py](../data-service/main.py) 末尾"板块轮动监控"节）：
+  - `GET /sectors/rank?limit=`：涨跌排行（涨跌幅降序，缓存 60s）。字段：名次/板块代码（BK）/
+    名称/最新价/涨跌幅/涨跌额/成交额/换手率/总市值/上涨下跌家数/领涨股（名称+代码+涨跌幅）。
+  - `GET /sectors/fund-flow?limit=`：资金流排行（今日主力净流入降序，缓存 60s）。
+    主力/超大单/大单/中单/小单五档净流入与净占比 + 主力净流入最大个股。
+  - `GET /sectors/cons?name=&limit=`：板块成分股（涨跌幅降序，按板块缓存 10min）；
+    name 支持板块名称或 BK 代码（代码直传时尝试从排行表反查名称）。
+  - `GET /sectors/history?name=&days=`：板块日 K（日期升序，缓存 10min），bars 结构与个股
+    /history 一致（复用 `_hist_items` 归一化，列名与东财个股日 K 相同）。
+  - `GET /sectors/of-stock/{code}`：个股→板块共振。所属行业复用 /profile（含其降级链与
+    24h 缓存），与涨跌排行表匹配（精确优先，其次去罗马数字后缀归一化兜底）；命中返回
+    板块当日涨跌名次 rank/total 与资金流名次 fundFlowRank/fundFlowTotal（资金流排行失败
+    仅省略资金流字段，独立降级）；行业缺失或无同名板块返回 `matched=false` 结构化响应。
+  - **实现选型**：排行/资金流/成分股本质是东财 clist 翻页接口，AKShare 封装
+    （stock_board_industry_name_em / stock_sector_fund_flow_rank / stock_board_industry_cons_em）
+    会丢弃本项目需要的字段（成交额/领涨股代码/板块代码），故按 AKShare 同参数同字段
+    **直连 clist**（`_clist_paginated`：push2 主宿主 → push2delay 延时镜像降级，
+    翻页间隔 0.3s 防限流，响应带 `source: eastmoney/eastmoney-delay` 标注）；
+    板块日 K 走 AKShare `stock_board_industry_hist_em`（push2his，支持 BK 代码直传）。
+- **主服务**：`DataProvider` 新增 `SectorRank/SectorFundFlow/SectorCons/SectorHistory/
+  StockSectorInfo` 类型与五个可选方法（[src/data/provider.ts](../src/data/provider.ts)），
+  PythonServiceProvider 与 CompositeProvider 接线（微服务未启动时给带启动提示的错误）；
+  webchat.ts 挂 `/sectors` 静态页与 `/api/sectors/*` 五个端点（全部在口令鉴权后，
+  code 校验 6 位数字、name 必填且 ≤20 字符）。
+- **前端**：[public/sectors/index.html](../public/sectors/index.html)（复用 theme.css，
+  全部 textContent 渲染）——列表视图：个股查板块输入框（代码直查/名称先走 /api/search
+  解析）+ 涨跌排行/资金流排行两个 Tab（卡片含名次/领涨股/涨跌家数/成交额或主力净流入）；
+  详情视图（?name=）：走势图（手写 SVG 折线，近1月/3月/6月/1年区间切换，hover tooltip）
+  与成分股表（点击跳 /stocks 个股详情）**独立加载互不阻塞**；延时镜像数据页面标注
+  "延时约 15 分钟"。/stocks、/market、/news、/funds 页头导航加"🏭 板块"入口。
+- **测试**：[tests/pythonService-sectors.test.ts](../tests/pythonService-sectors.test.ts)
+  9 条用例（五方法 URL 拼接含中文编码/参数默认值、响应透传、matched=false 结构化响应、
+  404/连接失败分支），fetch 全 mock 不碰真实网络。
+- **改动入口**：加板块字段 → main.py 的 `_SECTOR_*_FIELDS` + 对应 `_sector_*_item` 归一化 +
+  provider.ts 类型；调缓存 → `_SECTOR_*_TTL`；概念板块（m:90 t:3）→ `_clist_paginated`
+  调用处换 fs 参数。
+- **注意事项**：push2his（板块日 K）与 push2（clist）限流独立，板块日 K 限流期返回
+  结构化 502，只影响走势图区块；排行表全量约 500 行需翻页约 5 次，60s 缓存是限流防线，
+  不要缩短；`/api/sectors/of-stock` 的行业匹配依赖"profile 行业名 = 板块名"同源性
+  （均为东财行业分类），东财若改分类口径会表现为 matched=false 增多而非报错。
+## 35. K 线形态识别 + 历史成绩单（F6-1，2026-09-19 新增）
+
+- **数据层（纯本地计算，无新外部依赖）**：data-service `GET /patterns/{code}?days=`
+  （默认 750≈3 年、范围 30~1500，按 (code,days) 缓存 6h）。输入是与 /history 同源的
+  前复权日 K（`_load_bars`：东财→新浪降级，响应带 `source`）。形态库 17 种
+  （定义清晰优先于数量；杯柄/口袋支点定义把握不足未纳入）：
+  - **K 线组合 11 种**：十字星（中性，实体≤振幅 10% 且振幅≥1%）、锤子线/上吊线
+    （下影线≥2 倍实体、上影线≤0.5 倍实体，背景分别为前 5 日累计下跌/上涨）、
+    看涨/看跌吞没（反向背景 + 当日实体完全包住前一根且更大）、早晨/黄昏之星
+    （大实体 + 跳空星线 + 收复/跌破首根实体中点）、乌云盖顶/刺透（高开/低开越前高/低，
+    收盘深入中点以下/以上但未吞没）、红三兵/三只乌鸦（三根饱满同向线，收盘逐级推进，
+    后两根开盘在前一根实体内）；
+  - **价格结构 6 种**：双底/双顶（60 根窗口，两底/顶价差 ≤3%、间隔 ≥10 根、底部/顶部
+    须接近窗口最低/高点（3% 容差，显著极值）、颈线深度 ≥5%，信号日=收盘首次突破颈线）、
+    头肩底/头肩顶（90 根窗口，头即窗口最低/最高点、双肩价差 ≤5%、颈线深度 ≥5%）、
+    上升/下降三角形（40 根窗口，最近 2~3 个分形高点/低点近似水平（≤2%）作压力/支撑线，
+    另一侧分形点逐级抬/降，信号日=收盘首次突破）。
+    结构类信号日的"首次突破"判定（`c[i-1] ≤ neck < c[i]`）天然去重，但同一形态的颈线
+    回踩再突破会各计一次信号（口径见 DATA_SOURCES）。
+  - **无未来函数**：任一形态在第 i 根的判定只用 ≤ i 的数据；分形点右边界留 2 根确认
+    （`_fractals` 的 `min(hi, len-w)`），背景趋势以信号日前一日为锚。
+  - **历史成绩单**：对每个信号日 i，5/10/20 窗口各统计 upRatio（上涨占比 %）/
+    avgRet（平均涨跌幅 %，收盘对收盘）/avgMaxDrawdown（窗口内最低价相对信号日收盘的
+    平均最大跌幅 %）；i+w 超出数据末尾的出现不计入该窗口；窗口样本为 0 时各值 null。
+    响应按形态聚合（{key,name,direction,count,recentDates,stats}），只含窗口内出现过
+    的形态，按最近一次出现倒序；recentDates = 近 60 个交易日的信号日；响应带
+    `disclaimer`（历史事实口径 + 不构成投资建议），**展示层必须保留**。
+- **主服务**：`DataProvider` 加 `PatternReport/PatternStat/PatternWindowStats` 类型与
+  `getPatterns`，PythonServiceProvider/CompositeProvider 接线（未启动微服务给带启动提示
+  的错误）；新增 `GET /api/stocks/:code/patterns?days=`（口令鉴权后，days 钳到 30~1500）。
+  **不进详情聚合七块**——形态卡由前端独立拉取，失败只影响自己（同 indicators 模式）。
+- **聊天技能 `get_stock_patterns`**：[src/skills/bundled/patterns/](../src/skills/bundled/patterns/)。
+  参数仅 code；输出 = 头部（数据截至/窗口/数据源）+ 近期出现形态（近 60 日）+ 历史成绩单
+  （逐形态三窗口一行摘要，count<5 附"样本过少"）+ 口径与免责声明，并内嵌对 LLM 的红线指令
+  （不得表述为预测/买卖建议）。股票名称仅用于展示，行情失败退化为代码不阻塞。
+  SYSTEM_PROMPT 规则 9 加 routing（"形态/信号识别/形态后走势"→ 本技能）。
+- **详情页落点**：AI 多维分析卡下方独立"形态分析"卡（`patterns-card`）——近期触发 chips
+  （中性配色同指标信号，避免暗示操作方向）+ 历史成绩单表格（形态/方向/历史次数/
+  信号后 5/10/20 日，每格两行：上涨占比·均涨幅 + 平均最大回撤，count<5 标注样本过少）+
+  口径与免责声明双脚注；数据缺失整块隐藏、失败卡内降级提示；全部文本 textContent 渲染。
+- **代码位置**：端点与检测器 [data-service/main.py](../data-service/main.py)（"K 线形态
+  识别（F6-1）"节，文件末尾）、接口 [src/data/provider.ts](../src/data/provider.ts)、
+  客户端 [src/data/pythonService.ts](../src/data/pythonService.ts)、组合源
+  [src/data/index.ts](../src/data/index.ts)、API [src/channels/webchat.ts](../src/channels/webchat.ts)、
+  页面 [public/stocks/index.html](../public/stocks/index.html)（loadPatterns/renderPatterns）、
+  测试 [tests/pythonService-patterns.test.ts](../tests/pythonService-patterns.test.ts) +
+  [tests/patterns.test.ts](../tests/patterns.test.ts)
+- **改动入口**：调形态阈值/加形态 → main.py 检测器 + `_PATTERN_DEFS`（每个检测器头部注释
+  写明参数口径）；改统计窗口 → `_PATTERN_WINDOWS`；调缓存 → `_PATTERNS_TTL`；
+  改前端列 → renderPatterns 的 winCell；F6-2 资金流验货可复用本端点的信号日输出
+- **注意事项**：结构形态触发频率对阈值敏感（2026-09-19 实测调校：双底/顶从"任意分形对"
+  收紧到"窗口显著极值"后 750 日内触发次数从 26/59 降到 4/9）；改阈值后用合成 K 线
+  重跑定点识别 + 用真实数据看 count 分布两步验证。

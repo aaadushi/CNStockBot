@@ -8,7 +8,7 @@ import { config } from '../config.js';
 import { EastmoneyProvider } from './eastmoney.js';
 import { TencentProvider } from './tencent.js';
 import { PythonServiceProvider } from './pythonService.js';
-import type { Announcement, CompanyProfile, DataProvider, DividendRecord, EtfQuote, FinancialReport, FundFlow, FundInfo, FundRankItem, FundSearchItem, HistoryBar, Intraday, MarketMovers, MarketNewsItem, NewsItem, NewsSort, OverseasSummary, Quote, TechnicalIndicators } from './provider.js';
+import type { Announcement, CompanyProfile, DataProvider, DividendRecord, EtfQuote, FinancialReport, FundFlow, FundInfo, FundRankItem, FundSearchItem, HistoryBar, Intraday, MarketMovers, MarketNewsItem, NewsItem, NewsSort, OverseasSummary, PatternReport, Quote, SectorCons, SectorFundFlow, SectorHistory, SectorRank, StockSectorInfo, TechnicalIndicators } from './provider.js';
 
 class CompositeProvider implements DataProvider {
   readonly name = 'composite(eastmoney+python)';
@@ -219,6 +219,66 @@ class CompositeProvider implements DataProvider {
     } catch (err) {
       throw new Error(
         `外盘数据不可用：${err instanceof Error ? err.message : String(err)}\n` +
+          '提示：进入 data-service 目录运行 `pip install -r requirements.txt && uvicorn main:app` 启动数据微服务。',
+      );
+    }
+  }
+
+  /** 板块轮动监控（F6-3）只能走微服务（东财行业板块 clist/板块日 K），未启动时给出带启动提示的错误 */
+  private sectorUnavailable(err: unknown): Error {
+    return new Error(
+      `板块数据不可用：${err instanceof Error ? err.message : String(err)}\n` +
+        '提示：进入 data-service 目录运行 `pip install -r requirements.txt && uvicorn main:app` 启动数据微服务。',
+    );
+  }
+
+  async getSectorRank(limit = 30): Promise<SectorRank> {
+    try {
+      return await this.python.getSectorRank(limit);
+    } catch (err) {
+      throw this.sectorUnavailable(err);
+    }
+  }
+
+  async getSectorFundFlow(limit = 30): Promise<SectorFundFlow> {
+    try {
+      return await this.python.getSectorFundFlow(limit);
+    } catch (err) {
+      throw this.sectorUnavailable(err);
+    }
+  }
+
+  async getSectorCons(name: string, limit = 50): Promise<SectorCons> {
+    try {
+      return await this.python.getSectorCons(name, limit);
+    } catch (err) {
+      throw this.sectorUnavailable(err);
+    }
+  }
+
+  async getSectorHistory(name: string, days = 120): Promise<SectorHistory> {
+    try {
+      return await this.python.getSectorHistory(name, days);
+    } catch (err) {
+      throw this.sectorUnavailable(err);
+    }
+  }
+
+  async getSectorOfStock(code: string): Promise<StockSectorInfo> {
+    try {
+      return await this.python.getSectorOfStock(code);
+    } catch (err) {
+      throw this.sectorUnavailable(err);
+    }
+  }
+
+  /** K 线形态识别只能走微服务（基于历史 K 线本地计算，F6-1），未启动时给出带启动提示的错误 */
+  async getPatterns(code: string, days = 750): Promise<PatternReport> {
+    try {
+      return await this.python.getPatterns(code, days);
+    } catch (err) {
+      throw new Error(
+        `形态识别数据不可用：${err instanceof Error ? err.message : String(err)}\n` +
           '提示：进入 data-service 目录运行 `pip install -r requirements.txt && uvicorn main:app` 启动数据微服务。',
       );
     }
