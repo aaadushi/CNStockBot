@@ -178,6 +178,24 @@ GET https://qt.gtimg.cn/q=usBABA,usPDD,...          # 美股个股/中概股
   count<5 属样本过少（前端/技能均提示）。全部为历史事实统计，不含预测
 - "近期出现" = 近 60 个自然交易日内（bars 尾部 60 根）的信号日列表
 
+**资金流验货本地计算（/verify/{code}，F6-2，2026-09-21；非新外部接口）**
+
+输入 = F6-1 形态检测的近期信号日（近 60 个交易日）+ F3-4 资金流取数（`/fund-flow` 同源：
+东财 `stock_individual_fund_flow` 五档主源 → 新浪 MoneyFlow 两档降级，响应带
+barSource/flowSource 双标注）。**口径为日级资金流**——分笔 tick（如
+`ak.stock_intraday_em`）未接入（稳定性未实测，验货场景日级已够），"尾盘变化"维度缺失。
+分档规则（透明客观阈值，与 FEATURES 第 36 节同步）：
+
+- **验货窗口**：信号日起往后最多 3 个有资金流数据的交易日
+- **取值**：窗口内主力净流入（新浪降级源为"净流入"，口径含全部资金，文案随 source 切换）
+  非 null 的日值；记 pos=为正日数、neg=为负日数、total=合计额（0 值不计入 pos/neg）
+- **watch（重点观察）**：total 与形态方向同号 且 同向日数 > 反向日数（资金流印证形态）
+- **doubt（存疑）**：total 与形态方向反号 且 反向日数 > 同向日数（资金流背离形态）
+- **neutral（中性）**：其余——正负交错 / 有效值为 0 个 / 信号日未被资金流覆盖
+  （资金流源仅含近期约 100 个交易日）/ 中性形态（十字星）无方向可比
+- 三档结论只描述资金流与形态方向的客观一致性，**不含买卖建议**；响应带 disclaimer
+- 无近期信号时不拉资金流直接返回空列表（flowSource=null）；按 (code, days) 缓存 1h
+
 **新浪 MoneyFlow（直连 requests，非 AKShare，已接入 /fund-flow 降级源）**
 ```
 GET https://vip.stock.finance.sina.com.cn/quotes_service/api/json_v2.php/MoneyFlow.ssl_qsfx_zjlrqs?page=1&num=100&sort=opendate&asc=0&daima=sh600519

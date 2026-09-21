@@ -4,7 +4,7 @@
  */
 import { config } from '../config.js';
 import { EastmoneyProvider } from './eastmoney.js';
-import type { Announcement, CompanyProfile, DataProvider, DividendRecord, EtfQuote, FinancialReport, FundFlow, FundInfo, FundRankItem, FundSearchItem, HistoryBar, Intraday, MarketNewsItem, NewsItem, NewsSort, OverseasSummary, PatternReport, Quote, SectorCons, SectorFundFlow, SectorHistory, SectorRank, StockSectorInfo, TechnicalIndicators } from './provider.js';
+import type { Announcement, CompanyProfile, DataProvider, DividendRecord, EtfQuote, FinancialReport, FlowVerifyReport, FundFlow, FundInfo, FundRankItem, FundSearchItem, HistoryBar, Intraday, MarketNewsItem, NewsItem, NewsSort, OverseasSummary, PatternReport, Quote, SectorCons, SectorFundFlow, SectorHistory, SectorRank, StockSectorInfo, TechnicalIndicators } from './provider.js';
 
 /** 微服务显式超时：AKShare 爬网页较慢，放宽到 60s；防上游挂起拖死调度链（审计 A-301/A-506） */
 const FETCH_TIMEOUT_MS = 60_000;
@@ -135,6 +135,10 @@ export class PythonServiceProvider implements DataProvider {
 
   async getPatterns(code: string, days = 750): Promise<PatternReport> {
     return this.get<PatternReport>(`/patterns/${encodeURIComponent(code)}?days=${days}`);
+  }
+
+  async getFlowVerify(code: string, days = 750): Promise<FlowVerifyReport> {
+    return this.get<FlowVerifyReport>(`/verify/${encodeURIComponent(code)}?days=${days}`);
   }
 }
 

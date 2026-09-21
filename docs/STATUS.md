@@ -7,7 +7,7 @@
 > 看 [FEATURES.md](FEATURES.md)；踩过的坑看 [PITFALLS.md](PITFALLS.md)；
 > 数据源接口细节看 [DATA_SOURCES.md](DATA_SOURCES.md)。
 
-最后更新：2026-09-19
+最后更新：2026-09-21
 
 ---
 
@@ -42,6 +42,7 @@
 | 外盘联动监控（/overseas + 盘前推送，F6-4） | `public/overseas/` + data-service `/overseas/summary` + `src/alerts/scheduler.ts` | ✅ 可用 | 隔夜美股三大指数/中概股与美股热门/国际金银原油三块独立降级（失败块带 error），缓存 10 分钟；规则化"A 股相关方向提示"（客观历史相关性映射，非买卖建议）；盘前推送可选（`OVERSEAS_PUSH_ENABLED=true`，交易日约 9:10）；需 data-service；2026-09-19 新增 |
 | 板块轮动监控（/sectors，F6-3） | `public/sectors/` + data-service `/sectors/*` + `/api/sectors/*` | ✅ 可用 | 行业板块涨跌排行/资金流排行/板块详情（成分股 + 日 K 走势图）/个股→板块共振（行业匹配当日涨跌与资金流名次，未匹配返回结构化 matched=false）；clist 直连 push2→push2delay 降级（带 source 标注），板块日 K 走 AKShare stock_board_industry_hist_em；依赖 data-service 运行；2026-09-19 新增 |
 | K 线形态识别 + 历史成绩单（F6-1） | `data-service` `/patterns` + `get_stock_patterns` 技能 + 详情页"形态分析"卡 | ✅ 可用 | 17 种经典形态（11 种 K 线组合 + 6 种价格结构）纯本地检测（与 /history 同源前复权日 K，检测无未来函数），按形态聚合历史成绩单（信号日后 5/10/20 日上涨占比/平均涨跌幅/平均最大回撤，窗口不完整不计入）；近期出现=近 60 交易日；全部历史事实统计口径，响应带 disclaimer，count<5 提示样本过少；依赖 data-service；2026-09-19 新增 |
+| 资金流验货（"狙击手"模式，F6-2） | `data-service` `/verify/{code}` + `/api/stocks/:code/verify` + 详情页"资金流验货"卡 + `analyze_stock` 第七块 | ✅ 可用 | 近 60 交易日形态信号 × 日级资金流（复用 F3-4 取数，东财五档/新浪两档带 source 标注）交叉验证，三档结论（重点观察/中性/存疑，透明阈值规则）+ 客观依据；日级口径（分笔 tick 未接入，尾盘维度缺失）；按 (code,days) 缓存 1h；依赖 data-service；2026-09-21 新增 |
 
 ## 二、待办优先级总表（下一个 agent 从这里开始）
 
@@ -213,7 +214,7 @@ pattern_analyzer（K 线形态识别 + 历史成绩单）、狙击手模块（�
 | # | 功能 | 实现要点 | 落点 |
 |---|---|---|---|
 | F6-1 | ~~**K 线形态识别 + 历史成绩单**~~（先 20 种经典形态：杯柄/双重底/头肩底/红三兵/上升三角形/口袋支点等） | ✅ 2026-09-19 完成（见更新日志）：data-service `/patterns/{code}?days=` 纯本地检测 17 种形态（定义清晰优先于数量，杯柄/口袋支点定义把握不足未纳入）+ 按形态聚合历史成绩单；详情页独立"形态分析"卡 + `get_stock_patterns` 技能；全部历史事实统计口径 + 免责声明 | 详情页独立"形态分析"卡片区 + 聊天可查询 |
-| F6-2 | **资金流验货**（"狙击手"模式） | 依赖 F3-4 资金流数据：形态触发时叠加资金流交叉验证（大单方向/主动买卖/尾盘变化），输出分档结论（重点观察 / 存疑 / 观察名单）；分笔 tick 数据（如 `ak.stock_intraday_em`）接入前需实测稳定性，不稳则用日级资金流替代并在 FEATURES 注明口径 | 详情页独立验货区 + 作为 F5-2 多维分析的信号源 |
+| F6-2 | ~~**资金流验货**（"狙击手"模式）~~ | ✅ 2026-09-21 完成（见更新日志）：data-service `/verify/{code}` 对近期形态信号叠加日级资金流交叉验证，三档分档结论（重点观察/中性/存疑，透明阈值规则）；分笔 tick 未接入（日级口径，尾盘维度缺失，已在 FEATURES/DATA_SOURCES 注明） | 详情页独立验货卡 + 作为 F5-2 多维分析的信号源（analyze_stock 第七块） |
 | ~~F6-3~~ | ~~**板块轮动监控**~~ | ✅ 2026-09-19 完成（见更新日志）：独立导航页 /sectors（涨跌排行/资金流排行/板块详情/个股→板块共振） | — |
 | ~~F6-4~~ | ~~**外盘联动监控**~~ | ✅ 2026-09-19 完成（见更新日志）：/overseas 独立页面 + 规则化方向提示 + 可选盘前推送；**范围扩界说明**已遵守：外盘仅作参考信息源，行情查询/自选股等主功能仍只做 A 股 | — |
 
@@ -239,6 +240,37 @@ pattern_analyzer（K 线形态识别 + 历史成绩单）、狙击手模块（�
 
 ## 更新日志
 
+- 2026-09-21（批次 8）：**F6-2 资金流验货（"狙击手"模式）完成**——形态触发时叠加资金流
+  交叉验证。data-service 新增 `GET /verify/{code}?days=`（默认 750、范围 30~1500，
+  按 (code,days) 缓存 1h）：复用 F6-1 的 `_scan_patterns` 形态检测取近 60 个交易日信号日，
+  叠加 F3-4 资金流取数（`/fund-flow` 端点的取数+降级链抽为共用 `_get_fund_flow_cached`，
+  按 code 缓存 60s，与验货缓存键独立）做交叉验证。**分档规则（透明客观阈值）**：
+  验货窗口 = 信号日起往后最多 3 个有资金流数据的交易日，取主力净流入（新浪降级源为
+  "净流入"，口径含全部资金，文案与 flowNote 随 source 切换）非空值，记 pos=为正日数、
+  neg=为负日数、total=合计额——total 与形态方向同号且同向日数占优 → **重点观察**；
+  反号且反向日数占优 → **存疑**；其余（正负交错/全缺失/信号日未被资金流覆盖/中性形态）
+  → **中性**。日级口径：分笔 tick（ak.stock_intraday_em）未接入，"尾盘变化"维度缺失，
+  已在 FEATURES/DATA_SOURCES 注明。无近期信号时不拉资金流直接返回空列表（flowSource=null）。
+  主服务：`DataProvider` 加 `FlowVerifyReport`/`FlowVerifySignal` 类型与 `getFlowVerify`，
+  CompositeProvider 接线；新增 `GET /api/stocks/:code/verify?days=`（口令鉴权后，
+  **不进详情聚合块**）。`analyze_stock` 聚合扩为七块（+资金流验货，allSettled 独立降级），
+  SYSTEM_PROMPT 规则 5 补验货块的解读约束（分档结论只作客观参考）。详情页"形态分析"卡
+  下方新增独立"资金流验货"卡：每个近期信号一条目（信号日/形态名/分档 badge——中性配色，
+  不用红绿 + 客观依据 + 资金流 source 口径标注 + 免责声明），近期无信号时整卡隐藏。
+  聊天侧未新增独立技能（验货经 analyze_stock 与详情页触达；get_stock_patterns 不带验货
+  以免形态查询翻倍上游调用）。验证：typecheck + 210 测试全绿（新增
+  tests/pythonService-verify.test.ts 8 条：URL/透传/三档分档值/空信号/新浪口径/错误分支/
+  Composite 降级文案；analyze 测试扩 4 条：验货块齐全/独立降级/方法缺失/无信号与新浪口径）
+  + py_compile 通过；分档规则合成数据 sanity check 23 项全过（一致/背离/交错/无数据/
+  未覆盖/中性形态/正负日数相等/含 0 值/无信号不拉资金流）；端到端实测（验证端口 8124/18824，
+  验后已停并清理）：/verify 实测 600519（双顶+头肩顶信号判"重点观察"，与看跌形态方向一致）、
+  002594（看涨吞没"重点观察"、头肩底"中性"交错）、600036（含"存疑"背离样本）三档全部
+  实测命中（资金流 sina 降级路径，口径标注正确），无效代码 502、days 超限 422、缓存命中
+  2.4ms、API 401/400/200 正常、详情聚合七块无回归、/api/chat"帮我多维度分析一下比亚迪"
+  实测 LLM 调用 analyze_stock 并输出含验货块的七维解读（分档按客观参考转述、含免责声明）、
+  详情页内联 JS node --check 通过。**未覆盖**：东财五档资金流主源路径未实测（push2his
+  对本机间歇性限流中，与 /fund-flow 同链路由既有降级逻辑托底）；无近期信号的真实股票
+  空结果端到端未遇到（大盘股近 60 日常有十字星），空路径行为由合成数据 sanity check 覆盖。
 - 2026-09-19（批次 7）：**F6-4 外盘联动监控完成**——data-service 新增
   `GET /overseas/summary`（缓存 10 分钟，三块独立降级、失败块带 error）：
   美股三大指数（腾讯 qt.gtimg.cn usDJI/usIXIC/usINX 主源 → 新浪 `index_us_stock_sina`

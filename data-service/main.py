@@ -701,12 +701,9 @@ def _fund_flow_via_sina(code: str) -> dict:
     return {"code": code, "source": "sina", "items": items}
 
 
-@app.get("/fund-flow/{code}")
-async def fund_flow(code: str, days: int = Query(default=30, ge=1, le=100)):
-    """个股资金流向（主力/超大单净流入等）。返回 {code, source, items: FundFlowDay[]}，
-    items 日期升序、尾部 days 条。source 标注口径：eastmoney=东财五档（主力/超大单/大单/
-    中单/小单）；sina=新浪两档（净流入含全部资金 + 超大单），降级时返回。
-    降级链：东财 stock_individual_fund_flow → 新浪 MoneyFlow；按代码缓存 60s。"""
+async def _get_fund_flow_cached(code: str) -> dict:
+    """个股资金流取数（/fund-flow 与 /verify 共用）：返回 {code, source, items}（items 日期升序，
+    全量约 100 个交易日，截尾由调用方做）。按代码缓存 60s，缓存键与形态/验货缓存独立。"""
     hit = _fund_flow_cache.get(code)
     if hit is None or time.time() - hit["ts"] > _FUND_FLOW_TTL:
         em_err = None
@@ -737,7 +734,16 @@ async def fund_flow(code: str, days: int = Query(default=30, ge=1, le=100)):
             )
         hit = {"ts": time.time(), "data": data}
         _fund_flow_cache[code] = hit
-    d = hit["data"]
+    return hit["data"]
+
+
+@app.get("/fund-flow/{code}")
+async def fund_flow(code: str, days: int = Query(default=30, ge=1, le=100)):
+    """个股资金流向（主力/超大单净流入等）。返回 {code, source, items: FundFlowDay[]}，
+    items 日期升序、尾部 days 条。source 标注口径：eastmoney=东财五档（主力/超大单/大单/
+    中单/小单）；sina=新浪两档（净流入含全部资金 + 超大单），降级时返回。
+    降级链：东财 stock_individual_fund_flow → 新浪 MoneyFlow；按代码缓存 60s。"""
+    d = await _get_fund_flow_cached(code)
     return {"code": code, "source": d["source"], "items": d["items"][-days:]}
 
 
@@ -2398,4 +2404,173 @@ async def patterns_ep(code: str, days: int = Query(default=750, ge=30, le=1500))
             raise HTTPException(status_code=502, detail=f"形态识别计算失败: {e}")
         hit = {"ts": time.time(), "data": data}
         _patterns_cache[key] = hit
+    return hit["data"]
+
+
+# ================= 资金流验货（F6-2，2026-09-21） =================
+# "狙击手"模式：对 F6-1 检测出的近期触发形态（近约 60 个交易日信号日），叠加 F3-4 资金流
+# 做交叉验证，输出三档结论。实现要点：
+# - 形态检测复用 _scan_patterns（与 /patterns 同源同规则）；资金流复用 _get_fund_flow_cached
+#   （与 /fund-flow 同缓存同降级链，缓存键独立：资金流按 code、验货按 (code, days)）。
+# - 口径为**日级资金流**（每日主力净流入/超大单）：分笔 tick（如 ak.stock_intraday_em）
+#   未接入——盘中分笔接口稳定性未验证且验货场景日级已够，"尾盘变化"维度因此缺失，
+#   口径说明见 docs/FEATURES.md 第 36 节与 docs/DATA_SOURCES.md。
+# - 验货窗口：信号日起往后最多 3 个有资金流数据的交易日（资金流源只含近期约 100 个交易日，
+#   早于覆盖范围的信号日判"未覆盖"）。
+# - 分档规则（透明客观阈值，与 docs/FEATURES.md / docs/DATA_SOURCES.md 同步）：
+#   窗口内取主力净流入（新浪降级源为"净流入"，口径含全部资金）非空的交易日，
+#   记 pos=为正日数、neg=为负日数、total=合计额：
+#     watch（重点观察）：total 与形态方向同号，且同向日数 > 反向日数（资金流印证形态）
+#     doubt（存疑）    ：total 与形态方向反号，且反向日数 > 同向日数（资金流背离形态）
+#     neutral（中性）  ：其余（正负交错 / 有效值为 0 个 / 信号日未被资金流覆盖 / 中性形态无方向）
+# - 红线：三档结论只描述"资金流是否印证形态信号"这一客观事实，不含买卖建议；
+#   响应带 disclaimer，展示层必须保留。
+
+_VERIFY_RECENT_BARS = 60  # 与 F6-1 "近期出现"口径一致（_RECENT_BARS）：只验近 60 个交易日的信号
+_VERIFY_WINDOW = 3        # 验货窗口：信号日起往后最多 3 个有资金流数据的交易日
+
+# 验货结果按 (code, days) 缓存 1h：形态是日频信号（盘后不变），资金流盘中会变，
+# 1h 兼顾 freshness 与上游压力（资金流本身还有 60s 缓存托底）。
+_verify_cache: dict = {}
+_VERIFY_TTL = 3600
+
+
+def _fmt_flow_yuan(v: float) -> str:
+    """净流入金额（元）→ 带符号的 亿/万/元 文本。"""
+    sign = "+" if v > 0 else "-" if v < 0 else ""
+    a = abs(v)
+    if a >= 1e8:
+        return f"{sign}{a / 1e8:.2f} 亿元"
+    if a >= 1e4:
+        return f"{sign}{a / 1e4:.2f} 万元"
+    return f"{sign}{a:.0f} 元"
+
+
+def _grade_flow_verdict(direction: str, vals: list):
+    """分档规则（口径见本节头注释）。vals = 验货窗口内主力净流入非 None 的值（日期升序）。
+    返回 (verdict_key, pos, neg, total)：verdict_key ∈ watch/neutral/doubt。"""
+    if direction == "中性":
+        return "neutral", 0, 0, None
+    pos = sum(1 for v in vals if v > 0)
+    neg = sum(1 for v in vals if v < 0)
+    if not vals:
+        return "neutral", pos, neg, None
+    total = sum(vals)
+    bull = direction == "看涨"
+    # 同号且同向日数占优 → 资金流印证形态（watch）；反号且反向日数占优 → 背离（doubt）；其余中性
+    same_sign = (total > 0 and pos > neg) if bull else (total < 0 and neg > pos)
+    opp_sign = (total < 0 and neg > pos) if bull else (total > 0 and pos > neg)
+    if same_sign:
+        return "watch", pos, neg, total
+    if opp_sign:
+        return "doubt", pos, neg, total
+    return "neutral", pos, neg, total
+
+
+def _verify_signal(sig_date: str, direction: str, ff_by_date: dict, ff_dates: list, label: str) -> dict:
+    """单个形态信号的资金流验货：返回 {date, verdict, verdictLabel, basis, windowDates,
+    mainNetInflowSum}。label = "主力净流入"（东财源）/ "净流入"（新浪降级源）。"""
+    if direction == "中性":
+        return {
+            "date": sig_date, "verdict": "neutral", "verdictLabel": "中性",
+            "basis": "中性形态无方向，不做资金流方向比对",
+            "windowDates": [], "mainNetInflowSum": None,
+        }
+    if sig_date not in ff_by_date:
+        return {
+            "date": sig_date, "verdict": "neutral", "verdictLabel": "中性",
+            "basis": "资金流数据未覆盖该信号日（数据源仅含近期约 100 个交易日）",
+            "windowDates": [], "mainNetInflowSum": None,
+        }
+    idx = ff_dates.index(sig_date)
+    window = ff_dates[idx: idx + 1 + _VERIFY_WINDOW]  # 信号日 + 之后最多 3 个交易日
+    vals = [ff_by_date[d]["mainNetInflow"] for d in window]
+    vals = [v for v in vals if v is not None]
+    verdict, pos, neg, total = _grade_flow_verdict(direction, vals)
+    k = len(window)
+    if total is None:
+        basis = f"信号日（{sig_date}）起 {k} 个交易日{label}数值均缺失，无法比对"
+    elif verdict == "watch":
+        basis = (f"信号日（{sig_date}）起 {k} 个交易日中 {pos} 日{label}为正，"
+                 f"合计{_fmt_flow_yuan(total)}，方向与{direction}形态一致")
+    elif verdict == "doubt":
+        basis = (f"信号日（{sig_date}）起 {k} 个交易日中 {neg} 日{label}为负，"
+                 f"合计{_fmt_flow_yuan(total)}，方向与{direction}形态背离")
+    else:
+        basis = (f"信号日（{sig_date}）起 {k} 个交易日{label}正负交错"
+                 f"（为正 {pos} 日 / 为负 {neg} 日，合计{_fmt_flow_yuan(total)}），方向不明确")
+    return {
+        "date": sig_date, "verdict": verdict,
+        "verdictLabel": {"watch": "重点观察", "neutral": "中性", "doubt": "存疑"}[verdict],
+        "basis": basis, "windowDates": window,
+        "mainNetInflowSum": round(total, 2) if total is not None else None,
+    }
+
+
+async def _build_flow_verify(code: str, days: int) -> dict:
+    """资金流验货主流程：形态扫描（复用 F6-1）→ 取近期信号 → 资金流交叉验证（复用 F3-4 取数）。
+    无近期信号时不拉资金流（省一次上游请求），flowSource 为 None。"""
+    bars, bar_source = await _load_bars(code, days)
+    if not bars:
+        raise HTTPException(
+            status_code=502, detail=f"历史行情为空，无法做资金流验货（代码错误或数据源不可用）: {code}"
+        )
+    n = len(bars)
+    hits = _scan_patterns(bars)
+    # 近期信号 = 近 60 个交易日内的信号日，按 (形态, 信号日) 展开
+    recent = []
+    for d in _PATTERN_DEFS:
+        for i in hits[d["key"]]:
+            if i >= n - _VERIFY_RECENT_BARS:
+                recent.append({"key": d["key"], "name": d["name"], "direction": d["direction"],
+                               "date": bars[i]["date"], "_i": i})
+    recent.sort(key=lambda s: s["_i"], reverse=True)  # 信号日倒序（最近在前）
+
+    base = {
+        "code": code, "days": days, "asOf": bars[-1]["date"],
+        "barSource": bar_source, "flowSource": None, "flowNote": None, "signals": [],
+        "disclaimer": "资金流验货是形态信号方向与日级资金流方向的客观交叉验证结果，"
+                      "不构成买卖建议；仅供参考，不构成投资建议。",
+    }
+    if not recent:
+        return base
+
+    ff = await _get_fund_flow_cached(code)  # 失败（双源不可用）抛 502 结构化错误（同 /fund-flow）
+    ff_items = [it for it in ff["items"] if it.get("date")]
+    ff_by_date = {it["date"]: it for it in ff_items}
+    ff_dates = [it["date"] for it in ff_items]  # 日期升序
+    label = "主力净流入" if ff["source"] == "eastmoney" else "净流入"
+
+    signals = []
+    for s in recent:
+        v = _verify_signal(s["date"], s["direction"], ff_by_date, ff_dates, label)
+        signals.append({"key": s["key"], "name": s["name"], "direction": s["direction"], **v})
+
+    base["signals"] = signals
+    base["flowSource"] = ff["source"]
+    if ff["source"] == "sina":
+        base["flowNote"] = ("资金流数据源为新浪财经降级源：仅'净流入/超大单'两档，"
+                            "且'净流入'含全部资金，与东财'主力净流入'口径不同，不可跨源对比数值。")
+    return base
+
+
+@app.get("/verify/{code}")
+async def verify_ep(code: str, days: int = Query(default=750, ge=30, le=1500)):
+    """资金流验货（F6-2）：对近约 60 个交易日的形态信号叠加日级资金流交叉验证。
+    返回 {code, days, asOf, barSource, flowSource, flowNote, signals, disclaimer}；
+    signals 按信号日倒序，每条 {key, name, direction, date, verdict(watch/neutral/doubt),
+    verdictLabel(重点观察/中性/存疑), basis, windowDates, mainNetInflowSum}。
+    分档规则为透明客观阈值（见本节头注释与 docs/FEATURES.md 第 36 节）。
+    按 (code, days) 缓存 1h。"""
+    key = (code, days)
+    hit = _verify_cache.get(key)
+    if hit is None or time.time() - hit["ts"] > _VERIFY_TTL:
+        try:
+            data = await _build_flow_verify(code, days)
+        except HTTPException:
+            raise
+        except Exception as e:
+            raise HTTPException(status_code=502, detail=f"资金流验货计算失败: {e}")
+        hit = {"ts": time.time(), "data": data}
+        _verify_cache[key] = hit
     return hit["data"]

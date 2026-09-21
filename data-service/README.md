@@ -35,6 +35,7 @@ uvicorn main:app --host 127.0.0.1 --port 8000
 | `GET /dividends/{code}?limit=10` | 个股分红送配记录（AKShare stock_history_dividend_detail，东财源，按公告日期倒序；每 10 股口径：派息元税前/送股/转增，含公告日期/除权除息日/股权登记日/进度；无效代码与从未分红均返回空数组；按代码缓存 6h，limit 上限 50） |
 | `GET /indicators/{code}?days=250` | 个股技术指标（F5-1，纯本地 pandas 计算，无新外部依赖；输入为与 /history 同源的前复权日 K）：MA/EMA/MACD/RSI/KDJ/BOLL 最新值 + 支撑/压力关键价位（近 120 日分形高低点 3% 聚类）+ 客观信号（金叉/死叉/超买超卖等状态描述，非买卖建议）+ 按日期对齐的 MA 序列（走势图叠加用，前导不足周期为 null）；days 上限 1500；指标口径见 docs/DATA_SOURCES.md |
 | `GET /patterns/{code}?days=750` | K 线形态识别 + 历史成绩单（F6-1，纯本地计算，与 /history 同源前复权日 K）：17 种经典形态（11 种 K 线组合 + 6 种价格结构，检测无未来函数），按形态聚合 {name/direction/count/recentDates(近 60 交易日)/stats}；stats 为信号日后 5/10/20 日的上涨占比/平均涨跌幅（收盘口径）/平均最大回撤（窗口内最低价口径），窗口不完整不计入；响应带 disclaimer（历史事实统计口径，不构成投资建议）；days 范围 30~1500，按 (code,days) 缓存 6h |
+| `GET /verify/{code}?days=750` | 资金流验货（F6-2：近期形态信号 × 资金流交叉验证）：对近 60 个交易日的形态信号，取信号日起最多 3 个有资金流数据的交易日的主力净流入（复用 /fund-flow 取数与降级链，新浪降级源为"净流入"口径）做方向比对，输出三档结论（watch 重点观察 / doubt 存疑 / neutral 中性，透明阈值规则见 docs/FEATURES.md 第 36 节）+ 客观依据；日级口径（分笔 tick 未接入）；无近期信号时 signals 为空且 flowSource=null；响应带 disclaimer；按 (code,days) 缓存 1h |
 | `GET /trade-calendar?year=` | 交易日历（新浪，用于跳过法定节假日） |
 | `GET /funds/rank?type=&limit=` | 开放式基金排行（天天基金，按近1年收益率降序；type 白名单：全部/股票型/混合型/债券型/指数型/QDII/FOF；按类型缓存 10 分钟） |
 | `GET /funds/search?keyword=` | 基金搜索（全量代码表缓存 24h，支持名称/代码/拼音缩写） |
