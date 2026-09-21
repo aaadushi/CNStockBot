@@ -62,13 +62,14 @@ src/
   alerts/scheduler.ts 定时任务：收盘日报（15:30 北京时间，含技术面信号摘要 F5-3）+ 盘中异动提醒（全局阈值 + 自定义多条件规则 F5-4）
   alerts/rules.ts     监控规则领域逻辑（条件类型/校验/求值/文案，纯函数，scheduler 与 manage_alerts 技能共用）
   alerts/healthProbe.ts 行情健康探针：定时探测常青股票，连续失败告警（P4）
-data-service/         Python FastAPI + AKShare 微服务（新闻/公告/财报/历史K线；AKShare 调用统一 30s 超时）
+data-service/         Python FastAPI + AKShare 微服务（新闻/公告/财报/历史K线；AKShare 调用统一 30s 超时）；含本地全市场日 K 库（baostock→SQLite data/market_bars.db，F5-5 选股扫描底座，线程内禁止裸调 AKShare，见 PITFALLS 2026-09-21 条目）
 public/webchat/       内置聊天网页
 public/stocks/        股票浏览页 + 个股详情页 SPA（F1/F2，手写 SVG 走势图）
 public/market/        全市场涨跌榜页（涨幅/跌幅/平盘三 Tab + 家数总览，东财 clist/ulist）
 public/funds/         基金版块页（F4-B：排行/ETF Tab + 搜索 + 净值走势图，数据经 data-service）
 public/overseas/      外盘联动页（F6-4：美股指数/中概股/国际金银原油 + 方向提示，数据经 data-service）
 public/sectors/       板块轮动页（F6-3：涨跌/资金流排行 + 板块详情（成分股+走势图）+ 个股→板块共振，数据经 data-service）
+public/scanner/       选股扫描页（F5-5：本地日 K 库 + 7 预设策略全市场扫描 + 库状态/手动更新，数据经 data-service）
 public/shared/        前端共享设计系统 theme.css（各页面共用，/shared 静态挂载）
 tests/                vitest 单测（npm test）；fixtures/eastmoney/ 为真实接口响应回放
 docs/                 文档库：STATUS（功能与问题）/ FEATURES（实现手册）/ PITFALLS（踩坑病例）/ AUDIT（代码审计）/ 架构与数据源
@@ -161,6 +162,8 @@ uvicorn main:app --host 127.0.0.1 --port 8000
    2026-09-19 完成**（analyze_stock 技能 + 详情页"AI 多维分析"卡），**F5-3/F5-4 轻量项
    均于 2026-09-19 完成**（盘后复盘信号摘要 + 多条件监控提醒 manage_alerts 技能）。
    剩余 F5-5/F5-6（选股扫描/回测引擎，重资产，前置：本地全市场行情库）与 F6 系列。
+   **F5-5 于 2026-09-21 完成**（本地日 K 库 + /scanner 页 + scan_market 技能 + 盘后自动更新），
+   仅剩 F5-6 回测引擎（前置已就绪：本地日 K 库 750 交易日窗口）。
    详见 [docs/STATUS.md](docs/STATUS.md) 第四节。
 5. **F6 形态识别与多维共振分析**（用户 2026-09-15 指定，参考小红书博主"递归熵"的系统）：
    K 线形态识别 + 历史成绩单（先 20 种经典形态）、资金流验货、板块轮动监控、外盘联动

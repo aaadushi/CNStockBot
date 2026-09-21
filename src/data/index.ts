@@ -8,7 +8,7 @@ import { config } from '../config.js';
 import { EastmoneyProvider } from './eastmoney.js';
 import { TencentProvider } from './tencent.js';
 import { PythonServiceProvider } from './pythonService.js';
-import type { Announcement, CompanyProfile, DataProvider, DividendRecord, EtfQuote, FinancialReport, FlowVerifyReport, FundFlow, FundInfo, FundRankItem, FundSearchItem, HistoryBar, Intraday, MarketMovers, MarketNewsItem, NewsItem, NewsSort, OverseasSummary, PatternReport, Quote, SectorCons, SectorFundFlow, SectorHistory, SectorRank, StockSectorInfo, TechnicalIndicators } from './provider.js';
+import type { Announcement, CompanyProfile, DataProvider, DividendRecord, EtfQuote, FinancialReport, FlowVerifyReport, FundFlow, FundInfo, FundRankItem, FundSearchItem, HistoryBar, Intraday, MarketBarsStatus, MarketMovers, MarketNewsItem, NewsItem, NewsSort, OverseasSummary, PatternReport, Quote, ScanResult, ScanStrategyMeta, SectorCons, SectorFundFlow, SectorHistory, SectorRank, StockSectorInfo, TechnicalIndicators } from './provider.js';
 
 class CompositeProvider implements DataProvider {
   readonly name = 'composite(eastmoney+python)';
@@ -293,6 +293,46 @@ class CompositeProvider implements DataProvider {
         `资金流验货数据不可用：${err instanceof Error ? err.message : String(err)}\n` +
           '提示：进入 data-service 目录运行 `pip install -r requirements.txt && uvicorn main:app` 启动数据微服务。',
       );
+    }
+  }
+
+  /** 选股扫描只能走微服务（本地日 K 库 + 向量化指标计算，F5-5），未启动时给出带启动提示的错误 */
+  private scannerUnavailable(err: unknown): Error {
+    return new Error(
+      `选股扫描不可用：${err instanceof Error ? err.message : String(err)}\n` +
+        '提示：进入 data-service 目录运行 `pip install -r requirements.txt && uvicorn main:app` 启动数据微服务。',
+    );
+  }
+
+  async getScanStrategies(): Promise<ScanStrategyMeta[]> {
+    try {
+      return await this.python.getScanStrategies();
+    } catch (err) {
+      throw this.scannerUnavailable(err);
+    }
+  }
+
+  async runScan(strategy: string, limit = 50): Promise<ScanResult> {
+    try {
+      return await this.python.runScan(strategy, limit);
+    } catch (err) {
+      throw this.scannerUnavailable(err);
+    }
+  }
+
+  async getMarketBarsStatus(): Promise<MarketBarsStatus> {
+    try {
+      return await this.python.getMarketBarsStatus();
+    } catch (err) {
+      throw this.scannerUnavailable(err);
+    }
+  }
+
+  async triggerMarketBarsUpdate(full = false): Promise<{ started: boolean; full: boolean }> {
+    try {
+      return await this.python.triggerMarketBarsUpdate(full);
+    } catch (err) {
+      throw this.scannerUnavailable(err);
     }
   }
 }

@@ -511,6 +511,55 @@ export interface FlowVerifyReport {
   disclaimer: string;                 // 客观交叉验证口径与免责声明（展示层必须保留）
 }
 
+// ---- 选股扫描（F5-5，2026-09-21 新增；仅微服务模式提供） ----
+
+/** 预设扫描策略元信息（data-service /scan/strategies，前端 Tab 与技能描述共用此单一事实源） */
+export interface ScanStrategyMeta {
+  key: string;         // 策略英文键，如 ma_bull
+  name: string;        // 策略中文名，如 MA 多头排列
+  description: string; // 客观口径描述（阈值透明，非买卖建议）
+}
+
+/** 扫描命中的单只股票 */
+export interface ScanResultItem {
+  code: string;
+  name: string | null;      // 名称表暂不可用时为 null
+  close: number | null;     // 数据截至日收盘价
+  changePct: number | null; // 数据截至日涨跌幅（%）
+  extra: string;            // 触发条件的具体数值一句话（如 "RSI6=17.2，处于超卖区间（≤20）"）
+}
+
+/** 全市场扫描结果（data-service /scan）。红线：客观指标筛选命中名单，展示层必须保留 disclaimer */
+export interface ScanResult {
+  strategy: string;   // 策略 key
+  name: string;       // 策略中文名
+  description: string;
+  asOf: string;       // 数据截至日期 YYYY-MM-DD（本地日 K 库最后一根 bar）
+  stale: boolean | null; // asOf 早于最近交易日为 true（数据非最新）；交易日历不可用时为 null
+  total: number;      // 命中总数（items 仅前 limit 条）
+  items: ScanResultItem[];
+  disclaimer: string;
+  note?: string;      // 降级提示（如名称表不可用导致未剔除 ST）
+}
+
+/** 本地日 K 库更新任务状态（data-service /market-bars/status） */
+export interface MarketBarsStatus {
+  running: boolean;
+  phase: 'idle' | 'backfill' | 'incremental' | 'waiting-data' | 'done' | 'failed';
+  startedAt: string | null;
+  finishedAt: string | null;
+  total: number;
+  done: number;
+  failedCount: number;
+  failed: { code: string; error: string }[];
+  todayBarsReady: boolean | null; // 当日数据是否到齐（盘后等待重试判断）
+  lastError: string | null;
+  coverage: number | null;        // 库内股票数
+  lastBarDate: string | null;     // 库内最新数据日期
+  dbSizeMb: number | null;
+}
+
+
 export interface DataProvider {
   readonly name: string;
   getQuote(code: string): Promise<Quote>;
@@ -563,4 +612,12 @@ export interface DataProvider {
   getPatterns?(code: string, days?: number): Promise<PatternReport>;
   /** 资金流验货（F6-2：近期形态信号 × 日级资金流交叉验证，分档结论）；仅微服务模式提供 */
   getFlowVerify?(code: string, days?: number): Promise<FlowVerifyReport>;
+  /** 预设扫描策略清单（F5-5）；东财直连无此能力，仅微服务模式提供 */
+  getScanStrategies?(): Promise<ScanStrategyMeta[]>;
+  /** 全市场选股扫描（F5-5：本地日 K 库 + 预设策略客观指标筛选）；仅微服务模式提供 */
+  runScan?(strategy: string, limit?: number): Promise<ScanResult>;
+  /** 本地日 K 库更新任务状态（F5-5）；仅微服务模式提供 */
+  getMarketBarsStatus?(): Promise<MarketBarsStatus>;
+  /** 触发本地日 K 库更新（F5-5，full=true 强制全量回填；单飞行，冲突 409）；仅微服务模式提供 */
+  triggerMarketBarsUpdate?(full?: boolean): Promise<{ started: boolean; full: boolean }>;
 }

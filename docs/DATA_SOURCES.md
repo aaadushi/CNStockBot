@@ -196,6 +196,37 @@ barSource/flowSource 双标注）。**口径为日级资金流**——分笔 tic
 - 三档结论只描述资金流与形态方向的客观一致性，**不含买卖建议**；响应带 disclaimer
 - 无近期信号时不拉资金流直接返回空列表（flowSource=null）；按 (code, days) 缓存 1h
 
+**baostock（已接入：本地全市场日 K 库的批量数据源，F5-5，2026-09-21）**
+
+```
+bs.login() → bs.query_history_k_data_plus("sh.600519",
+    "date,open,high,low,close,volume,amount,turn,pctChg",
+    start_date, end_date, frequency="d", adjustflag="2") → bs.logout()
+```
+- 免费 socket 会话服务，专为批量历史日 K 设计，无东财式 IP 限流——选它做全市场批量的
+  原因：东财 push2his 有一分钟约 10 次请求即封 IP 数小时的前科（见 PITFALLS）
+- **字段口径**：前复权（adjustflag='2'）；volume 单位是**股**（端点 ÷100 归一到手，
+  与新浪源同一换算，2026-09-21 实测 600519 = 1376172 股 ≈ 东财 13762 手）；
+  amount 元直存；pctChg→change_pct（%）；turn→turnover（%，停牌票为空存 NULL）；
+  停牌日行照常返回（volume=0）
+- **不覆盖北交所**（4/8/920），票池直接排除；扫描范围 = 沪深 A 股（约 5200 只）
+- 当日日 K 盘后约 17:00-18:00 才齐：更新器内建"数据未齐"等待重试（30 分钟间隔，
+  北京时间 21:00 封顶）
+- 已知坑（详见 PITFALLS 2026-09-21 baostock 条目）：长窗口查询约 5-6s/票
+  （首次全量回填数小时，断点续跑）；socket 死亡后每票静默报"网络接收错误"，
+  须熔断重连；同账号并发会话互相挂起
+
+**全市场扫描本地计算（/scan，F5-5，2026-09-21；非外部接口）**
+
+输入 = 本地日 K 库（baostock 前复权，SQLite `data-service/data/market_bars.db`）中
+全部股票最近 150 根 bar，pivot 成宽表（index=date × columns=code）后**整帧向量化**
+计算指标——口径与"技术指标本地计算"节（/indicators，F5-1）逐条一致，唯一差异是
+窗口长度（扫描 150 根 vs /indicators 默认 250 根），EMA 类指标在窗口前段有收敛差异、
+最后一行可忽略（合成数据对拍验证，容差 5e-4 含 round(3) 舍入）。7 个预设策略的
+阈值口径写在 `/scan/strategies` 端点返回的 description（单一事实源），
+实现见 `data-service/main.py` 全市场扫描节。结果缓存键含数据 asOf（盘后更新完成
+即自然失效）。ST/退市股默认剔除（名称表不可用时降级为不剔除并在 note 注明）。
+
 **新浪 MoneyFlow（直连 requests，非 AKShare，已接入 /fund-flow 降级源）**
 ```
 GET https://vip.stock.finance.sina.com.cn/quotes_service/api/json_v2.php/MoneyFlow.ssl_qsfx_zjlrqs?page=1&num=100&sort=opendate&asc=0&daima=sh600519

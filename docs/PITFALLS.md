@@ -251,6 +251,36 @@
 
 ## 3. Python / AKShare（data-service）
 
+### [2026-09-21] baostock 批量日 K：长窗口查询慢、socket 死后静默全败、并发会话互相挂起
+- **现象**（F5-5 本地日 K 库实测，三连坑）：
+  ① 单票 750 个交易日窗口的 `query_history_k_data_plus` 约 5-6s/票（短窗口如 10 天
+  则亚秒级）——全市场首次回填实测约 10 票/分钟，需数小时；
+  ② 回填中途 socket 死亡后**不抛连接异常**，之后每票都报 `baostock 查询失败: 网络接收错误`，
+  票级 2s/5s 退避重试完全无效（失败票数百级堆积，任务空转）；
+  ③ 同一账号在更新任务运行期间再开一个 `bs.login()` 会话，第二个会话**挂起无响应**
+  （无报错、无超时），疑似服务端按账号串行化。
+- **根因**：baostock 是 socket 会话协议的免费服务，长连接无心跳保活/断线感知；
+  查询耗时近似与返回行数成正比；账号级会话互斥。
+- **解法**：① 接受首次回填数小时（一次性，断点续跑可中断恢复），日常增量是短窗口
+  查询（实测亚秒/票）；② 更新器加**连续 20 票失败熔断**（`_MbReconnectNeeded`），
+  外层登出重连续跑（上限 5 次）；③ 全程单会话（login/logout 成对，finally 登出），
+  不要在更新期间手动跑 baostock 脚本。
+- **涉及文件**：`data-service/main.py`（本地日 K 库节：_mb_update_pass / _mb_update_run）
+- **预防**：用 baostock 做批量任务必须假设"连接会死"——票级重试救不了死连接，
+  要有熔断 + 会话级重连；调试时另开 baostock 会话会把线上任务拖死。
+
+### [2026-09-21] data-service 后台线程内裸调 AKShare 无超时，名称表挂起 2 分 27 秒
+- **现象**：F5-5 `/scan` 端点首次调用耗时 2m27s（正常应秒级）；`POST /market-bars/update`
+  触发时偶发 504。
+- **根因**：扫描/更新工作线程里直接调用 `_load_code_name_table()`（东财全量代码表）
+  等 AKShare 函数——`run_ak()` 的 30s 超时只在 async 端点侧生效，线程内裸调走
+  requests 默认无超时，东财限流期响应极慢时线程被无限期占住。
+- **解法**：工作线程内**禁止裸调 AKShare**——票池/交易日历/名称表一律在 async 端点
+  经 `run_ak`（必要时 `timeout=120`）预热后作为参数传入线程函数。东财全量代码表
+  限流期实测超 30s，预热超时放宽 120s（进程内缓存 24h，一次成功全天复用）。
+- **涉及文件**：`data-service/main.py`（market_bars_update / scan 端点）
+- **预防**：给 data-service 新增"线程/to_thread 里跑的任务"时，检查其中每一个
+  AKShare 调用是否都改成了端点侧预热传参。
 ### [2026-09-19] `futures_foreign_commodity_realtime` 传中文名触发列数不匹配 ValueError
 - **现象**：`ak.futures_foreign_commodity_realtime(symbol=["伦敦金"])` 报
   `ValueError: Length mismatch: Expected axis has 1 elements, new values have 15 elements`；
