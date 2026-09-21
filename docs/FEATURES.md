@@ -8,7 +8,7 @@
 > 功能现状（能用/待做/有问题）看 [STATUS.md](STATUS.md)，原理性架构看
 > [ARCHITECTURE.md](ARCHITECTURE.md)，报错排查看 [PITFALLS.md](PITFALLS.md)。
 
-最后更新：2026-09-19
+最后更新：2026-09-21
 
 ---
 
@@ -635,10 +635,11 @@
   解读口径与免责声明由 SYSTEM_PROMPT 规则 5/8 约束（分维度客观陈述、标注缺失维度、
   结尾固定"以上仅供参考，不构成投资建议"）。
 - **技能实现**：[src/skills/bundled/analyze/index.ts](../src/skills/bundled/analyze/index.ts)。
-  参数仅 `code`；`Promise.allSettled` 并发拉六块——行情/估值（getQuote）、公司资料
+  参数仅 `code`；`Promise.allSettled` 并发拉七块——行情/估值（getQuote）、公司资料
   （getProfile）、资金流（getFundFlow，15 天，含近 5 日主力净流入合计）、技术面
   （getIndicators，250 天，复用 F5-1 端点）、基本面（getFinancials，近两期）、
-  消息面（getNews，5 条**时间倒序**）。各块独立降级：单块失败/方法缺失
+  消息面（getNews，5 条**时间倒序**）、资金流验货（getFlowVerify，F6-2，2026-09-21 加入，
+  见第 36 节）。各块独立降级：单块失败/方法缺失
   （data-service 未启动）只在该块标注"暂不可用：原因"，其余块照常返回——
   与详情聚合 /api/stocks/:code 同一模式。新闻用 time 排序（分析看最新动态，
   与详情页默认热度序不同）。
@@ -835,3 +836,60 @@
 - **注意事项**：结构形态触发频率对阈值敏感（2026-09-19 实测调校：双底/顶从"任意分形对"
   收紧到"窗口显著极值"后 750 日内触发次数从 26/59 降到 4/9）；改阈值后用合成 K 线
   重跑定点识别 + 用真实数据看 count 分布两步验证。
+
+## 36. 资金流验货（"狙击手"模式，F6-2，2026-09-21 新增）
+
+- **定位**：对 F6-1 检测出的**近期触发形态**（近约 60 个交易日信号日），叠加 F3-4 资金流
+  做交叉验证，输出三档分档结论 + 客观依据。红线：只描述"资金流是否印证形态信号"这一客观
+  事实，不含买卖建议；响应与展示带"仅供参考，不构成投资建议"。
+- **data-service**（[data-service/main.py](../data-service/main.py) 文件末尾"资金流验货"节）：
+  `GET /verify/{code}?days=`（默认 750、范围 30~1500，按 (code,days) 缓存 1h）。
+  流程：`_load_bars` 取日 K（与 /history、/patterns 同源同降级链）→ `_scan_patterns`
+  复用 F6-1 形态检测取近期信号 → 有信号才调 `_get_fund_flow_cached`（/fund-flow 端点的
+  取数+降级链抽出的共用函数，按 code 缓存 60s，**缓存键与验货缓存独立**；东财五档主源、
+  新浪两档降级，source 透出）逐信号验货；无近期信号时直接返回空列表（flowSource=null，
+  不拉资金流）。资金流取数失败抛 502 结构化错误（同 /fund-flow 先例）。
+  **验货窗口与分档规则（透明客观阈值，改动须同步本节与 DATA_SOURCES）**：
+  窗口 = 信号日起往后最多 3 个有资金流数据的交易日（`_VERIFY_WINDOW=3`）；取窗口内
+  主力净流入（新浪降级源为"净流入"，口径含全部资金，basis 文案与报告级 flowNote 随
+  source 切换）非 None 的值，记 pos=为正日数、neg=为负日数、total=合计额（0 值两者都不计）：
+  - `watch`（重点观察）：total 与形态方向同号 **且** 同向日数 > 反向日数（资金流印证形态）
+  - `doubt`（存疑）：total 与形态方向反号 **且** 反向日数 > 同向日数（资金流背离形态）
+  - `neutral`（中性）：其余——正负交错 / 有效值为 0 个 / 信号日未被资金流覆盖
+    （资金流源仅含近期约 100 个交易日）/ 中性形态（十字星）无方向可比
+  **口径限制**：只用**日级资金流**——分笔 tick（如 `ak.stock_intraday_em`）稳定性未实测
+  未接入，"尾盘变化"维度因此缺失（验货场景日级已够）；新浪源只有"净流入/超大单"两档，
+  结论均基于"净流入"档。每条信号输出 {key/name/direction/date/verdict/verdictLabel/basis/
+  windowDates/mainNetInflowSum}，signals 按信号日倒序。
+- **主服务**：`DataProvider` 加 `FlowVerifyReport/FlowVerifySignal/FlowVerifyVerdict` 类型与
+  `getFlowVerify`（[src/data/provider.ts](../src/data/provider.ts)），PythonServiceProvider
+  透传 `/verify/{code}?days=`，CompositeProvider 接线（微服务未启动给带启动提示的错误）。
+  新增 `GET /api/stocks/:code/verify?days=`（口令鉴权后，days 钳到 30~1500）；
+  **不进详情聚合七块**——验货卡由前端独立拉取、失败只影响自己（同 patterns 模式）。
+- **analyze_stock 第七块**（[src/skills/bundled/analyze/index.ts](../src/skills/bundled/analyze/index.ts)
+  `fmtFlowVerify`）：聚合列表加 `getFlowVerify`（allSettled 独立降级，失败只在该块标注
+  暂不可用）；输出每个信号一行"日期 形态（方向）：分档 — 客观依据"+ 新浪口径注记 +
+  "客观交叉验证仅供参考"声明；无近期信号输出"无验货对象"。SYSTEM_PROMPT 规则 5 补了
+  验货块的解读约束（分档结论只作客观参考，不得表述为买卖信号）。
+- **详情页落点**：[public/stocks/index.html](../public/stocks/index.html) 形态分析卡下方
+  独立"资金流验货"卡（verify-card / loadVerify / renderVerify）——每个近期信号一条目：
+  信号日 + 形态名（方向）+ 分档 badge（**中性配色**：watch 用 indigo 弱化底、neutral/doubt
+  灰色，不用红涨绿跌避免暗示买卖方向）+ 客观依据；卡底注明数据截至、资金流数据源（日级
+  口径）、验货规则摘要、新浪 flowNote 与免责声明；近期无信号且无错误时整卡隐藏；全部文本
+  textContent 渲染。
+- **聊天侧决策**：不新增独立技能，验货经 analyze_stock 与详情页触达；get_stock_patterns
+  也**不**附带验货分档——避免形态查询翻倍上游调用（形态/资金流各一次上游取数），
+  需要验货的用户走多维分析即可。
+- **测试**：[tests/pythonService-verify.test.ts](../tests/pythonService-verify.test.ts)
+  8 条（URL/透传/三档分档值/空信号/新浪口径/非 200/连接失败/Composite 降级文案，fetch 全
+  mock）+ [tests/analyze.test.ts](../tests/analyze.test.ts) 验货块 4 条（齐全/独立降级/
+  方法缺失/无信号与新浪口径）。**分档规则本身在 Python 侧**，vitest 不直接覆盖——
+  边界（一致/背离/交错/无数据/未覆盖/正负日数相等/含 0 值/无信号不拉资金流）由合成数据
+  sanity check 覆盖（2026-09-21 实测 23 项全过，临时脚本未提交）。
+- **改动入口**：调分档阈值/窗口 → main.py `_grade_flow_verdict`/`_VERIFY_WINDOW` +
+  本节 + DATA_SOURCES 同步；调近期窗口 → `_VERIFY_RECENT_BARS`；调缓存 → `_VERIFY_TTL`；
+  接分笔 tick → 先实测稳定性（PITFALLS 资金流派生条目口径），再在 `_verify_signal` 里
+  加维度并同步文档
+- **注意事项**：资金流源（东财 ~100 日 / 新浪 num=100）覆盖范围外的早期信号日会判
+  "未覆盖"（neutral），不是 bug；`_fund_flow_cache` 缓存全量 items，/fund-flow 截尾、
+  /verify 按日期索引，两入口共用同一份缓存。

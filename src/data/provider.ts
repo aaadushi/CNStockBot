@@ -476,6 +476,41 @@ export interface PatternReport {
   disclaimer: string;      // 历史统计口径与免责声明（展示层必须保留）
 }
 
+// ---- 资金流验货（F6-2，2026-09-21 新增；仅微服务模式提供） ----
+
+/**
+ * 验货分档：watch=重点观察（资金流方向与形态方向一致）、doubt=存疑（方向背离）、
+ * neutral=中性（正负交错/无数据/信号日未被资金流覆盖/中性形态无方向）。
+ * 分档规则是透明客观阈值（信号日起最多 3 个有数据交易日的主力净流入合计方向 +
+ * 正负日数占优比较），完整口径见 docs/FEATURES.md 第 36 节。
+ */
+export type FlowVerifyVerdict = 'watch' | 'neutral' | 'doubt';
+
+/** 单个近期形态信号的资金流验货结果 */
+export interface FlowVerifySignal {
+  key: string;               // 形态英文键（与 PatternStat.key 一致）
+  name: string;              // 形态中文名
+  direction: PatternDirection;
+  date: string;              // 信号日 YYYY-MM-DD
+  verdict: FlowVerifyVerdict;
+  verdictLabel: string;      // 重点观察 / 中性 / 存疑
+  basis: string;             // 客观依据一句话（如"信号日起 3 个交易日中 2 日主力净流入为正，合计 +1.20 亿元，方向与看涨形态一致"）
+  windowDates: string[];     // 验货窗口（信号日 + 之后最多 3 个有资金流数据的交易日）
+  mainNetInflowSum: number | null; // 窗口内主力净流入合计（元）；无有效值为 null
+}
+
+/** 资金流验货报告（data-service /verify/{code}，按 (code,days) 缓存 1h） */
+export interface FlowVerifyReport {
+  code: string;
+  days: number;                       // 形态扫描窗口（交易日数，与 /patterns 一致）
+  asOf: string;                       // 最后一根日 K 日期 YYYY-MM-DD
+  barSource: 'eastmoney' | 'sina';    // 日 K 数据源（形态检测输入）
+  flowSource: 'eastmoney' | 'sina' | null; // 资金流数据源；无近期信号（不拉资金流）时为 null
+  flowNote: string | null;            // 新浪降级源口径提示（"净流入"含全部资金）；东财源为 null
+  signals: FlowVerifySignal[];        // 近期信号验货结果，按信号日倒序；无近期信号为空数组
+  disclaimer: string;                 // 客观交叉验证口径与免责声明（展示层必须保留）
+}
+
 export interface DataProvider {
   readonly name: string;
   getQuote(code: string): Promise<Quote>;
@@ -526,4 +561,6 @@ export interface DataProvider {
   getSectorOfStock?(code: string): Promise<StockSectorInfo>;
   /** K 线形态识别 + 历史成绩单（F6-1）；东财直连无此能力，仅微服务模式提供 */
   getPatterns?(code: string, days?: number): Promise<PatternReport>;
+  /** 资金流验货（F6-2：近期形态信号 × 日级资金流交叉验证，分档结论）；仅微服务模式提供 */
+  getFlowVerify?(code: string, days?: number): Promise<FlowVerifyReport>;
 }

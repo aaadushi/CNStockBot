@@ -130,6 +130,17 @@
     /* ---- 形态分析（F6-1） ---- */
     .pat-cell { display: flex; flex-direction: column; gap: 2px; }
     .pat-sub { font-size: 11px; color: var(--text-3); font-weight: 400; }
+    /* ---- 资金流验货（F6-2） ---- */
+    .verify-item { padding: 10px 0; border-bottom: 1px solid var(--border, #eee); }
+    .verify-item:last-child { border-bottom: none; }
+    .verify-head { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; font-size: 13px; }
+    .verify-head .v-date { color: var(--text-3); font-size: 12px; }
+    .verify-head .v-name { font-weight: 600; color: var(--text-2); }
+    .verify-basis { font-size: 12px; color: var(--text-3); margin-top: 4px; line-height: 1.6; }
+    /* 分档 badge 一律中性配色（不用红涨绿跌，避免暗示买卖方向） */
+    .v-chip { font-size: 12px; font-weight: 500; padding: 3px 10px; border-radius: 999px; }
+    .v-chip.watch { background: var(--accent-soft); color: var(--accent); }
+    .v-chip.neutral, .v-chip.doubt { background: #f4f4f5; color: var(--text-3); }
   </style>
 </head>
 <body>
@@ -235,6 +246,12 @@
       <div class="card" id="patterns-card" hidden>
         <h3 style="margin-top: 0;">形态分析</h3>
         <div id="d-patterns"></div>
+      </div>
+
+      <!-- 资金流验货（F6-2）：形态信号 × 资金流交叉验证，独立区块，失败只影响本卡 -->
+      <div class="card" id="verify-card" hidden>
+        <h3 style="margin-top: 0;">资金流验货</h3>
+        <div id="d-verify"></div>
       </div>
 
       <div class="card">
@@ -485,6 +502,8 @@
     let indicatorError = null;
     let patternsData = null;    // 形态识别 + 历史成绩单（F6-1）；null=未加载/失败
     let patternsError = null;
+    let verifyData = null;      // 资金流验货（F6-2）；null=未加载/失败
+    let verifyError = null;
     let cachedBars = null;      // 日 K 数据缓存（指标后到时补画均线用）
 
     function goDetail(code, name) {
@@ -528,8 +547,10 @@
       $('dividend-card').hidden = true;
       $('indicator-card').hidden = true;
       $('patterns-card').hidden = true;
+      $('verify-card').hidden = true;
       indicatorData = null; indicatorError = null; cachedBars = null;
       patternsData = null; patternsError = null;
+      verifyData = null; verifyError = null;
       aiState = { code, text: '', error: '', loading: false }; // 切换股票时清掉上一只的分析结果
       renderAi();
       renderTab();
@@ -548,6 +569,7 @@
       loadHistory();
       loadIndicators();
       loadPatterns();
+      loadVerify();
     }
 
     /* ---- 形态分析（F6-1）：独立于详情聚合拉取（统计窗口约 3 年日 K），失败只影响本卡 ---- */
@@ -639,6 +661,55 @@
         '口径：形态信号日之后 5/10/20 个交易日的实际走势汇总（上涨占比/平均涨跌幅按收盘价，最大回撤按窗口内最低价相对信号日收盘）。'));
       box.appendChild(el('div', 'flow-note',
         patternsData.disclaimer || '形态统计为历史事实口径，不代表未来表现，仅供参考，不构成投资建议。'));
+    }
+
+    /* ---- 资金流验货（F6-2）：独立于详情聚合拉取，失败只影响本卡（同形态卡模式） ---- */
+    async function loadVerify() {
+      try {
+        const res = await apiFetch(`/api/stocks/${currentCode}/verify`);
+        const data = await res.json();
+        if (currentCode !== new URLSearchParams(location.search).get('code')) return; // 已切换
+        verifyData = data.verify || null;
+        verifyError = data.error || null;
+      } catch (e) {
+        verifyData = null;
+        verifyError = e.message;
+      }
+      renderVerify();
+    }
+
+    // 资金流验货卡：每个近期触发形态一条目（分档 badge + 客观依据），中性配色避免暗示买卖方向；
+    // 无信号且无错误时整块隐藏；全部文本 textContent 渲染。
+    function renderVerify() {
+      const card = $('verify-card');
+      const box = $('d-verify');
+      box.replaceChildren();
+      if (!verifyData && !verifyError) { card.hidden = true; return; }
+      if (!verifyData) {
+        card.hidden = false;
+        box.appendChild(el('div', 'block-error', '资金流验货暂不可用：' + (verifyError || '未知原因')));
+        return;
+      }
+      const signals = verifyData.signals || [];
+      if (signals.length === 0) { card.hidden = true; return; } // 近期无形态信号则无验货对象，不占位
+      card.hidden = false;
+      for (const s of signals) {
+        const item = el('div', 'verify-item');
+        const head = el('div', 'verify-head');
+        head.appendChild(el('span', 'v-date', s.date));
+        head.appendChild(el('span', 'v-name', `${s.name}（${s.direction}）`));
+        head.appendChild(el('span', 'v-chip ' + (s.verdict || 'neutral'), s.verdictLabel || '中性'));
+        item.appendChild(head);
+        item.appendChild(el('div', 'verify-basis', s.basis || ''));
+        box.appendChild(item);
+      }
+      const flowSrc = verifyData.flowSource === 'sina' ? '新浪财经（降级源）' : '东方财富';
+      box.appendChild(el('div', 'flow-note',
+        `数据截至 ${verifyData.asOf} · 资金流数据源：${flowSrc}（日级口径） · ` +
+        '验货规则：信号日起最多 3 个有数据交易日的主力净流入方向与形态方向比对（规则明细见文档）。'));
+      if (verifyData.flowNote) box.appendChild(el('div', 'flow-note', verifyData.flowNote));
+      box.appendChild(el('div', 'flow-note',
+        verifyData.disclaimer || '验货结论为客观数据交叉验证结果，仅供参考，不构成投资建议。'));
     }
 
     /* ---- 技术指标（F5-1）：独立于详情聚合拉取，失败只影响指标卡与均线叠加 ---- */

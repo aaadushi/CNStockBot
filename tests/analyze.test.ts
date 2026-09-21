@@ -1,6 +1,6 @@
 /**
  * analyze_stock 技能（F5-2）单测：
- * 1) 代码校验；2) 六块聚合的格式化输出；3) 单块失败独立降级；
+ * 1) 代码校验；2) 七块聚合的格式化输出（含 F6-2 资金流验货块）；3) 单块失败独立降级；
  * 4) 可选方法缺失（data-service 未启动）提示；5) 新浪资金流降级源口径标注。
  * DataProvider 全部 mock，不发起真实网络请求。
  */
@@ -11,6 +11,7 @@ import type {
   DataProvider,
   Quote,
   CompanyProfile,
+  FlowVerifyReport,
   FundFlow,
   TechnicalIndicators,
   FinancialReport,
@@ -86,6 +87,29 @@ const NEWS: NewsItem[] = [
   { title: '白酒板块午后拉升', publishedAt: '2026-09-17 14:30' },
 ];
 
+const FLOW_VERIFY: FlowVerifyReport = {
+  code: '600519',
+  days: 750,
+  asOf: '2026-09-18',
+  barSource: 'eastmoney',
+  flowSource: 'eastmoney',
+  flowNote: null,
+  signals: [
+    {
+      key: 'bull_engulf',
+      name: '看涨吞没',
+      direction: '看涨',
+      date: '2026-09-10',
+      verdict: 'watch',
+      verdictLabel: '重点观察',
+      basis: '信号日（2026-09-10）起 3 个交易日中 2 日主力净流入为正，合计+1.20 亿元，方向与看涨形态一致',
+      windowDates: ['2026-09-10', '2026-09-11', '2026-09-14'],
+      mainNetInflowSum: 1.2e8,
+    },
+  ],
+  disclaimer: '资金流验货是形态信号方向与日级资金流方向的客观交叉验证结果……仅供参考，不构成投资建议。',
+};
+
 function makeCtx(overrides: Partial<DataProvider> = {}): SkillContext {
   const data: Partial<DataProvider> = {
     name: 'mock',
@@ -95,6 +119,7 @@ function makeCtx(overrides: Partial<DataProvider> = {}): SkillContext {
     getIndicators: vi.fn(async () => INDICATORS),
     getFinancials: vi.fn(async () => FINANCIALS),
     getNews: vi.fn(async () => NEWS),
+    getFlowVerify: vi.fn(async () => FLOW_VERIFY),
     ...overrides,
   };
   return { userId: 'test-user', store: {} as Store, data: data as DataProvider };
@@ -108,7 +133,7 @@ describe('analyze_stock 技能', () => {
     expect(ctx.data.getQuote).not.toHaveBeenCalled();
   });
 
-  it('六块数据齐全时输出完整快照（含各块标题与关键数值）', async () => {
+  it('七块数据齐全时输出完整快照（含各块标题与关键数值）', async () => {
     const text = await skill.execute({ code: '600519' }, makeCtx());
     expect(text).toContain('贵州茅台（600519）多维数据快照');
     expect(text).toContain('【行情与估值】');
@@ -129,6 +154,11 @@ describe('analyze_stock 技能', () => {
     expect(text).toContain('2026-06-30：营收 900亿元，净利润 450亿元，ROE 18.5%');
     expect(text).toContain('【消息面（最新 5 条新闻）】');
     expect(text).toContain('1. 贵州茅台发布半年报（2026-09-18 10:00）');
+    // F6-2 资金流验货块：分档结论 + 客观依据 + 口径声明
+    expect(text).toContain('【资金流验货】');
+    expect(text).toContain('2026-09-10 看涨吞没（看涨）：重点观察');
+    expect(text).toContain('方向与看涨形态一致');
+    expect(text).toContain('客观交叉验证，仅供参考，不构成投资建议');
     // 红线提示：技能结果内嵌对 LLM 的约束
     expect(text).toContain('不得给出买卖建议');
   });
@@ -173,15 +203,47 @@ describe('analyze_stock 技能', () => {
       getFundFlow: undefined,
       getIndicators: undefined,
       getFinancials: undefined,
+      getFlowVerify: undefined,
     });
     const text = await skill.execute({ code: '600519' }, ctx);
     expect(text).toContain('【公司资料】暂不可用：数据源不支持公司资料（需启动 data-service 数据微服务）');
     expect(text).toContain('【资金流】暂不可用：数据源不支持资金流');
     expect(text).toContain('【技术面】暂不可用：数据源不支持技术指标');
     expect(text).toContain('【基本面（近两期财报）】暂不可用：数据源不支持财报');
+    expect(text).toContain('【资金流验货】暂不可用：数据源不支持资金流验货');
     // 行情与新闻不依赖 data-service，正常返回
     expect(text).toContain('最新价 1500.00 元');
     expect(text).toContain('1. 贵州茅台发布半年报');
+  });
+
+  it('资金流验货失败独立降级：只影响该块，其余正常', async () => {
+    const ctx = makeCtx({
+      getFlowVerify: vi.fn(async () => {
+        throw new Error('资金流验货数据不可用');
+      }),
+    });
+    const text = await skill.execute({ code: '600519' }, ctx);
+    expect(text).toContain('【资金流验货】暂不可用：资金流验货数据不可用');
+    expect(text).toContain('【行情与估值】');
+    expect(text).toContain('【消息面（最新 5 条新闻）】');
+  });
+
+  it('近期无形态信号时验货块输出无验货对象', async () => {
+    const ctx = makeCtx({
+      getFlowVerify: vi.fn(async () => ({ ...FLOW_VERIFY, signals: [], flowSource: null })),
+    });
+    const text = await skill.execute({ code: '600519' }, ctx);
+    expect(text).toContain('【资金流验货】');
+    expect(text).toContain('无验货对象');
+  });
+
+  it('验货资金流为新浪降级源时注明口径差异', async () => {
+    const ctx = makeCtx({
+      getFlowVerify: vi.fn(async () => ({ ...FLOW_VERIFY, flowSource: 'sina' as const })),
+    });
+    const text = await skill.execute({ code: '600519' }, ctx);
+    expect(text).toContain('新浪财经降级源');
+    expect(text).toContain('口径不同');
   });
 
   it('新浪降级源资金流：标签改"净流入"并注明口径差异', async () => {
