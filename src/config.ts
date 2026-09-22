@@ -80,11 +80,15 @@ export const config = {
     pushEnabled: process.env.SCANNER_PUSH_ENABLED === 'true',
   },
 
-  /** 行情健康探针：定时探测常青股票，连续失败即判定行情链路故障并告警 */
+  /** 行情健康探针：定时探测常青股票，连续失败即判定行情链路故障（状态入 /health + 服务端日志） */
   healthProbe: {
     enabled: process.env.HEALTH_PROBE_ENABLED !== 'false',
     intervalMinutes: numEnv('HEALTH_PROBE_INTERVAL_MINUTES', 30, 1),
     code: process.env.HEALTH_PROBE_CODE ?? '600519',
+    // 故障/恢复是否主动推送到聊天端。默认关：告警对客户端透明（2026-09-22 用户反馈
+    // 告警/恢复推送在无对话时反复弹消息），查询失败由技能层在对话内当场转述；
+    // 探针状态仍可从 /health 的 quoteProbe 与服务端日志观察。设 'true' 恢复推送。
+    alertPush: process.env.HEALTH_PROBE_ALERT_PUSH === 'true',
   },
 
   feishu: {
