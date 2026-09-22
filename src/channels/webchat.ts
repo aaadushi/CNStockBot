@@ -8,6 +8,7 @@
  * - GET  /overseas                外盘联动静态页面（public/overseas/，F6-4），不鉴权
  * - GET  /sectors                 板块轮动静态页面（public/sectors/），不鉴权
  * - GET  /scanner                 选股扫描静态页面（public/scanner/，F5-5），不鉴权
+ * - GET  /backtest                策略回测静态页面（public/backtest/，F5-6），不鉴权
  * - GET  /shared                  前端共享静态资源（public/shared/），不鉴权
  * - POST /api/chat                { userId, message } -> { reply }
  * - GET  /api/inbox?userId=       拉取离线通知（读后即删）
@@ -38,6 +39,7 @@
  * - GET  /api/scanner/scan?strategy=&limit=  全市场选股扫描（需 data-service，F5-5）
  * - GET  /api/scanner/status              本地日 K 库更新状态（需 data-service，F5-5）
  * - POST /api/scanner/update              触发日 K 库更新 {full?}（需 data-service，F5-5）
+ * - GET  /api/backtest?code=&strategy=&holdDays=&stopLossPct=&days=  单股策略回测（需 data-service，F5-6）
  *
  * 鉴权：所有 /api/* 请求需带请求头 `Authorization: Bearer <ACCESS_TOKEN>`，
  * 口令来自 config.accessToken（.env 的 ACCESS_TOKEN，未配置时启动时随机生成并打印）。
@@ -71,6 +73,7 @@ const NEWS_ROOT = path.resolve(__dirname, '../../public/news');
 const OVERSEAS_ROOT = path.resolve(__dirname, '../../public/overseas');
 const SECTORS_ROOT = path.resolve(__dirname, '../../public/sectors');
 const SCANNER_ROOT = path.resolve(__dirname, '../../public/scanner');
+const BACKTEST_ROOT = path.resolve(__dirname, '../../public/backtest');
 const SHARED_ROOT = path.resolve(__dirname, '../../public/shared');
 
 /** 股票代码统一校验：6 位数字 */
@@ -157,6 +160,7 @@ export class WebChatChannel implements Channel {
     app.use('/overseas', express.static(OVERSEAS_ROOT));
     app.use('/sectors', express.static(SECTORS_ROOT));
     app.use('/scanner', express.static(SCANNER_ROOT));
+    app.use('/backtest', express.static(BACKTEST_ROOT));
     app.use('/shared', express.static(SHARED_ROOT));
 
     // 只保护 /api/*，静态资源（/webchat、/stocks、/market、/news、/shared）不鉴权
@@ -701,6 +705,40 @@ export class WebChatChannel implements Channel {
       } catch (err) {
         const msg = errText(err);
         res.status(msg.includes('409') ? 409 : 500).json({ error: msg });
+      }
+    });
+
+    // ---- 策略回测 API（F5-6，2026-09-22；依赖 data-service 本地日 K 库） ----
+
+    // 单股策略回测（历史信号回放：T+1/费用/滑点/止损，结果带 disclaimer——历史业绩不代表未来）
+    app.get('/api/backtest', async (req, res) => {
+      if (!this.data.runBacktest) {
+        res.status(503).json({ error: '策略回测需要 data-service（AKShare 微服务），请确认已启动' });
+        return;
+      }
+      const code = String(req.query.code ?? '').trim();
+      if (!CODE_RE.test(code)) {
+        res.status(400).json({ error: 'code 必须是 6 位数字' });
+        return;
+      }
+      const strategy = String(req.query.strategy ?? '').trim() || undefined;
+      if (strategy && strategy.length > 30) {
+        res.status(400).json({ error: 'strategy 参数过长' });
+        return;
+      }
+      const numParam = (raw: unknown): number | undefined => {
+        const v = Number.parseInt(String(raw ?? ''), 10);
+        return Number.isNaN(v) ? undefined : v;
+      };
+      try {
+        res.json(await this.data.runBacktest(code, {
+          strategy,
+          holdDays: numParam(req.query.holdDays),
+          stopLossPct: numParam(req.query.stopLossPct),
+          days: numParam(req.query.days),
+        }));
+      } catch (err) {
+        res.status(500).json({ error: errText(err) });
       }
     });
   }

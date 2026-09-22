@@ -958,3 +958,49 @@
   除权平移，增量更新只回退 10 个日历日，更早期历史逐渐陈旧——扫描只用近期 150 根，
   影响有限，需要精确时 `POST /market-bars/update?full=true` 全量刷新。
 
+
+## 38. 策略回测（/backtest，F5-6，2026-09-22 新增）
+
+- **定位**：在本地日 K 库（F5-5，第 37 节）上对**单只股票**做预设策略的历史信号回放与
+  收益统计——真实 A 股交易规则（T+1、整手、佣金/印花税/滑点、止损、持有期）。
+  红线：回测是历史客观回放，响应带"历史业绩不代表未来，不构成投资建议"的 disclaimer，
+  页面显著位置保留。
+- **data-service**（[data-service/main.py](../data-service/main.py) 文件末尾"回测引擎"节）：
+  `GET /backtest/{code}?strategy=&hold_days=&stop_loss_pct=&days=`。
+  策略复用全市场扫描同 7 个预设 key，信号掩码与扫描**同一公式集**（`_wide_indicators`，
+  pandas Series 语义一致）；状态类条件取上升沿（条件首次成立日）防每日重复开仓。
+  交易规则：信号日次日开盘价 +0.1% 滑点买入、固定本金 10 万整手（资金不足跳过）、
+  T+1（买入日不卖）、止损=买入价×(1-p%) 盘中最低价触及按 min(开盘,止损价) 成交、
+  持有期满（5/10/20/60 白名单）收盘卖出、数据末端强平（data_end，计入净值不计入胜率）、
+  佣金万 2.5 双边（最低 5 元）+ 卖出印花税 0.05%、同一时间只持有一笔（持仓期新信号
+  计入 skippedSignals）。完整口径见 DATA_SOURCES"策略回测本地计算"节。
+  响应：params/rules/stats（胜率/平均单笔/盈亏比/最大回撤/累计 vs 买入持有基准）/
+  trades（逐笔信号日/买卖价/原因/净收益）/equityCurve（日级净值 vs 基准）/disclaimer。
+  缓存键含数据 asOf（同扫描模式）。参数校验：code 非 6 位 400、北交所 400（仅沪深）、
+  未知策略/参数出白名单 400、库中无票 404、bar 数 <90 回 422、库空 503。
+- **主服务**：`DataProvider` 加 `BacktestOptions/BacktestTrade/BacktestStats/BacktestResult`
+  类型与 `runBacktest` 可选方法；PythonServiceProvider 透传（客户端超时 150s，覆盖冷启动
+  名称表预热），CompositeProvider 接线（复用 scannerUnavailable 降级文案）。
+  webchat.ts 挂 `/backtest` 静态页与 `GET /api/backtest`（口令鉴权后，code 6 位校验，
+  数值参数 NaN 回退默认由微服务白名单校验兜底）。
+- **网页**：`/backtest` 独立导航页（[public/backtest/index.html](../public/backtest/index.html)）：
+  条件卡（代码输入 + /api/search datalist 搜索建议 + 策略下拉（/api/scanner/strategies
+  动态渲染）+ 持有期/止损下拉）+ 统计格（累计/基准/超额/最大回撤/胜率/盈亏比等，
+  涨跌红绿配色）+ 净值曲线 SVG（策略 vs 买入持有双线、本金参考虚线、hover tooltip）+
+  交易明细表（倒序）+ 规则说明 + 显著免责声明条；支持 ?code= 预填自动回测；
+  全部 textContent 渲染；9 个页面页头加"🧪 回测"导航。
+- **聊天侧决策**：不新增独立技能（路线图落点为数据层+新页面；回测参数组合多，
+  对话交互不如网页表单合适）。
+- **测试**：[tests/pythonService-backtest.test.ts](../tests/pythonService-backtest.test.ts)
+  6 条（URL 默认/显式参数、null 透传、404/连接失败、Composite 降级文案，fetch 全 mock）。
+  **回测引擎本体在 Python 侧**：信号上升沿、T+1、止损/跳空成交、费用与整手数学、
+  data_end 不计入统计、持仓期信号忽略、缓存失效等由合成数据 sanity check 覆盖
+  （2026-09-22 实测 26 项全过，临时脚本未提交）；另用真实库数据（000001，729 根 bar）
+  实测 ma_cross_up/rsi_oversold/macd_gold 三策略结果合理。
+- **改动入口**：调交易规则/费用 → main.py 回测节常量（_BT_*）+ DATA_SOURCES 同步；
+  加策略 → `_bt_signal_mask` + `_SCAN_STRATEGIES`（与扫描共用 key）；调持有期/止损
+  白名单 → `_BT_HOLD_DAYS_CHOICES`/`_BT_STOP_LOSS_CHOICES` + 页面下拉同步
+- **注意事项**：回测口径是 baostock 前复权（与扫描同库），与详情页 /indicators 的
+  东财/新浪前复权有复权因子精度差异（<0.5%），不作逐位一致性承诺；前复权历史值随新
+  除权平移，长窗口回测的早期交易价格为平移后口径（相对比较不受影响，绝对价格与
+  当时真实成交价有偏差，需要精确时 full=true 全量刷新日 K 库）。

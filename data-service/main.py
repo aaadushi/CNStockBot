@@ -3274,3 +3274,297 @@ async def scan(strategy: str = Query(min_length=1), limit: int = Query(default=5
         raise
     except Exception as e:
         raise HTTPException(status_code=502, detail=f"扫描计算失败: {e}")
+
+
+# ================= 回测引擎（F5-6，2026-09-22） =================
+# 在本地日 K 库（F5-5）上对单只股票做预设策略的历史信号回放与收益统计。
+# 纯本地计算（SQLite 读 + pandas），无新外部依赖。
+# 交易规则（真实 A 股约束，全部透明披露，随响应 rules 字段返回）：
+# - 信号：与全市场扫描同口径的 7 个预设策略逐日判定（同一公式集 _wide_indicators）；
+#   状态类条件（如 RSI 超卖、MA 多头排列）以"条件首次成立日"（上升沿）为信号日，
+#   避免同一状态每日重复开仓；事件类条件（金叉）掩码本身即沿。
+# - 买入：信号日**次日开盘价** + 滑点成交（信号基于收盘数据，当日已无法按信号价成交）；
+#   固定本金 _BT_CAPITAL 按整手（100 股）买入，资金不足一手（高价股）跳过该信号。
+# - T+1：买入当日不可卖出，最早次日可卖。
+# - 卖出（先到先触发）：① 止损（stop_loss_pct>0 时）：买入价 ×(1-p%)，盘中最低价触及
+#   即成交，成交价 = min(当日开盘价, 止损价)（跳空低开按开盘价，更保守）；
+#   ② 持有期满：买入后第 hold_days 个交易日按收盘价卖出；
+#   ③ 数据末端强制平仓（reason=data_end）：计入净值曲线但**不计入**胜率等闭环统计
+#   （口径与 F6-1"窗口不完整不计入"一致）。
+# - 费用：佣金万 2.5 双边（单笔最低 5 元）+ 卖出印花税 0.05%（2023-08-28 起减半后税率）
+#   + 双边滑点 0.1%。
+# - 同一时间只持有一笔：持仓期间出现的新信号忽略，计入 skippedSignals。
+# 净值曲线按日盯市（现金 + 持仓市值），基准为同区间买入持有（首根收盘买入、末根收盘卖出）。
+# 红线：回测是对历史数据的客观回放，结果不构成投资建议；响应带 disclaimer，展示层必须保留。
+
+_BT_CAPITAL = 100_000          # 固定本金（元），整手买入
+_BT_COMMISSION_RATE = 0.00025  # 佣金万 2.5，双边
+_BT_COMMISSION_MIN = 5.0       # 单笔最低佣金（元）
+_BT_STAMP_TAX = 0.0005         # 卖出印花税 0.05%
+_BT_SLIPPAGE = 0.001           # 双边滑点 0.1%
+_BT_HOLD_DAYS_CHOICES = (5, 10, 20, 60)   # 持有期白名单（交易日）
+_BT_STOP_LOSS_CHOICES = (0, 3, 5, 7, 10)  # 止损白名单（%，0=不止损）
+_BT_MIN_BARS = 90              # 数据不足该 bar 数不回测（MA60/BOLL 收敛 + 统计意义下限）
+
+_BT_DISCLAIMER = ("回测是对历史数据的客观回放（含 T+1、佣金、印花税、滑点），"
+                  "历史业绩不代表未来表现，不构成任何投资建议。")
+
+_bt_cache: dict = {"asOf": None, "results": {}}
+
+
+def _bt_load_bars(code: str, days: int):
+    """从本地日 K 库读单票最近 days 根 bar（日期升序 DataFrame）；无数据返回 None。"""
+    conn = _mb_db()
+    df = pd.read_sql_query(
+        "SELECT date, open, close, high, low, volume FROM ("
+        "  SELECT date, open, close, high, low, volume FROM bars WHERE code = ?"
+        "  ORDER BY date DESC LIMIT ?"
+        ") ORDER BY date",
+        conn, params=(code, days),
+    )
+    return df if len(df) > 0 else None
+
+
+def _bt_signal_mask(strategy: str, df):
+    """单股逐日信号掩码（与全市场扫描同一公式集 _wide_indicators；pandas 对 Series 与
+    DataFrame 的 rolling/ewm 语义一致，天然同口径）。返回"信号日"布尔 Series：
+    状态类条件取上升沿（条件首次成立日），事件类（金叉）掩码本身即沿。"""
+    c, v = df["close"], df["volume"]
+    panel = {"open": df["open"], "close": c, "high": df["high"], "low": df["low"], "volume": v}
+    ind = _wide_indicators(panel)
+    if strategy == "ma_bull":
+        m = ((c > ind["ma5"]) & (ind["ma5"] > ind["ma10"])
+             & (ind["ma10"] > ind["ma20"]) & (ind["ma20"] > ind["ma60"]))
+    elif strategy == "macd_gold":
+        m = (ind["dif"].shift(1) <= ind["dea"].shift(1)) & (ind["dif"] > ind["dea"])
+    elif strategy == "rsi_oversold":
+        m = ind["rsi6"] <= 20
+    elif strategy == "vol_break_20d":
+        m = (c > ind["high_20d"]) & (v > 2 * ind["vol_ma20"])
+    elif strategy == "pullback_ma20":
+        m = (((c / ind["ma20"] - 1).abs() <= 0.02) & (v < 0.8 * ind["vol_ma20"])
+             & (ind["ma20"] > ind["ma20"].shift(5)))
+    elif strategy == "boll_lower":
+        m = c < ind["boll_dn"]
+    elif strategy == "ma_cross_up":
+        m = (ind["ma5"].shift(1) <= ind["ma20"].shift(1)) & (ind["ma5"] > ind["ma20"])
+    else:
+        raise ValueError(f"未知策略: {strategy}")
+    m = m.fillna(False)
+    return m & ~m.shift(1, fill_value=False)
+
+
+_BT_REASON_LABEL = {"hold": "持有期满", "stop": "止损触发", "data_end": "数据末端平仓"}
+
+
+def _bt_run(code: str, df, strategy: str, hold_days: int, stop_loss_pct: int,
+            name, days: int, as_of: str) -> dict:
+    """单票策略回测主流程（线程内运行，纯本地计算）。返回端点响应主体。"""
+    n = len(df)
+    dates = df["date"].tolist()
+    o = df["open"].to_numpy(dtype=float)
+    cl = df["close"].to_numpy(dtype=float)
+    lo = df["low"].to_numpy(dtype=float)
+    mask = _bt_signal_mask(strategy, df).to_numpy()
+
+    trades = []
+    skipped = 0
+    equity = []
+    cash = float(_BT_CAPITAL)
+    shares = 0
+    cur = None        # 当前持仓 {signalDate, buyIdx, buyPrice, shares, feeBuy}
+    stop_price = None
+    pending_buy = None  # 信号日下标，次日开盘买入
+
+    for idx in range(n):
+        # 1) 开盘买入（昨日信号；持仓中不会有 pending）
+        if pending_buy is not None:
+            bp = o[idx] * (1 + _BT_SLIPPAGE)
+            sh = int(_BT_CAPITAL // (bp * 100)) * 100
+            if sh > 0:
+                cost = sh * bp
+                fee_buy = max(_BT_COMMISSION_MIN, cost * _BT_COMMISSION_RATE)
+                cash -= cost + fee_buy
+                cur = {"signalDate": dates[pending_buy], "buyIdx": idx,
+                       "buyPrice": bp, "shares": sh, "feeBuy": fee_buy}
+                shares = sh
+                stop_price = bp * (1 - stop_loss_pct / 100) if stop_loss_pct > 0 else None
+            else:
+                skipped += 1  # 本金不足一手（高价股）
+            pending_buy = None
+        # 2) 卖出检查（T+1：买入日不卖）
+        if cur is not None and idx > cur["buyIdx"]:
+            sell = None
+            if stop_price is not None and lo[idx] <= stop_price:
+                sell = (min(o[idx], stop_price), "stop")
+            elif idx - cur["buyIdx"] >= hold_days:
+                sell = (cl[idx], "hold")
+            elif idx == n - 1:
+                sell = (cl[idx], "data_end")
+            if sell is not None:
+                sp = sell[0] * (1 - _BT_SLIPPAGE)
+                proceeds = cur["shares"] * sp
+                fee_sell = (max(_BT_COMMISSION_MIN, proceeds * _BT_COMMISSION_RATE)
+                            + proceeds * _BT_STAMP_TAX)
+                cash += proceeds - fee_sell
+                invested = cur["shares"] * cur["buyPrice"] + cur["feeBuy"]
+                pnl = proceeds - fee_sell - invested
+                trades.append({
+                    "signalDate": cur["signalDate"],
+                    "buyDate": dates[cur["buyIdx"]],
+                    "buyPrice": _f3(cur["buyPrice"]),
+                    "sellDate": dates[idx],
+                    "sellPrice": _f3(sp),
+                    "holdDays": idx - cur["buyIdx"],
+                    "reason": sell[1],
+                    "reasonLabel": _BT_REASON_LABEL[sell[1]],
+                    "retPct": _f3(pnl / invested * 100),
+                    "pnl": _f3(pnl),
+                })
+                cur = None
+                shares = 0
+                stop_price = None
+        # 3) 收盘盯市 + 新信号（持仓中忽略；最后一根 bar 的信号无法成交，记跳过）
+        equity.append(cash + shares * cl[idx])
+        if mask[idx]:
+            if cur is None and pending_buy is None and idx < n - 1:
+                pending_buy = idx
+            else:
+                skipped += 1
+
+    # ---- 统计（闭环交易口径：data_end 强平不计入胜率等统计） ----
+    closed = [t for t in trades if t["reason"] != "data_end"]
+    rets = [t["retPct"] for t in closed]
+    wins = [t for t in closed if t["retPct"] > 0]
+    losses = [t for t in closed if t["retPct"] <= 0]
+    gross_win = sum(t["pnl"] for t in wins)
+    gross_loss = sum(t["pnl"] for t in losses)
+    bench = [_BT_CAPITAL * c / cl[0] for c in cl]
+    peak = -float("inf")
+    max_dd = 0.0
+    for e in equity:
+        peak = max(peak, e)
+        max_dd = min(max_dd, (e - peak) / peak * 100)
+    total_ret = equity[-1] / _BT_CAPITAL - 1
+    bench_ret = cl[-1] / cl[0] - 1
+
+    defn = _SCAN_STRATEGY_MAP[strategy]
+    stop_txt = "不止损" if stop_loss_pct == 0 else f"止损 {stop_loss_pct}%"
+    return {
+        "code": code,
+        "name": name,
+        "strategy": strategy,
+        "strategyName": defn["name"],
+        "strategyDesc": defn["description"],
+        "asOf": as_of,
+        "days": days,
+        "bars": n,
+        "params": {
+            "holdDays": hold_days,
+            "stopLossPct": stop_loss_pct,
+            "capital": _BT_CAPITAL,
+            "commissionRate": _BT_COMMISSION_RATE,
+            "commissionMin": _BT_COMMISSION_MIN,
+            "stampTax": _BT_STAMP_TAX,
+            "slippage": _BT_SLIPPAGE,
+        },
+        "rules": (f"信号日次日开盘价买入（滑点 0.1%），固定本金 {_BT_CAPITAL} 元整手买入；"
+                  f"T+1（买入当日不可卖）；持有 {hold_days} 个交易日收盘卖出，{stop_txt}"
+                  "（盘中触及按 min(当日开盘, 止损价) 成交）；佣金万 2.5 双边（最低 5 元）"
+                  "＋卖出印花税 0.05%；同一时间只持有一笔，持仓期间新信号忽略；"
+                  "数据末端强制平仓的交易不计入胜率统计。"),
+        "stats": {
+            "trades": len(trades),
+            "closedTrades": len(closed),
+            "winRate": _f3(len(wins) / len(closed) * 100) if closed else None,
+            "avgRetPct": _f3(sum(rets) / len(rets)) if rets else None,
+            "avgWinPct": _f3(sum(t["retPct"] for t in wins) / len(wins)) if wins else None,
+            "avgLossPct": _f3(sum(t["retPct"] for t in losses) / len(losses)) if losses else None,
+            "profitFactor": _f3(gross_win / abs(gross_loss)) if gross_loss < 0 else None,
+            "bestRetPct": _f3(max(rets)) if rets else None,
+            "worstRetPct": _f3(min(rets)) if rets else None,
+            "avgHoldDays": _f3(sum(t["holdDays"] for t in closed) / len(closed)) if closed else None,
+            "totalRetPct": _f3(total_ret * 100),
+            "maxDrawdownPct": _f3(max_dd),
+            "benchmarkRetPct": _f3(bench_ret * 100),
+            "excessRetPct": _f3((total_ret - bench_ret) * 100),
+            "finalEquity": _f3(equity[-1]),
+        },
+        "skippedSignals": skipped,
+        "trades": trades,
+        "equityCurve": [{"date": dates[i], "equity": _f3(equity[i]),
+                         "benchmark": _f3(bench[i])} for i in range(n)],
+        "disclaimer": _BT_DISCLAIMER,
+    }
+
+
+def _bt_cached(code: str, strategy: str, hold_days: int, stop_loss_pct: int,
+               days: int, name) -> dict:
+    """回测结果缓存：键含数据 asOf（盘后更新完成即自然失效），不设 TTL。"""
+    conn = _mb_db()
+    as_of = conn.execute("SELECT MAX(date) FROM bars").fetchone()[0]
+    if as_of is None:
+        raise HTTPException(status_code=503,
+                            detail="本地日 K 库为空，请先触发 POST /market-bars/update 回填数据")
+    if _bt_cache["asOf"] != as_of:
+        _bt_cache["asOf"] = as_of
+        _bt_cache["results"] = {}
+    key = (code, strategy, hold_days, stop_loss_pct, days)
+    if key not in _bt_cache["results"]:
+        df = _bt_load_bars(code, days)
+        if df is None:
+            raise HTTPException(status_code=404,
+                                detail=f"本地日 K 库中无 {code} 的数据（仅覆盖沪深 A 股）")
+        if len(df) < _BT_MIN_BARS:
+            raise HTTPException(
+                status_code=422,
+                detail=f"{code} 本地数据仅 {len(df)} 根日 K（不足 {_BT_MIN_BARS} 根），无法回测")
+        _bt_cache["results"][key] = _bt_run(code, df, strategy, hold_days,
+                                            stop_loss_pct, name, days, as_of)
+    return _bt_cache["results"][key]
+
+
+@app.get("/backtest/{code}")
+async def backtest(
+    code: str,
+    strategy: str = Query(default="ma_bull"),
+    hold_days: int = Query(default=20),
+    stop_loss_pct: int = Query(default=7),
+    days: int = Query(default=750, ge=120, le=750),
+):
+    """单股策略回测（F5-6）：本地日 K 库 + 预设策略历史信号回放（真实 A 股规则）。
+    返回 {code, name, strategy..., params, rules, stats, trades, equityCurve, disclaimer}。
+    结果是对历史数据的客观回放，不构成投资建议（红线）。"""
+    if not re.fullmatch(r"\d{6}", code):
+        raise HTTPException(status_code=400, detail="code 必须是 6 位数字")
+    if strategy not in _SCAN_STRATEGY_MAP:
+        raise HTTPException(
+            status_code=400,
+            detail=f"未知策略: {strategy}，可选: {', '.join(_SCAN_STRATEGY_MAP)}")
+    if hold_days not in _BT_HOLD_DAYS_CHOICES:
+        raise HTTPException(
+            status_code=400,
+            detail=f"hold_days 可选值: {', '.join(str(x) for x in _BT_HOLD_DAYS_CHOICES)}（交易日）")
+    if stop_loss_pct not in _BT_STOP_LOSS_CHOICES:
+        raise HTTPException(
+            status_code=400,
+            detail=f"stop_loss_pct 可选值: {', '.join(str(x) for x in _BT_STOP_LOSS_CHOICES)}（%，0=不止损）")
+    if _bs_code(code) is None:
+        raise HTTPException(status_code=400,
+                            detail="本地日 K 库仅覆盖沪深 A 股（北交所无免费批量数据源）")
+    # 名称表（展示用）在 async 侧经 run_ak 超时包装预热；失败降级为 null 不阻断回测
+    name = None
+    try:
+        name_df = await run_ak(_load_code_name_table, timeout=120)
+        hit = name_df[name_df["code"].astype(str).str.zfill(6) == code]
+        if len(hit) > 0:
+            name = str(hit.iloc[0]["name"])
+    except Exception as e:
+        logger.warning("backtest 名称表获取失败: %s", e)
+    try:
+        return await asyncio.to_thread(_bt_cached, code, strategy, hold_days,
+                                       stop_loss_pct, days, name)
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=502, detail=f"回测计算失败: {e}")
