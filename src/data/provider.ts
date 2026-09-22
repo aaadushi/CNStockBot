@@ -559,6 +559,76 @@ export interface MarketBarsStatus {
   dbSizeMb: number | null;
 }
 
+// ---- 回测引擎（F5-6，2026-09-22 新增；仅微服务模式提供） ----
+
+/** 回测参数（白名单取值由 data-service 校验：holdDays ∈ 5/10/20/60，stopLossPct ∈ 0/3/5/7/10） */
+export interface BacktestOptions {
+  strategy?: string;     // 预设策略 key（与选股扫描同 7 个），默认 ma_bull
+  holdDays?: number;     // 持有期（交易日），默认 20
+  stopLossPct?: number;  // 止损阈值（%，0=不止损），默认 7
+  days?: number;         // 回看窗口（交易日，120~750），默认 750
+}
+
+/** 单笔回测交易 */
+export interface BacktestTrade {
+  signalDate: string;
+  buyDate: string;         // 信号日次日（开盘价 + 滑点成交）
+  buyPrice: number;
+  sellDate: string;
+  sellPrice: number;
+  holdDays: number;
+  reason: 'hold' | 'stop' | 'data_end'; // 持有期满 / 止损触发 / 数据末端平仓
+  reasonLabel: string;
+  retPct: number;          // 含费用与滑点的净收益率（%）
+  pnl: number;             // 净盈亏（元）
+}
+
+/** 回测统计（闭环交易口径：data_end 强平不计入胜率等统计，但计入净值曲线） */
+export interface BacktestStats {
+  trades: number;             // 总交易笔数（含 data_end）
+  closedTrades: number;       // 闭环交易笔数
+  winRate: number | null;     // 胜率（%）
+  avgRetPct: number | null;   // 平均单笔净收益（%）
+  avgWinPct: number | null;
+  avgLossPct: number | null;
+  profitFactor: number | null; // 盈亏比（总盈利/总亏损；无亏损交易为 null）
+  bestRetPct: number | null;
+  worstRetPct: number | null;
+  avgHoldDays: number | null;
+  totalRetPct: number;        // 净值曲线累计收益（%，含强平盯市）
+  maxDrawdownPct: number;     // 净值曲线最大回撤（%，非正值）
+  benchmarkRetPct: number;    // 同区间买入持有收益（%）
+  excessRetPct: number;       // 相对基准超额（百分点）
+  finalEquity: number;        // 期末净值（元，本金 10 万）
+}
+
+/** 单股策略回测结果（data-service /backtest/{code}）。红线：历史回放，展示层必须保留 disclaimer */
+export interface BacktestResult {
+  code: string;
+  name: string | null;
+  strategy: string;
+  strategyName: string;
+  strategyDesc: string;
+  asOf: string;               // 数据截至日期（本地日 K 库最后一根 bar）
+  days: number;               // 请求的回看窗口
+  bars: number;               // 实际参与回测的 bar 数
+  params: {
+    holdDays: number;
+    stopLossPct: number;
+    capital: number;
+    commissionRate: number;
+    commissionMin: number;
+    stampTax: number;
+    slippage: number;
+  };
+  rules: string;              // 交易规则透明披露文本（T+1/费用/滑点/单持仓等）
+  stats: BacktestStats;
+  skippedSignals: number;     // 被忽略的信号数（持仓期间 / 资金不足 / 末根无法成交）
+  trades: BacktestTrade[];
+  equityCurve: { date: string; equity: number; benchmark: number }[];
+  disclaimer: string;
+}
+
 
 export interface DataProvider {
   readonly name: string;
@@ -620,4 +690,6 @@ export interface DataProvider {
   getMarketBarsStatus?(): Promise<MarketBarsStatus>;
   /** 触发本地日 K 库更新（F5-5，full=true 强制全量回填；单飞行，冲突 409）；仅微服务模式提供 */
   triggerMarketBarsUpdate?(full?: boolean): Promise<{ started: boolean; full: boolean }>;
+  /** 单股策略回测（F5-6：本地日 K 库历史信号回放，真实 A 股规则）；仅微服务模式提供 */
+  runBacktest?(code: string, opts?: BacktestOptions): Promise<BacktestResult>;
 }

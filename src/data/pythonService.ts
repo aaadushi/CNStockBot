@@ -4,7 +4,7 @@
  */
 import { config } from '../config.js';
 import { EastmoneyProvider } from './eastmoney.js';
-import type { Announcement, CompanyProfile, DataProvider, DividendRecord, EtfQuote, FinancialReport, FlowVerifyReport, FundFlow, FundInfo, FundRankItem, FundSearchItem, HistoryBar, Intraday, MarketBarsStatus, MarketNewsItem, NewsItem, NewsSort, OverseasSummary, PatternReport, Quote, ScanResult, ScanStrategyMeta, SectorCons, SectorFundFlow, SectorHistory, SectorRank, StockSectorInfo, TechnicalIndicators } from './provider.js';
+import type { Announcement, BacktestOptions, BacktestResult, CompanyProfile, DataProvider, DividendRecord, EtfQuote, FinancialReport, FlowVerifyReport, FundFlow, FundInfo, FundRankItem, FundSearchItem, HistoryBar, Intraday, MarketBarsStatus, MarketNewsItem, NewsItem, NewsSort, OverseasSummary, PatternReport, Quote, ScanResult, ScanStrategyMeta, SectorCons, SectorFundFlow, SectorHistory, SectorRank, StockSectorInfo, TechnicalIndicators } from './provider.js';
 
 /** 微服务显式超时：AKShare 爬网页较慢，放宽到 60s；防上游挂起拖死调度链（审计 A-301/A-506） */
 const FETCH_TIMEOUT_MS = 60_000;
@@ -181,6 +181,18 @@ export class PythonServiceProvider implements DataProvider {
   /** 触发端点要先把票池/交易日历预热完才返回（最坏约 120s），客户端超时放宽到 150s */
   async triggerMarketBarsUpdate(full = false): Promise<{ started: boolean; full: boolean }> {
     return this.post<{ started: boolean; full: boolean }>(`/market-bars/update?full=${full}`, 150_000);
+  }
+
+  /** 单股策略回测（F5-6）：本地 SQLite 读 + 单票 pandas 计算，秒级，默认 60s 超时足够。
+   *  冷启动名称表预热（东财全量接口，限流期超 30s）放宽到 150s 覆盖最坏情况 */
+  async runBacktest(code: string, opts: BacktestOptions = {}): Promise<BacktestResult> {
+    const params = new URLSearchParams({
+      strategy: opts.strategy ?? 'ma_bull',
+      hold_days: String(opts.holdDays ?? 20),
+      stop_loss_pct: String(opts.stopLossPct ?? 7),
+      days: String(opts.days ?? 750),
+    });
+    return this.get<BacktestResult>(`/backtest/${encodeURIComponent(code)}?${params}`, 150_000);
   }
 }
 

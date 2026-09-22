@@ -1,0 +1,458 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>股助手 - 策略回测</title>
+  <link rel="stylesheet" href="/shared/theme.css" />
+  <style>
+    /* ---- 回测表单 ---- */
+    .bt-form { display: flex; gap: 12px; flex-wrap: wrap; align-items: flex-end; }
+    .bt-field { display: flex; flex-direction: column; gap: 4px; }
+    .bt-field label { font-size: 12px; color: var(--text-3); }
+    .bt-field .input, .bt-field select.input { min-width: 150px; }
+
+    /* ---- 统计格 ---- */
+    .stats-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(130px, 1fr)); gap: 10px; }
+    .stat-cell { background: var(--bg); border: 1px solid var(--border); border-radius: var(--radius); padding: 10px 12px; }
+    .stat-cell .k { font-size: 12px; color: var(--text-3); margin-bottom: 4px; }
+    .stat-cell .v { font-size: 16px; font-weight: 700; font-variant-numeric: tabular-nums; }
+
+    /* ---- 净值图 ---- */
+    .chart-box { position: relative; }
+    .chart-box svg { width: 100%; height: 260px; display: block; }
+    .chart-tip {
+      position: absolute; pointer-events: none; display: none; z-index: 5;
+      background: var(--card); border: 1px solid var(--border); border-radius: 8px;
+      box-shadow: var(--shadow-md); padding: 8px 10px; font-size: 12px; line-height: 1.7;
+      font-variant-numeric: tabular-nums; white-space: nowrap;
+    }
+    .chart-legend { display: flex; gap: 16px; font-size: 12px; color: var(--text-2); margin-bottom: 6px; }
+    .chart-legend i { display: inline-block; width: 14px; height: 3px; border-radius: 2px; margin-right: 5px; vertical-align: middle; }
+
+    /* ---- 交易明细 ---- */
+    .trades-table { width: 100%; border-collapse: collapse; font-size: 13px; font-variant-numeric: tabular-nums; }
+    .trades-table th, .trades-table td { padding: 7px 10px; text-align: right; border-bottom: 1px solid var(--border); }
+    .trades-table th { color: var(--text-3); font-weight: 500; font-size: 12px; }
+    .trades-table th:first-child, .trades-table td:first-child { text-align: left; }
+
+    .rules-note { font-size: 12px; color: var(--text-3); line-height: 1.8; margin-top: 10px; }
+    .block-error { color: var(--text-3); font-size: 13px; padding: 16px 4px; }
+    .disclaimer-strong {
+      margin-top: 16px; padding: 10px 14px; border-radius: var(--radius); font-size: 13px;
+      background: #fef3c7; color: #92400e; border: 1px solid #fcd34d;
+    }
+  </style>
+</head>
+<body>
+  <header class="page-header">
+    <div class="inner">
+      <span class="brand">📈 股助手</span>
+      <span class="sub">策略回测</span>
+      <span class="spacer"></span>
+      <a class="nav" href="/stocks">⭐ 自选股</a>
+      <a class="nav" href="/market">📊 涨跌榜</a>
+      <a class="nav" href="/funds">💰 基金</a>
+      <a class="nav" href="/news">📰 快讯</a>
+      <a class="nav" href="/sectors">🏭 板块</a>
+      <a class="nav" href="/overseas">🌐 外盘</a>
+      <a class="nav" href="/scanner">🔍 扫描</a>
+      <a class="nav" href="/webchat">💬 聊天</a>
+    </div>
+  </header>
+
+  <main class="page">
+    <!-- 回测条件 -->
+    <div class="card" style="margin-bottom: 16px;">
+      <div class="bt-form">
+        <div class="bt-field">
+          <label>股票（代码或名称）</label>
+          <input id="code-input" class="input" list="code-suggest" placeholder="如 600519 或 贵州茅台" />
+          <datalist id="code-suggest"></datalist>
+        </div>
+        <div class="bt-field">
+          <label>策略</label>
+          <select id="strategy-select" class="input"></select>
+        </div>
+        <div class="bt-field">
+          <label>持有期</label>
+          <select id="hold-select" class="input">
+            <option value="5">5 个交易日</option>
+            <option value="10">10 个交易日</option>
+            <option value="20" selected>20 个交易日</option>
+            <option value="60">60 个交易日</option>
+          </select>
+        </div>
+        <div class="bt-field">
+          <label>止损</label>
+          <select id="stop-select" class="input">
+            <option value="0">不止损</option>
+            <option value="3">-3%</option>
+            <option value="5">-5%</option>
+            <option value="7" selected>-7%</option>
+            <option value="10">-10%</option>
+          </select>
+        </div>
+        <button class="btn btn-primary" id="run-btn">开始回测</button>
+      </div>
+      <div class="strategy-desc" id="strategy-desc" style="font-size:12px;color:var(--text-3);padding-top:10px;"></div>
+    </div>
+
+    <!-- 结果区 -->
+    <div id="result" hidden>
+      <div class="card" style="margin-bottom: 16px;">
+        <div style="font-size:14px;font-weight:600;margin-bottom:10px;" id="result-title"></div>
+        <div class="stats-grid" id="stats-grid"></div>
+        <div class="rules-note" id="rules-note"></div>
+      </div>
+
+      <div class="card" style="margin-bottom: 16px;">
+        <div style="font-size:14px;font-weight:600;margin-bottom:8px;">净值曲线 vs 买入持有</div>
+        <div class="chart-legend">
+          <span><i style="background:#4f46e5;"></i>策略净值（含费用滑点）</span>
+          <span><i style="background:#9ca3af;"></i>买入持有基准</span>
+        </div>
+        <div class="chart-box">
+          <svg id="equity-chart"></svg>
+          <div class="chart-tip" id="chart-tip"></div>
+        </div>
+      </div>
+
+      <div class="card">
+        <div style="font-size:14px;font-weight:600;margin-bottom:8px;">交易明细</div>
+        <div id="trades-wrap"></div>
+      </div>
+
+      <div class="disclaimer-strong" id="disclaimer"></div>
+    </div>
+    <div class="block-error" id="error-box" hidden></div>
+
+    <div class="disclaimer">
+      回测是对历史数据的客观回放（本地日 K 库，沪深 A 股，含 T+1、佣金、印花税、滑点），
+      历史业绩不代表未来表现；数据仅供参考，不构成投资建议
+    </div>
+  </main>
+
+  <!-- 口令鉴权浮层（与 webchat/stocks 共用 localStorage 键） -->
+  <div class="auth-overlay" id="auth-overlay" hidden>
+    <div class="auth-card">
+      <h2>输入访问口令</h2>
+      <p>口令见服务端启动日志或 .env 的 ACCESS_TOKEN</p>
+      <input id="auth-input" class="input" type="password" placeholder="ACCESS_TOKEN" />
+      <div class="error" id="auth-error"></div>
+      <button class="btn btn-primary" id="auth-confirm">确认</button>
+    </div>
+  </div>
+
+  <script>
+    'use strict';
+    const $ = (id) => document.getElementById(id);
+
+    /* ================= 鉴权（与 webchat/stocks 共用 localStorage 键） ================= */
+    let accessToken = localStorage.getItem('cnstockbot_token') || '';
+
+    const authOverlay = $('auth-overlay');
+    let authResolve = null;
+    function showAuth(hasError) {
+      $('auth-error').textContent = hasError ? '口令错误，请重新输入' : '';
+      authOverlay.hidden = false;
+      $('auth-input').focus();
+      return new Promise((resolve) => { authResolve = resolve; });
+    }
+    function submitAuth() {
+      const t = $('auth-input').value.trim();
+      if (!t) return;
+      accessToken = t;
+      localStorage.setItem('cnstockbot_token', t);
+      $('auth-input').value = '';
+      authOverlay.hidden = true;
+      if (authResolve) { authResolve(); authResolve = null; }
+    }
+    $('auth-confirm').onclick = submitAuth;
+    $('auth-input').onkeydown = (e) => { if (e.key === 'Enter') submitAuth(); };
+
+    async function apiFetch(url, options = {}) {
+      if (!accessToken) await showAuth(false);
+      options.headers = Object.assign({}, options.headers, { 'Authorization': 'Bearer ' + accessToken });
+      const res = await fetch(url, options);
+      if (res.status === 401) {
+        accessToken = '';
+        localStorage.removeItem('cnstockbot_token');
+        await showAuth(true);
+        return apiFetch(url, options);
+      }
+      return res;
+    }
+
+    /* ================= 工具 ================= */
+    function el(tag, cls, text) {
+      const e = document.createElement(tag);
+      if (cls) e.className = cls;
+      if (text !== undefined) e.textContent = text; // 一律 textContent，防 XSS
+      return e;
+    }
+    function fmtPct(v, digits = 2) {
+      return typeof v === 'number' && isFinite(v) ? (v > 0 ? '+' : '') + v.toFixed(digits) + '%' : '—';
+    }
+    function fmtNum(v, digits = 2) {
+      return typeof v === 'number' && isFinite(v) ? v.toFixed(digits) : '—';
+    }
+    function fmtYuan(v) {
+      if (typeof v !== 'number' || !isFinite(v)) return '—';
+      return (v >= 10000 ? (v / 10000).toFixed(2) + ' 万' : v.toFixed(0) + ' 元');
+    }
+    function upDownClass(v) { return v > 0 ? 'text-up' : v < 0 ? 'text-down' : 'text-2'; }
+
+    /* ================= 代码输入（datalist 搜索建议） ================= */
+    let suggestTimer = null;
+    $('code-input').addEventListener('input', () => {
+      clearTimeout(suggestTimer);
+      const kw = $('code-input').value.trim();
+      if (!kw || /^\d{6}$/.test(kw)) return;
+      suggestTimer = setTimeout(async () => {
+        try {
+          const res = await apiFetch('/api/search?keyword=' + encodeURIComponent(kw));
+          const list = await res.json();
+          if (!res.ok) return;
+          const dl = $('code-suggest');
+          dl.replaceChildren();
+          for (const it of (list.results || []).slice(0, 10)) {
+            const opt = document.createElement('option');
+            opt.value = it.code;
+            opt.label = it.name || '';
+            dl.appendChild(opt);
+          }
+        } catch { /* 搜索建议失败不阻塞 */ }
+      }, 300);
+    });
+
+    function extractCode() {
+      const raw = $('code-input').value.trim();
+      const m = raw.match(/\d{6}/);
+      return m ? m[0] : null;
+    }
+
+    /* ================= 策略下拉 ================= */
+    async function loadStrategies() {
+      const res = await apiFetch('/api/scanner/strategies');
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || ('HTTP ' + res.status));
+      const sel = $('strategy-select');
+      sel.replaceChildren();
+      for (const s of (data.strategies || [])) {
+        const opt = document.createElement('option');
+        opt.value = s.key;
+        opt.textContent = s.name;
+        opt.dataset.desc = s.description;
+        sel.appendChild(opt);
+      }
+      updateStrategyDesc();
+    }
+    function updateStrategyDesc() {
+      const sel = $('strategy-select');
+      const opt = sel.selectedOptions[0];
+      $('strategy-desc').textContent = opt && opt.dataset.desc ? '策略口径：' + opt.dataset.desc : '';
+    }
+    $('strategy-select').addEventListener('change', updateStrategyDesc);
+
+    /* ================= 净值曲线图 ================= */
+    function drawEquityChart(curve) {
+      const svg = $('equity-chart');
+      const tip = $('chart-tip');
+      svg.replaceChildren();
+      if (!curve || curve.length < 2) return;
+      const W = 800, H = 260, PL = 56, PR = 12, PT = 10, PB = 24;
+      svg.setAttribute('viewBox', `0 0 ${W} ${H}`);
+      const vals = [];
+      for (const p of curve) { vals.push(p.equity, p.benchmark); }
+      const lo = Math.min(...vals), hi = Math.max(...vals);
+      const span = hi - lo || 1;
+      const x = (i) => PL + (i / (curve.length - 1)) * (W - PL - PR);
+      const y = (v) => PT + (1 - (v - lo) / span) * (H - PT - PB);
+      const NS = 'http://www.w3.org/2000/svg';
+      // 网格线 + y 轴标签（4 档）
+      for (let g = 0; g <= 4; g++) {
+        const v = lo + (span * g) / 4;
+        const yy = y(v);
+        const line = document.createElementNS(NS, 'line');
+        line.setAttribute('x1', PL); line.setAttribute('x2', W - PR);
+        line.setAttribute('y1', yy); line.setAttribute('y2', yy);
+        line.setAttribute('stroke', 'var(--border)'); line.setAttribute('stroke-width', '1');
+        svg.appendChild(line);
+        const label = document.createElementNS(NS, 'text');
+        label.setAttribute('x', PL - 6); label.setAttribute('y', yy + 4);
+        label.setAttribute('text-anchor', 'end');
+        label.setAttribute('style', 'font-size:10px;fill:var(--text-3);');
+        label.textContent = (v / 10000).toFixed(1) + '万';
+        svg.appendChild(label);
+      }
+      // 本金参考线
+      const capY = y(curve[0].equity);
+      const capLine = document.createElementNS(NS, 'line');
+      capLine.setAttribute('x1', PL); capLine.setAttribute('x2', W - PR);
+      capLine.setAttribute('y1', capY); capLine.setAttribute('y2', capY);
+      capLine.setAttribute('stroke', '#d4d4d8'); capLine.setAttribute('stroke-dasharray', '4 3');
+      svg.appendChild(capLine);
+      const mkPath = (key, color) => {
+        const path = document.createElementNS(NS, 'path');
+        path.setAttribute('d', curve.map((p, i) => `${i ? 'L' : 'M'}${x(i).toFixed(1)},${y(p[key]).toFixed(1)}`).join(''));
+        path.setAttribute('fill', 'none');
+        path.setAttribute('stroke', color);
+        path.setAttribute('stroke-width', '1.8');
+        svg.appendChild(path);
+      };
+      mkPath('benchmark', '#9ca3af');
+      mkPath('equity', '#4f46e5');
+      // 首尾日期
+      for (const [i, anchor] of [[0, 'start'], [curve.length - 1, 'end']]) {
+        const t = document.createElementNS(NS, 'text');
+        t.setAttribute('x', x(i)); t.setAttribute('y', H - 6);
+        t.setAttribute('text-anchor', anchor);
+        t.setAttribute('style', 'font-size:10px;fill:var(--text-3);');
+        t.textContent = curve[i].date;
+        svg.appendChild(t);
+      }
+      // hover 十字线 + tooltip
+      const hover = document.createElementNS(NS, 'line');
+      hover.setAttribute('y1', PT); hover.setAttribute('y2', H - PB);
+      hover.setAttribute('stroke', 'var(--text-3)'); hover.setAttribute('stroke-width', '1');
+      hover.setAttribute('stroke-dasharray', '3 3'); hover.style.display = 'none';
+      svg.appendChild(hover);
+      svg.addEventListener('mousemove', (e) => {
+        const rect = svg.getBoundingClientRect();
+        const px = ((e.clientX - rect.left) / rect.width) * W;
+        const i = Math.round(((px - PL) / (W - PL - PR)) * (curve.length - 1));
+        if (i < 0 || i >= curve.length) { hover.style.display = 'none'; tip.style.display = 'none'; return; }
+        hover.setAttribute('x1', x(i)); hover.setAttribute('x2', x(i));
+        hover.style.display = '';
+        const p = curve[i];
+        tip.style.display = 'block';
+        tip.replaceChildren(
+          el('div', '', p.date),
+          el('div', '', `策略净值 ${fmtYuan(p.equity)}`),
+          el('div', '', `基准 ${fmtYuan(p.benchmark)}`),
+        );
+        const box = svg.parentElement.getBoundingClientRect();
+        tip.style.left = Math.min(e.clientX - box.left + 14, box.width - 150) + 'px';
+        tip.style.top = (e.clientY - box.top - 10) + 'px';
+      });
+      svg.addEventListener('mouseleave', () => { hover.style.display = 'none'; tip.style.display = 'none'; });
+    }
+
+    /* ================= 结果渲染 ================= */
+    function renderResult(data) {
+      $('result').hidden = false;
+      $('error-box').hidden = true;
+      $('result-title').textContent =
+        `${data.name ? data.name + '（' + data.code + '）' : data.code} · ${data.strategyName}` +
+        ` · ${data.bars} 根日 K（截至 ${data.asOf}）`;
+      const s = data.stats;
+      const cells = [
+        ['累计收益（策略）', fmtPct(s.totalRetPct), upDownClass(s.totalRetPct)],
+        ['买入持有基准', fmtPct(s.benchmarkRetPct), upDownClass(s.benchmarkRetPct)],
+        ['超额收益', fmtPct(s.excessRetPct), upDownClass(s.excessRetPct)],
+        ['最大回撤', fmtPct(s.maxDrawdownPct), 'text-down'],
+        ['胜率（闭环 ' + s.closedTrades + ' 笔）', s.winRate === null ? '—' : s.winRate.toFixed(1) + '%', ''],
+        ['平均单笔收益', fmtPct(s.avgRetPct), upDownClass(s.avgRetPct)],
+        ['盈亏比', s.profitFactor === null ? '—' : fmtNum(s.profitFactor), ''],
+        ['最佳 / 最差单笔', fmtPct(s.bestRetPct) + ' / ' + fmtPct(s.worstRetPct), ''],
+        ['平均持有', s.avgHoldDays === null ? '—' : fmtNum(s.avgHoldDays, 1) + ' 天', ''],
+        ['期末净值', fmtYuan(s.finalEquity), upDownClass(s.totalRetPct)],
+      ];
+      const grid = $('stats-grid');
+      grid.replaceChildren();
+      for (const [k, v, cls] of cells) {
+        const c = el('div', 'stat-cell');
+        c.appendChild(el('div', 'k', k));
+        c.appendChild(el('div', 'v ' + (cls || ''), v));
+        grid.appendChild(c);
+      }
+      $('rules-note').textContent =
+        '规则：' + data.rules +
+        (data.skippedSignals > 0 ? `另有 ${data.skippedSignals} 个信号因持仓中/资金不足/数据末端未成交。` : '');
+
+      drawEquityChart(data.equityCurve);
+
+      const wrap = $('trades-wrap');
+      wrap.replaceChildren();
+      if (data.trades.length === 0) {
+        wrap.appendChild(el('div', 'block-error', '该策略在回测窗口内未触发任何信号'));
+      } else {
+        const table = el('table', 'trades-table');
+        const thead = el('thead');
+        const hr = el('tr');
+        for (const h of ['信号日', '买入', '卖出', '持有', '卖出原因', '净收益']) {
+          hr.appendChild(el('th', '', h));
+        }
+        thead.appendChild(hr);
+        table.appendChild(thead);
+        const tbody = el('tbody');
+        for (const t of data.trades.slice().reverse()) {
+          const tr = el('tr');
+          tr.appendChild(el('td', '', t.signalDate));
+          tr.appendChild(el('td', '', `${t.buyDate} @ ${fmtNum(t.buyPrice)}`));
+          tr.appendChild(el('td', '', `${t.sellDate} @ ${fmtNum(t.sellPrice)}`));
+          tr.appendChild(el('td', '', t.holdDays + ' 天'));
+          tr.appendChild(el('td', '', t.reasonLabel));
+          const rc = el('td', upDownClass(t.retPct), fmtPct(t.retPct) + '（' + fmtYuan(t.pnl) + '）');
+          tr.appendChild(rc);
+          tbody.appendChild(tr);
+        }
+        table.appendChild(tbody);
+        wrap.appendChild(table);
+      }
+      $('disclaimer').textContent = '⚠️ ' + data.disclaimer;
+    }
+
+    function showError(msg) {
+      $('result').hidden = true;
+      const box = $('error-box');
+      box.hidden = false;
+      box.textContent = msg;
+    }
+
+    async function runBacktest() {
+      const code = extractCode();
+      if (!code) { showError('请输入 6 位股票代码（或输入名称后从下拉建议选择）'); return; }
+      const btn = $('run-btn');
+      btn.disabled = true;
+      btn.textContent = '回测中…';
+      try {
+        const qs = new URLSearchParams({
+          code,
+          strategy: $('strategy-select').value,
+          holdDays: $('hold-select').value,
+          stopLossPct: $('stop-select').value,
+        });
+        const res = await apiFetch('/api/backtest?' + qs);
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.error || ('HTTP ' + res.status));
+        renderResult(data);
+      } catch (e) {
+        showError(e.message);
+      } finally {
+        btn.disabled = false;
+        btn.textContent = '开始回测';
+      }
+    }
+    $('run-btn').onclick = runBacktest;
+    $('code-input').addEventListener('keydown', (e) => { if (e.key === 'Enter') runBacktest(); });
+
+    /* ================= 启动 ================= */
+    async function boot() {
+      try {
+        await loadStrategies();
+      } catch (e) {
+        showError('策略清单加载失败：' + e.message);
+      }
+      // 支持 ?code= 预填（从详情页/扫描页跳转）
+      const pre = new URLSearchParams(location.search).get('code');
+      if (pre && /^\d{6}$/.test(pre)) {
+        $('code-input').value = pre;
+        runBacktest();
+      }
+    }
+    boot();
+  </script>
+</body>
+</html>

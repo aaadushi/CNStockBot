@@ -52,8 +52,9 @@ uvicorn main:app --host 127.0.0.1 --port 8000
 | `GET /market-bars/status` | 日 K 库状态：running/phase/done/total/failedCount + coverage/lastBarDate/dbSizeMb |
 | `GET /scan/strategies` | 预设扫描策略清单（F5-5，7 个：ma_bull/macd_gold/rsi_oversold/vol_break_20d/pullback_ma20/boll_lower/ma_cross_up），口径描述的一源共用 |
 | `GET /scan?strategy=&limit=50` | 全市场选股扫描（F5-5）：本地日 K 库宽表向量化计算（指标口径与 /indicators 一致），返回 {asOf/stale/total/items[code/name/close/changePct/extra]/disclaimer}；ST/退默认剔除；库为空 503、未知策略 400；结果缓存随数据 asOf 失效 |
+| `GET /backtest/{code}?strategy=&hold_days=20&stop_loss_pct=7&days=750` | 单股策略回测（F5-6）：本地日 K 库历史信号回放，7 个预设策略与 /scan 同 key 同口径；真实 A 股规则（T+1、整手、佣金万 2.5 最低 5 元、印花税 0.05%、滑点 0.1%、止损/持有期白名单），返回 {params/rules/stats/trades/equityCurve/disclaimer}；北交所 400、库中无票 404、bar<90 回 422、库空 503 |
 
-**选股扫描（F5-5）使用前提**：先启动本服务，再触发一次回填
+**选股扫描（F5-5）与策略回测（F5-6）使用前提**：先启动本服务，再触发一次回填
 （`curl -X POST http://127.0.0.1:8000/market-bars/update`，首次数小时、断点续跑可中断）；
 主服务默认每个交易日 15:40 自动触发增量更新（`SCANNER_AUTO_UPDATE=false` 关闭）。
 库文件位于 `data-service/data/market_bars.db`（已 gitignore，约 300-500MB，删除后需重新回填）。

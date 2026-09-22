@@ -8,7 +8,7 @@ import { config } from '../config.js';
 import { EastmoneyProvider } from './eastmoney.js';
 import { TencentProvider } from './tencent.js';
 import { PythonServiceProvider } from './pythonService.js';
-import type { Announcement, CompanyProfile, DataProvider, DividendRecord, EtfQuote, FinancialReport, FlowVerifyReport, FundFlow, FundInfo, FundRankItem, FundSearchItem, HistoryBar, Intraday, MarketBarsStatus, MarketMovers, MarketNewsItem, NewsItem, NewsSort, OverseasSummary, PatternReport, Quote, ScanResult, ScanStrategyMeta, SectorCons, SectorFundFlow, SectorHistory, SectorRank, StockSectorInfo, TechnicalIndicators } from './provider.js';
+import type { Announcement, BacktestOptions, BacktestResult, CompanyProfile, DataProvider, DividendRecord, EtfQuote, FinancialReport, FlowVerifyReport, FundFlow, FundInfo, FundRankItem, FundSearchItem, HistoryBar, Intraday, MarketBarsStatus, MarketMovers, MarketNewsItem, NewsItem, NewsSort, OverseasSummary, PatternReport, Quote, ScanResult, ScanStrategyMeta, SectorCons, SectorFundFlow, SectorHistory, SectorRank, StockSectorInfo, TechnicalIndicators } from './provider.js';
 
 class CompositeProvider implements DataProvider {
   readonly name = 'composite(eastmoney+python)';
@@ -331,6 +331,15 @@ class CompositeProvider implements DataProvider {
   async triggerMarketBarsUpdate(full = false): Promise<{ started: boolean; full: boolean }> {
     try {
       return await this.python.triggerMarketBarsUpdate(full);
+    } catch (err) {
+      throw this.scannerUnavailable(err);
+    }
+  }
+
+  /** 回测同样只能走微服务（复用本地日 K 库，F5-6），错误提示与扫描共用 */
+  async runBacktest(code: string, opts: BacktestOptions = {}): Promise<BacktestResult> {
+    try {
+      return await this.python.runBacktest(code, opts);
     } catch (err) {
       throw this.scannerUnavailable(err);
     }
