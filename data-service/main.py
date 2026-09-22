@@ -2701,6 +2701,46 @@ def _bs_fetch_bars(bs, bs_code: str, start: str, end: str) -> list:
     return rows
 
 
+# ---- 腾讯日 K（批量取数主源，2026-09-22 新增） ----
+# baostock 夜间/高峰期限流（"登录用户过多"），全市场回填被卡死后的替代批量源：
+# web.ifzq.gtimg.cn 的 fqkline 接口单票一次请求最多 ~640 根前复权日 K（实测 1.1s/票），
+# 免登录、无 IP 限流前科。与 baostock 的口径差异：volume 已是"手"（无需换算，实测
+# 600519 2026-09-17 = 17554 手 ≈ baostock 1755380 股÷100）；无 amount/turnover 列
+# （置 None，扫描策略不用这两列）；change_pct 由收盘价环比补算（首条 None）。
+# 已知边界：不限定日期时返回最近 count 根（含当日，盘中为不完整 bar——增量回退重取
+# 会自愈）；回填窗口因此是最近约 640 个交易日（baostock 兜底源仍按日期区间，750 根）。
+
+_TX_KLINE_URL = "https://web.ifzq.gtimg.cn/appstock/app/fqkline/get"
+_MB_BACKFILL_COUNT = 640   # 回填条数（腾讯单次上限附近）
+_MB_INCREMENTAL_COUNT = 20  # 增量条数（覆盖回退 10 个日历日的重取窗口）
+
+
+def _tx_fetch_bars(code: str, count: int) -> list:
+    """腾讯前复权日 K（最近 count 根）。返回与 _bs_fetch_bars 同 schema 的列表
+    （amount/turnover 恒为 None）。无效/退市代码返回空列表（上游 code=0 但无 qfqday）。"""
+    market = "sh" if code.startswith(("6", "9")) else "sz"
+    r = requests.get(
+        _TX_KLINE_URL,
+        params={"param": f"{market}{code},day,,,{count},qfq"},
+        timeout=15,
+    )
+    r.raise_for_status()
+    data = r.json()["data"].get(f"{market}{code}") or {}
+    rows = data.get("qfqday") or data.get("day") or []
+    out = []
+    prev_close = None
+    for d in rows:
+        try:
+            close = float(d[2])
+            vol = float(d[5]) if d[5] not in ("", None) else None
+        except (TypeError, ValueError, IndexError):
+            continue  # 脏行跳过，不静默发 0
+        pct = round((close - prev_close) / prev_close * 100, 2) if prev_close else None
+        out.append((d[0], float(d[1]), close, float(d[3]), float(d[4]), vol, None, pct, None))
+        prev_close = close
+    return out
+
+
 # 更新任务状态（进程内；worker 线程写、HTTP 处理读，标量赋值在 GIL 下安全，failed 列表读取方自行拷贝）
 _update_state = {
     "running": False,
@@ -2798,11 +2838,43 @@ class _BsSession:
                                       self.bs, bs_code, start, end)
 
 
-def _mb_update_pass(conn, session: "_BsSession", codes: list, full: bool, today: str) -> None:
+class _DualFetcher:
+    """双源取数：腾讯日 K 优先（快、免登录、无限流前科），baostock 兜底（懒登录——
+    首次需要时才建会话；登录失败则本轮禁用 baostock 只走腾讯，避免每票重复付登录重试成本）。
+    会话级问题（超时/流损坏）由 _BsSession 内部重建处理（2026-09-22 新增）。"""
+
+    def __init__(self, bs_mod):
+        self._bs = bs_mod
+        self._session = None
+        self._bs_disabled = False
+
+    def close(self):
+        if self._session is not None:
+            self._session.close()
+            self._session = None
+
+    def fetch(self, code: str, count: int, start: str, end: str) -> list:
+        """count/start/end 双口径：腾讯按"最近 count 根"取，baostock 按日期区间取。"""
+        try:
+            return _tx_fetch_bars(code, count)
+        except Exception as tx_err:
+            if self._bs_disabled:
+                raise
+            try:
+                if self._session is None:
+                    self._session = _BsSession(self._bs)
+                return self._session.fetch(_bs_code(code), start, end)
+            except Exception as bs_err:
+                if self._session is None:  # 登录都没成功 → 本轮禁用 baostock
+                    self._bs_disabled = True
+                    logger.warning("baostock 不可用（%s），本轮仅用腾讯源", bs_err)
+                raise RuntimeError(f"腾讯: {tx_err}; baostock: {bs_err}")
+
+
+def _mb_update_pass(conn, fetcher: _DualFetcher, codes: list, full: bool, today: str) -> None:
     """单轮过票：断点续跑（每票从本地最后日期回退 _MB_REFETCH_CAL_DAYS 天补起），
     单票失败重试 2 次后记入失败名单继续，绝不中断全量任务；
-    但连续 _MB_CIRCUIT_BREAK 票失败判定连接已死，抛 _MbReconnectNeeded 中断本轮。
-    会话级问题（超时/流损坏）由 _BsSession.fetch 内部重建会话处理。"""
+    但连续 _MB_CIRCUIT_BREAK 票失败判定上游整体不可用，抛 _MbReconnectNeeded 中断本轮。"""
     st = _update_state
     st["done"] = 0
     pending_rows = []
@@ -2833,15 +2905,17 @@ def _mb_update_pass(conn, session: "_BsSession", codes: list, full: bool, today:
                 continue  # 已是最新（ISO 日期字符串可直接比较）
             if last is None:
                 start = (datetime.now() - timedelta(days=_MB_BACKFILL_CAL_DAYS)).strftime("%Y-%m-%d")
+                count = _MB_BACKFILL_COUNT
             else:
                 start = (datetime.strptime(last, "%Y-%m-%d")
                          - timedelta(days=_MB_REFETCH_CAL_DAYS)).strftime("%Y-%m-%d")
+                count = _MB_INCREMENTAL_COUNT
             rows, err = None, None
             for backoff in (0, 2, 5):  # 最多 3 次：首次 + 退避 2s/5s 重试
                 if backoff:
                     time.sleep(backoff)
                 try:
-                    rows = session.fetch(_bs_code(code), start, today)
+                    rows = fetcher.fetch(code, count, start, today)
                     err = None
                     break
                 except Exception as e:
@@ -2887,21 +2961,21 @@ def _mb_update_run(codes: list, is_trade_day: bool, full: bool) -> None:
         bs = _bs_mod()
         reconnects = 0
         while True:
-            session = _BsSession(bs)  # 含 login 重试 3 次；失败抛给外层整任务 failed
+            fetcher = _DualFetcher(bs)  # 腾讯优先；baostock 懒登录兜底
             try:
-                _mb_update_pass(conn, session, codes, full, today)
+                _mb_update_pass(conn, fetcher, codes, full, today)
             except _MbReconnectNeeded as e:
-                # 连接死亡：重建会话续跑（断点续跑，已入库票天然跳过），超限才整任务失败
+                # 上游整体不可用：续跑（断点续跑，已入库票天然跳过），超限才整任务失败
                 reconnects += 1
                 if reconnects > _MB_RECONNECT_MAX:
-                    raise RuntimeError(f"baostock 连接反复中断（重连 {_MB_RECONNECT_MAX} 次仍未恢复）: {e}")
-                logger.warning("market-bars 连接中断，%ds 后重建会话续跑（第 %d 次）: %s",
+                    raise RuntimeError(f"行情源反复中断（重试 {_MB_RECONNECT_MAX} 次仍未恢复）: {e}")
+                logger.warning("market-bars 更新中断，%ds 后续跑（第 %d 次）: %s",
                                _MB_RECONNECT_WAIT_SEC, reconnects, e)
                 time.sleep(_MB_RECONNECT_WAIT_SEC)
-                full = False  # 重连轮一律增量
+                full = False  # 重试轮一律增量
                 continue
             finally:
-                session.close()  # 等待重试间隔长达 30 分钟，登出避免 socket 被服务端挂死
+                fetcher.close()  # 等待重试间隔长达 30 分钟，登出避免 socket 被服务端挂死
             reconnects = 0
             full = False  # 重试轮一律增量
             if is_trade_day:
