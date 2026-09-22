@@ -7,7 +7,7 @@
 > 看 [FEATURES.md](FEATURES.md)；踩过的坑看 [PITFALLS.md](PITFALLS.md)；
 > 数据源接口细节看 [DATA_SOURCES.md](DATA_SOURCES.md)。
 
-最后更新：2026-09-21
+最后更新：2026-09-22
 
 ---
 
@@ -65,8 +65,8 @@
 
 | # | 事项 | 现状 | 做法 |
 |---|---|---|---|
-| S1-1 | **重启生产双服务（8000/18790）让 F5-5/F5-6 生效** | ⏳ 待做（2026-09-22 登记）。F5-5/F5-6 已全部合入 main 且全市场日 K 库回填完成（5222/5222 零失败，数据截至 2026-09-22），但生产 data-service（8000）与主服务（18790）仍是旧代码；另有一个 8125 端口的临时验证实例（含最新代码）在跑，重启生产前可先停掉它（`netstat -ano \| findstr :8125`） | ① 停 8125 临时实例；② 按 P9 教训用无 watch 方式重启：`cd data-service && .venv\Scripts\activate && uvicorn main:app --host 127.0.0.1 --port 8000`、`npx tsx src/index.ts`；③ 验证 /scanner、/backtest 页与 scan_market 技能链路通 |
-| S1-2 | **F5-6 里程碑 tag**（可选） | ⏳ 待做。F5-6 合并时未升版（package.json 仍为 0.3.0 = F5-5 的 tag）；按 WORKFLOW.md 第 5 节新功能升 minor | 升 package.json 到 0.4.0 走 chore PR，合并后 `git tag -a v0.4.0 -m "F5-6：策略回测引擎" && git push origin v0.4.0` |
+| S1-1 | ~~重启生产双服务（8000/18790）让 F5-5/F5-6 生效~~ | ✅ 2026-09-22 完成（见更新日志批次 13）：8125 临时实例已停，双服务按无 watch 方式重启在最新 main 上，扫描/回测页面、API 与 scan_market 技能链路全部实测通过 | — |
+| S1-2 | **F5-6 里程碑 tag**（可选） | 🔄 进行中（2026-09-22）：package.json 已随 chore/f5-closeout PR 升 0.4.0；**合并后在 main 上执行**：`git tag -a v0.4.0 -m "F5-6：策略回测引擎" && git push origin v0.4.0` | — |
 
 ~~P3、P4 均已于 2026-09-14 解决（见更新日志）。~~
 
@@ -247,6 +247,19 @@ pattern_analyzer（K 线形态识别 + 历史成绩单）、狙击手模块（�
 
 ## 更新日志
 
+- 2026-09-22（批次 13）：**S1-1 完成——生产双服务重启，F5-5/F5-6 全链路生效**。
+  停掉 8125 临时验证实例（PID 40676）与旧生产进程（data-service PID 34072、
+  主服务 PID 39472），按 P9 教训以无 watch 方式重启在最新 main 上
+  （uvicorn 8000 + `npx tsx src/index.ts` 18790）。实测验证：/health 技能清单含
+  scan_market、数据源 composite 正常；/scanner、/backtest 静态页 200（301→/ 路径）；
+  /api 无口令 401；/api/scanner/status 返回库覆盖 5222 只、lastBarDate 2026-09-22、
+  280.6MB；扫描 macd_gold 命中 572 只真实名单（asOf 2026-09-22，stale=false）；
+  回测 000001 ma_cross_up 返回完整统计（730 根 bar，名称"平安银行"正确解析）；
+  /api/chat 发"用 MACD 金叉策略扫描全市场"实测 LLM 调用 scan_market 并输出
+  带口径与免责声明的命中名单。**注意**：进程冷启动后首次扫描实测 128s
+  （宽表面板 + 名称表预热，provider 超时 150s 恰好覆盖），名称表首取失败时
+  items 的 name 降级为 null（note 注明），复测缓存命中后 8.6s 且名称齐全——
+  属既有设计的冷启动行为，非回归。S1-2 版本号随本 PR 升 0.4.0，tag 待合并后打。
 - 2026-09-22（批次 12）：**F5 系列收官与收尾登记**——F5-6 回测引擎经用户手动合并
   （PR #30），F5-5 底座双源加固随后合入（PR #31）；**首次全市场回填完成**
   （11:56→13:31 约 1.5 小时，5222/5222 零失败，数据截至当日，库文件 280MB，
