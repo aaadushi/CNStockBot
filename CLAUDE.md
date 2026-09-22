@@ -61,7 +61,7 @@ src/
     feishu.ts         飞书渠道：验签(含防重放)/回复/主动推送，chat_id 映射 kv 持久化；默认不启用
   alerts/scheduler.ts 定时任务：收盘日报（15:30 北京时间，含技术面信号摘要 F5-3）+ 盘中异动提醒（全局阈值 + 自定义多条件规则 F5-4）
   alerts/rules.ts     监控规则领域逻辑（条件类型/校验/求值/文案，纯函数，scheduler 与 manage_alerts 技能共用）
-  alerts/healthProbe.ts 行情健康探针：定时探测常青股票，连续失败告警（P4）
+  alerts/healthProbe.ts 行情健康探针：定时探测常青股票，故障记日志+入 /health，推送默认关（P4）
 data-service/         Python FastAPI + AKShare 微服务（新闻/公告/财报/历史K线；AKShare 调用统一 30s 超时）；含本地全市场日 K 库（baostock→SQLite data/market_bars.db，F5-5 选股扫描底座，线程内禁止裸调 AKShare，见 PITFALLS 2026-09-21 条目）
 public/webchat/       内置聊天网页
 public/stocks/        股票浏览页 + 个股详情页 SPA（F1/F2，手写 SVG 走势图）

@@ -282,16 +282,21 @@
   调度条目）；新任务必须复用 `beijingNow()` 换算，别直接用本地时区；
   海外 DST 时区服务器在切换日可能偏 ±1 小时（已知边界，A-406）。
 
-## 16. 行情健康探针（2026-09-14 新增，解决 P4）
+## 16. 行情健康探针（2026-09-14 新增，解决 P4；2026-09-22 推送默认关闭）
 
 - **实现方式**：东财是非官方公开接口、可能静默失效，故定时（`HEALTH_PROBE_INTERVAL_MINUTES`，
   默认 30 分钟）探测常青股票（`HEALTH_PROBE_CODE`，默认 600519）的 `getQuote` 链路。
-  连续失败 2 次判定故障：向所有用户推送一条告警（一次故障只推一次），恢复时推恢复通知；
-  状态实时暴露在 `GET /health` 的 `quoteProbe` 字段。探测只包 getQuote 本身，
-  通知与状态更新在 try 外且逐渠道隔离（审计 A-401/A-402）。
+  连续失败 2 次判定故障：故障/恢复各记一条服务端日志，状态实时暴露在 `GET /health`
+  的 `quoteProbe` 字段。探测只包 getQuote 本身，通知与状态更新在 try 外且逐渠道隔离
+  （审计 A-401/A-402）。
+- **推送策略（2026-09-22 调整）**：故障/恢复**默认不向聊天端推送**（`HEALTH_PROBE_ALERT_PUSH`
+  默认 false）——用户反馈无对话时"告警/恢复"消息反复刷屏；告警应对客户端透明，
+  查询失败由技能层在对话内当场转述。运维观察走 /health 与服务端日志；
+  需要主动推送时设 `HEALTH_PROBE_ALERT_PUSH=true`（一次故障只推一次，防刷屏）。
 - **代码位置**：[src/alerts/healthProbe.ts](../src/alerts/healthProbe.ts)，
-  接线在 [src/index.ts](../src/index.ts) `startHealthProbe(...)`
-- **改动入口**：开关/频率/探测标的 → `.env` 的 `HEALTH_PROBE_*`；
+  接线在 [src/index.ts](../src/index.ts) `startHealthProbe(...)`；
+  测试 [tests/healthProbe.test.ts](../tests/healthProbe.test.ts)
+- **改动入口**：开关/频率/探测标的/推送 → `.env` 的 `HEALTH_PROBE_*`；
   `HEALTH_PROBE_ENABLED=false` 完全关闭
 - **注意事项**：探测走当前配置的 quote 链路（默认组合 = 东财直连；DATA_PROVIDER=python
   时探微服务行情端点）；tick 自调度挂 finally + catch 兜底，改结构时两者都不能丢。
