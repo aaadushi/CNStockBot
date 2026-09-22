@@ -180,7 +180,10 @@ uvicorn main:app --host 127.0.0.1 --port 8000
    详见 [docs/STATUS.md](docs/STATUS.md) 第四节。
 6. S3-3 多用户体系（仅公网部署前必须做，落地时一并解决 A-601 同口令无身份隔离）；
    A-508 微服务 token（仅非回环部署时需要）。
-7. P8：LLM 429 重试（Kimi 低等级账号限流，用户决定暂不修，复发时做）。
+7. **F7 安卓端 App**（用户 2026-09-22 指定）：保留现有网页端，新增安卓 App 入口。
+   关键前提与路线候选（WebView/TWA 壳起步 → Capacitor 升级，后端局域网/公网可达性）
+   见 [docs/STATUS.md](docs/STATUS.md) 第四节 F7。
+8. P8：LLM 429 重试（Kimi 低等级账号限流，用户决定暂不修，复发时做）。
 
 后续迭代按 [docs/STATUS.md](docs/STATUS.md) 第四节执行。
 
