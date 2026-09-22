@@ -900,12 +900,13 @@
   "符合客观条件的股票名单"。红线：结果只是指标条件的命中名单，所有输出带
   "仅供参考，不构成投资建议"，不含买卖建议/推荐暗示。**范围裁剪（用户 2026-09-21 确认）**：
   仅沪深 A 股（北交所无免费批量数据源）、固定 7 个预设策略（不做自由条件编辑器）。
-- **数据底座（本地日 K 库，本服务首个磁盘持久化）**：baostock 批量前复权日 K →
+- **数据底座（本地日 K 库，本服务首个磁盘持久化）**：批量前复权日 K →
   SQLite `data-service/data/market_bars.db`（stdlib sqlite3，WAL 单写者，
-  `bars(code,date,…)` WITHOUT ROWID + meta 表；750 个交易日窗口，实测约 5221 只/300-500MB）。
-  字段口径（volume 股÷100→手、amount 元、turn→turnover、pctChg→change_pct、停牌票
-  turn 存 NULL）与已知坑（长窗口慢/连接熔断/会话互斥）见 DATA_SOURCES 与 PITFALLS
-  2026-09-21 条目。
+  `bars(code,date,…)` WITHOUT ROWID + meta 表；实测约 5221 只/300-500MB）。
+  **双源（2026-09-22 起）**：腾讯 fqkline 主源（免登录、单票一次 ~640 根、约 1.1s/票），
+  baostock 懒登录兜底（其免费服务端高峰期"登录用户过多"拒绝登录，不可作唯一依赖）；
+  腾讯口径差异（volume 已是手、无 amount/turnover/change_pct 列）与窗口差异
+  （腾讯约 640 交易日 / baostock 750）见 DATA_SOURCES。
 - **更新器**（[data-service/main.py](../data-service/main.py) "本地日 K 库"节）：
   `POST /market-bars/update?full=` 触发（单飞行 409）、`GET /market-bars/status` 查进度
   （running/phase/done/total/failed/coverage/lastBarDate/dbSizeMb）。断点续跑

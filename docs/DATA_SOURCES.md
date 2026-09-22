@@ -196,7 +196,10 @@ barSource/flowSource 双标注）。**口径为日级资金流**——分笔 tic
 - 三档结论只描述资金流与形态方向的客观一致性，**不含买卖建议**；响应带 disclaimer
 - 无近期信号时不拉资金流直接返回空列表（flowSource=null）；按 (code, days) 缓存 1h
 
-**baostock（已接入：本地全市场日 K 库的批量数据源，F5-5，2026-09-21）**
+**baostock（已接入：本地全市场日 K 库的批量兜底源，F5-5，2026-09-21；2026-09-22 起降级为兜底）**
+
+> 2026-09-22 起批量日 K **主源改为腾讯 fqkline**（见下节），baostock 降为兜底：
+> 其免费服务端高峰期会"登录用户过多"拒绝登录（实测持续 12+ 小时，PITFALLS 已记录）。
 
 ```
 bs.login() → bs.query_history_k_data_plus("sh.600519",
@@ -215,6 +218,20 @@ bs.login() → bs.query_history_k_data_plus("sh.600519",
 - 已知坑（详见 PITFALLS 2026-09-21 baostock 条目）：长窗口查询约 5-6s/票
   （首次全量回填数小时，断点续跑）；socket 死亡后每票静默报"网络接收错误"，
   须熔断重连；同账号并发会话互相挂起
+
+**腾讯日 K（web.ifzq.gtimg.cn fqkline，已接入：批量日 K 主源，2026-09-22）**
+```
+GET https://web.ifzq.gtimg.cn/appstock/app/fqkline/get?param=sh600519,day,,,640,qfq
+```
+- 免登录、单票一次请求返回最近约 640 根前复权日 K（实测 1.1s/票，全市场回填约 1.5 小时）；
+  响应 `data.{code}.qfqday` 数组 `[date, open, close, high, low, volume]`
+- **口径**：volume 已是"手"（实测 600519 2026-09-17 = 17554 手，与东财一致，不要再 ÷100）；
+  **无 amount/turnover 列**（库中置 NULL，扫描策略不用这两列）；无 change_pct
+  （收盘价环比补算，首条 NULL）；无效/退市代码 code=0 但无 qfqday 键（按空列表处理）
+- 不限定日期时含当日 bar（盘中为不完整 bar，增量回退重取自愈）；回填窗口 = 最近约
+  640 个交易日（baostock 兜底源按日期区间为 750 根）
+- 不覆盖北交所（与既有范围一致）；仅用于本地日 K 库批量落库，不影响行情快照链路
+  （qt.gtimg.cn 实时行情为另一接口）
 
 **全市场扫描本地计算（/scan，F5-5，2026-09-21；非外部接口）**
 

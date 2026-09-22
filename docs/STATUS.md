@@ -242,6 +242,16 @@ pattern_analyzer（K 线形态识别 + 历史成绩单）、狙击手模块（�
 
 ## 更新日志
 
+- 2026-09-22（批次 11）：**F5-5 底座加固——批量日 K 改双源（腾讯主源 + baostock 兜底）**。
+  首日 baostock 回填跑到 22%（1149/5221）后，baostock 免费服务端从 22:00 起先大面积
+  "网络接收错误"、次日连登录都秒拒（10001011"登录用户过多"，持续 12+ 小时，PITFALLS
+  已回填）——免费批量源不可作唯一依赖。新增腾讯 fqkline 主源
+  （`web.ifzq.gtimg.cn`，免登录、单票一次约 640 根前复权日 K、实测 1.1s/票，全市场回填
+  约 1.5 小时 vs baostock 8 小时）：volume 已是手不换算、无 amount/turnover/change_pct 列
+  （置 NULL/环比补算）、无效代码判空。`_DualFetcher` 双源封装：腾讯失败懒登录 baostock
+  兜底，baostock 登录失败一次本轮禁用。验证：py_compile + sanity 20 项全过（腾讯解析
+  字段/单位/param 格式/无效代码、双源降级矩阵、pass 断点/count 分档/熔断、真实接口核对
+  600519 收盘与量）；腾讯主源回填实测约 50 票/分钟零失败推进中。
 - 2026-09-22（批次 10）：**F5-6 回测引擎完成（F5 路线图收官）**——本地日 K 库上的单股
   策略历史信号回放。**数据层**：data-service 新增 `GET /backtest/{code}?strategy=&hold_days=&
   stop_loss_pct=&days=`（days 默认 750、范围 120~750，结果缓存键含 asOf 同扫描模式）——
