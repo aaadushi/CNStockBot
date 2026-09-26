@@ -6,6 +6,7 @@
 
     <application
         android:usesCleartextTraffic="true"
+        tools:replace="android:usesCleartextTraffic"
         tools:ignore="UsesCleartextTraffic" />
 
 </manifest>

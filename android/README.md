@@ -52,6 +52,17 @@ adb install app/build/outputs/apk/debug/app-debug.apk
 - 服务器地址仅存本机私有 SharedPreferences；"切换服务器"清地址并重建任务栈，
   旧服务器残留状态（含 token）随之丢弃。
 
+## 国内网络注意事项
+
+工程已自带 **Gradle Wrapper**（`gradle/wrapper/`，锁定 Gradle 8.7），且
+`distributionUrl` 指向腾讯镜像 `mirrors.cloud.tencent.com`——Android Studio 打开工程
+会直接按 wrapper 配置下载，**无需手动设置 Gradle**。
+
+- `settings.gradle.kts` 已把 Maven 源配成**阿里云镜像优先、官方源兜底**（AGP/Kotlin 插件
+  与依赖库走 maven.aliyun.com）；
+- SDK 组件下载失败：`Settings → SDK Update Sites` 添加
+  `https://mirrors.cloud.tencent.com/AndroidSDK/`。
+
 ## 后续（F7-3，未做）
 
 本地通知（收盘日报/异动提醒落地为系统通知）、后台轮询收件箱、应用图标与启动屏、
