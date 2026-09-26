@@ -13,10 +13,24 @@ python -m venv .venv
 # source .venv/bin/activate
 
 pip install -r requirements.txt
-uvicorn main:app --host 127.0.0.1 --port 8000
+
+# 必须设置 DATA_SERVICE_TOKEN（S4-2）：与 Node 主服务共享的静态 token，
+# 未配置时本服务拒绝启动；公网/跨机器部署时务必使用强随机字符串。
+DATA_SERVICE_TOKEN=change-me-to-a-random-string-at-least-32-chars \
+  uvicorn main:app --host 127.0.0.1 --port 8000
 ```
 
-验证：`curl http://127.0.0.1:8000/news/600519?limit=3`
+验证（需带 token）：
+
+```bash
+TOKEN=change-me-to-a-random-string-at-least-32-chars
+curl -H "Authorization: Bearer $TOKEN" http://127.0.0.1:8000/health
+# 期望返回 {"ok":true}
+
+curl -H "Authorization: Bearer $TOKEN" http://127.0.0.1:8000/news/600519?limit=3
+```
+
+无 token 访问任意端点均返回 401。
 
 ## 接口
 

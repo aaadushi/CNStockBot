@@ -4,30 +4,75 @@ Node 主服务（src/data/pythonService.ts）通过 HTTP 调用本服务。
 
 启动：
     pip install -r requirements.txt
-    uvicorn main:app --host 127.0.0.1 --port 8000
+    DATA_SERVICE_TOKEN=your-token uvicorn main:app --host 127.0.0.1 --port 8000
 
 为什么用 Python：A 股免费数据生态（AKShare/Tushare）几乎都在 Python 侧，
 包一层 HTTP 比用 Node 逐个逆向东财/新浪接口更稳、更好维护。
 
-安全约定：本服务无鉴权，**必须绑定回环地址**（--host 127.0.0.1）；
-需要非回环绑定时应先加 token 校验（审计 A-508）。
+安全约定：
+- 本服务使用 DATA_SERVICE_TOKEN 做共享静态 token 鉴权；
+- 未配置 DATA_SERVICE_TOKEN 时服务拒绝启动（fail-closed）；
+- 所有端点（含 /health）均校验 Authorization: Bearer <token> 或 X-Data-Service-Token: <token>；
+- 公网部署时仍建议通过反向代理 + HTTPS 暴露，并绑定受限地址（S4-3）。
 """
-from fastapi import FastAPI, HTTPException, Query
+from fastapi import FastAPI, HTTPException, Query, Depends, Header, status
 from datetime import datetime, timedelta, timezone
 import asyncio
 import logging
+import os
 import re
+import secrets
+import sys
 import akshare as ak
 import pandas as pd
 import requests
 
 logger = logging.getLogger("cnstockbot-data")
 
-app = FastAPI(title="CNStockBot Data Service", version="0.1.0")
-
 # AKShare 底层用 requests 且默认无超时；上游挂起会占满 uvicorn 线程池导致全服务无响应。
 # 统一在线程池里执行并加整体超时，超时返回 504 而非悬挂（审计 A-506）。
 AKSHARE_TIMEOUT = 30  # 秒
+
+# data-service 与主服务之间的共享静态 token（S4-2）；未配置时拒绝启动。
+DATA_SERVICE_TOKEN = os.environ.get("DATA_SERVICE_TOKEN", "").strip()
+if not DATA_SERVICE_TOKEN:
+    print(
+        "[fatal] DATA_SERVICE_TOKEN 未配置，data-service 拒绝启动。"
+        "请在 .env 中设置 DATA_SERVICE_TOKEN 后重启。",
+        file=sys.stderr,
+    )
+    sys.exit(1)
+
+
+def verify_data_service_token(
+    authorization: str | None = Header(None),
+    x_data_service_token: str | None = Header(None),
+):
+    """校验主服务调用凭证。接受 Authorization: Bearer <token> 或 X-Data-Service-Token: <token>。
+
+    使用 secrets.compare_digest 防时序侧信道；401 响应带 WWW-Authenticate: Bearer 提示。
+    """
+    token: str | None = None
+    if authorization:
+        scheme, _, param = authorization.partition(" ")
+        if scheme.lower() == "bearer":
+            token = param.strip()
+    if token is None and x_data_service_token:
+        token = x_data_service_token.strip()
+
+    if token is None or not secrets.compare_digest(token, DATA_SERVICE_TOKEN):
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Invalid or missing data service token",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+
+
+app = FastAPI(
+    title="CNStockBot Data Service",
+    version="0.1.0",
+    dependencies=[Depends(verify_data_service_token)],
+)
 
 
 async def run_ak(fn, *args, timeout: int = AKSHARE_TIMEOUT, **kwargs):

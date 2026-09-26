@@ -62,6 +62,9 @@ export const config = {
   dataProvider: process.env.DATA_PROVIDER ?? 'eastmoney',
   pythonServiceUrl: process.env.PYTHON_SERVICE_URL ?? 'http://127.0.0.1:8000',
 
+  /** 数据微服务共享静态 token（S4-2）；空字符串视为未配置 */
+  dataServiceToken: process.env.DATA_SERVICE_TOKEN?.trim() ?? '',
+
   dataDir: process.env.DATA_DIR ?? './data',
 
   /** 交易日历：true 时收盘日报/异动提醒跳过法定节假日（data-service 不可用时自动降级为只跳周末） */

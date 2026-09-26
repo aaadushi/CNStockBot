@@ -95,7 +95,7 @@
 | # | 事项 | 现状 | 必须完成的原因 |
 |---|---|---|---|
 | S4-1 | **S3-3 多用户体系** | ✅ 2026-09-26 完成：注册/登录/登出 API、服务端签发 UUID 会话、业务 API 全改用 session token、密码 bcryptjs 哈希、登录速率限制、前端登录页、测试覆盖；旧匿名数据冷启动隔离 | 审计 A-601：共享口令 + 客户端自报 userId 可被任意越权读删收件箱、冒用身份。公网陌生人共用同一口令不可接受 |
-| S4-2 | **A-508 微服务 token 鉴权** | 未做 | data-service 目前无鉴权，安全仅靠 `127.0.0.1` 绑定。公网/跨机器部署时 8000 端口裸奔，会被任意调用消耗数据源额度、触发限流 |
+| S4-2 | **A-508 微服务 token 鉴权** | ✅ 2026-09-26 完成：data-service 全局 `Authorization: Bearer <token>` / `X-Data-Service-Token: <token>` 校验（含 `/health`），未配置 `DATA_SERVICE_TOKEN` 拒绝启动；主服务 `pythonService.ts` 的 get/post、`TradeCalendar` 统一带 token；`.env.example`/`config.ts` 新增配置；启动自检警告；新增 5 条 Node 测试 + 2 条 config 测试；需求文档 [REQ-S4-2](requirements/S4-2-data-service-token.md) | data-service 目前无鉴权，安全仅靠 `127.0.0.1` 绑定。公网/跨机器部署时 8000 端口裸奔，会被任意调用消耗数据源额度、触发限流 |
 | S4-3 | **HTTPS 部署** | 未做 | 多用户体系的登录凭证、ACCESS_TOKEN、微服务 token 均不能明文走公网 HTTP |
 | S4-4 | **服务端监听地址可配置** | ✅ 2026-09-26 完成：新增 `HOST` 环境变量，默认 `0.0.0.0`，写入 `app.listen(config.port, config.host)`；`.env.example` 与测试覆盖 | 当前主服务写死 `app.listen(config.port)` 无 host 参数，默认只绑 IPv4+IPv6 全地址；需显式支持 `HOST` 环境变量，避免公网部署误绑 |
 
@@ -313,6 +313,26 @@ App 形式在安卓手机上运行——手机上随时查行情/自选股/收�
 
 ## 更新日志
 
+- 2026-09-26（批次 20）：**S4-2 微服务 token 鉴权完成**——公网发布前置第三项，解决审计
+  A-508。改动：
+  - data-service：[data-service/main.py](data-service/main.py) 启动时读 `DATA_SERVICE_TOKEN`，
+    未配置即 `sys.exit(1)`（fail-closed）；新增 `verify_data_service_token` 全局依赖注入
+    FastAPI app，覆盖全部 32 端点（**含 /health**）；接受 `Authorization: Bearer <token>`
+    与 `X-Data-Service-Token: <token>` 两种 Header；`secrets.compare_digest` 防时序侧信道；
+  - 主服务：[src/data/pythonService.ts](src/data/pythonService.ts) 新增 `authHeaders()` 模块级
+    函数，`PythonServiceProvider.get/post` 与 `TradeCalendar.loadYear` 三处 fetch 统一带
+    token；token 只出现在 Header 不出现在 URL；
+  - 配置：[src/config.ts](src/config.ts) 新增 `dataServiceToken`；`.env.example` /
+    [README.md](README.md) / [data-service/README.md](data-service/README.md) 同步配置说明与
+    启动命令；
+  - 启动自检：[src/index.ts](src/index.ts) `DATA_PROVIDER=python` 且 token 空时打醒目 warning；
+  - 测试：`tests/pythonService-token.test.ts` 新建 5 条（get/post 带 token、空 token 不带
+    Header、401 错误透传、TradeCalendar 带 token）+ `tests/config.test.ts` 追加 2 条；
+  - 文档：[docs/requirements/S4-2-data-service-token.md](docs/requirements/S4-2-data-service-token.md)
+    需求文档建立，FEATURES.md 新增第 39 节，STATUS S4-2 行更新；
+  - 验证：`npm run typecheck` + `npm test` 全绿（269 测试）+ `py_compile` 通过；
+    uvicorn 真实进程手动验证：缺 token 启动失败 / 无 token→401 / 错 token→401 /
+    Bearer 与 X-Header 正确 token→200。
 - 2026-09-26（批次 19）：**S4-1 多用户体系完成**——公网发布前置第二项，解决审计 A-601。改动：
   - 后端：新增 `src/auth/*` 模块（`password.ts`/`token.ts`/`rateLimit.ts`/`service.ts`/`middleware.ts`/`routes.ts`），实现注册/登录/登出、bcryptjs 密码哈希、opaque session token（SHA-256 存库）、IP 登录速率限制；
   - `src/storage/store.ts` 新增 `users`/`sessions` 表；`src/config.ts` 新增 `auth` 配置块（`SESSION_TTL_HOURS`/`BCRYPT_ROUNDS`/`LOGIN_RATE_LIMIT_*`）；`.env.example` 同步；

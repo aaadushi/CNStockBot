@@ -9,6 +9,11 @@ import type { Announcement, BacktestOptions, BacktestResult, CompanyProfile, Dat
 /** 微服务显式超时：AKShare 爬网页较慢，放宽到 60s；防上游挂起拖死调度链（审计 A-301/A-506） */
 const FETCH_TIMEOUT_MS = 60_000;
 
+function authHeaders(): Record<string, string> {
+  const token = config.dataServiceToken;
+  return token ? { Authorization: `Bearer ${token}` } : {};
+}
+
 export class PythonServiceProvider implements DataProvider {
   readonly name = 'python-akshare';
   private base = config.pythonServiceUrl;
@@ -18,7 +23,10 @@ export class PythonServiceProvider implements DataProvider {
   private async get<T>(path: string, timeoutMs: number = FETCH_TIMEOUT_MS): Promise<T> {
     let res: Response;
     try {
-      res = await fetch(`${this.base}${path}`, { signal: AbortSignal.timeout(timeoutMs) });
+      res = await fetch(`${this.base}${path}`, {
+        headers: authHeaders(),
+        signal: AbortSignal.timeout(timeoutMs),
+      });
     } catch (err) {
       // 连接层失败（服务没启动/网络不通/超时）才提示启动（审计 A-309）
       throw new Error(
@@ -41,6 +49,7 @@ export class PythonServiceProvider implements DataProvider {
     try {
       res = await fetch(`${this.base}${path}`, {
         method: 'POST',
+        headers: authHeaders(),
         signal: AbortSignal.timeout(timeoutMs),
       });
     } catch (err) {
@@ -237,6 +246,7 @@ export class TradeCalendar {
     if (failTs !== undefined && Date.now() - failTs < TradeCalendar.FAIL_RETRY_MS) return null;
     try {
       const res = await fetch(`${this.base}/trade-calendar?year=${year}`, {
+        headers: authHeaders(),
         signal: AbortSignal.timeout(FETCH_TIMEOUT_MS),
       });
       if (!res.ok) throw new Error(`HTTP ${res.status}`);

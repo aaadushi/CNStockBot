@@ -1050,3 +1050,39 @@
   东财/新浪前复权有复权因子精度差异（<0.5%），不作逐位一致性承诺；前复权历史值随新
   除权平移，长窗口回测的早期交易价格为平移后口径（相对比较不受影响，绝对价格与
   当时真实成交价有偏差，需要精确时 full=true 全量刷新日 K 库）。
+
+## 39. 数据微服务 token 鉴权（S4-2，2026-09-26 新增）
+
+- **定位**：为 Node 主服务 ↔ Python data-service 之间的全部 HTTP 调用增加共享静态
+  token 鉴权，解决审计 A-508（原仅靠"必须绑定 127.0.0.1"docstring 约定）。公网/跨机器
+  部署时即使 8000 端口被意外暴露，无 token 的外部请求也会被 401 拒绝。
+- **data-service 侧**（[data-service/main.py](../data-service/main.py) 顶部）：
+  - 启动时读 `DATA_SERVICE_TOKEN` env，**未配置或为空字符串时 `sys.exit(1)` 拒绝启动**
+    （fail-closed，避免用户误以为有鉴权）；
+  - 全局依赖 `verify_data_service_token` 注入 `FastAPI(dependencies=[...])`，覆盖全部
+    32 个端点（**含 `/health`**）；
+  - 接受两种 Header：`Authorization: Bearer <token>` 或 `X-Data-Service-Token: <token>`；
+  - 用 `secrets.compare_digest` 防时序侧信道；不匹配返回 401 +
+    `WWW-Authenticate: Bearer` 提示。
+- **主服务侧**（[src/data/pythonService.ts](../src/data/pythonService.ts)）：
+  - 模块级 `authHeaders()` 私有函数从 `config.dataServiceToken` 取 token；
+  - `PythonServiceProvider` 的 `get`/`post` 与 `TradeCalendar.loadYear` 三处 fetch 调用
+    统一带 `Authorization: Bearer <token>` Header；
+  - token 只出现在 Header，不出现在 URL query string。
+- **配置**（[src/config.ts](../src/config.ts)）：`dataServiceToken` 读
+  `DATA_SERVICE_TOKEN` env，`.trim()` 后空串视为未配置。
+- **启动自检**（[src/index.ts](../src/index.ts)）：`DATA_PROVIDER=python` 且 token 为空时
+  打醒目 warning（服务仍启动，便于只调行情的开发场景）。
+- **测试**：[tests/pythonService-token.test.ts](../tests/pythonService-token.test.ts) 5 条
+  （get/post 带 token Header、token 空不带 Header、401 错误透传、TradeCalendar 带 token）+
+  [tests/config.test.ts](../tests/config.test.ts) 追加 2 条（默认值 / trim）。
+  **Python 侧校验逻辑**经 uvicorn 真实进程手动验证（无 token→401、错 token→401、
+  Bearer/X-Header 正确 token→200、缺 token 启动失败）。
+- **改动入口**：换 Header 方案 → main.py `verify_data_service_token` + pythonService.ts
+  `authHeaders()` 两处同步；新增调用 data-service 的 fetch 点 → 必须走
+  `PythonServiceProvider.get/post` 或 `authHeaders()`。
+- **注意事项**：
+  - data-service 加鉴权后**旧版主服务无法访问**——升级需两端同步发版；
+  - `/health` 也纳入校验意味着容器/外部健康探测需带 token；
+  - token 轮换需改两端 .env 并重启，无热更机制；
+  - 日志/错误信息不得打印完整 token（如需要只保留前 4 位）。
