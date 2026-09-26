@@ -82,6 +82,12 @@ docs/                 文档库：STATUS（功能与问题）/ FEATURES（实现
 > 推送到远程后开 PR 合并到 main，**不要直接提交/推送到 main**。
 > 分支命名、提交信息格式、PR 规范、回退方法见 [docs/WORKFLOW.md](docs/WORKFLOW.md)。
 
+> ⚠️ **需求文档流程（必须遵守，2026-09-26 起执行）**：
+> **任何新功能开发前，必须先写需求文档到 `docs/requirements/<feature-id>-<short-name>.md`**。
+> 需求文档是后续代码审计、功能验收、回归测试的基准，避免实现 agent 私自扩大/裁剪范围。
+> 需求文档必须包含：背景与目标、范围（含明确不做的事项）、功能需求、非功能需求、数据模型/API/前端改动、验收标准、审计要点。
+> 代码审计时审查 agent 必须对照需求文档逐项检查实现是否一致。
+
 ```bash
 # 首次设置
 cp .env.example .env   # 然后填入 LLM_API_KEY（不填则所有对话功能不可用）
@@ -195,6 +201,7 @@ uvicorn main:app --host 127.0.0.1 --port 8000
 | 你做了什么 | 必须更新 |
 |---|---|
 | 完成了路线图上的功能 / 发现新的项目级问题 | [docs/STATUS.md](docs/STATUS.md)（含更新日志） |
+| **开始实现新功能前** | **[docs/requirements/](docs/requirements/) 下对应需求文档（必须先写）** |
 | 新增或删除了功能模块 | [docs/FEATURES.md](docs/FEATURES.md)（追加/移除对应一节） |
 | 排查并解决了一个坑（>15 分钟、报错有迷惑性、外部接口非直觉行为） | [docs/PITFALLS.md](docs/PITFALLS.md)（按模板回填） |
 | 做代码审查 / 修复了审计问题 | [docs/AUDIT.md](docs/AUDIT.md)（严格遵守其中的角色权限规则） |
