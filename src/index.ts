@@ -22,6 +22,10 @@ if (!config.llm.apiKey) {
   console.warn('⚠️  未配置 LLM_API_KEY：所有对话功能不可用（行情探针/日报推送不受影响）。请在 .env 中填入后重启。');
 }
 
+if (config.dataProvider === 'python' && !config.dataServiceToken) {
+  console.warn('⚠️  DATA_PROVIDER=python 但 DATA_SERVICE_TOKEN 未配置，data-service 调用将因 401 失败。请在 .env 中设置后重启。');
+}
+
 // 进程级兜底：渠道 handler 漏 catch 时不裸崩无迹（Express 4 不捕获 async 异常）（审计 A-502）
 process.on('unhandledRejection', (err) => {
   console.error('[fatal] 未处理的 Promise 拒绝:', err);

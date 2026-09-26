@@ -17,6 +17,7 @@ describe('config 数值解析', () => {
     vi.stubEnv('ALERT_THRESHOLD_PCT', '');
     vi.stubEnv('LLM_TIMEOUT_MS', '');
     vi.stubEnv('HOST', '');
+    vi.stubEnv('DATA_SERVICE_TOKEN', '');
   });
 
   afterEach(() => {
@@ -51,5 +52,17 @@ describe('config 数值解析', () => {
     vi.stubEnv('ALERT_INTERVAL_MINUTES', 'NaN');
     const { config } = await loadConfig();
     expect((config.alerts as { intervalMinutes: number }).intervalMinutes).toBe(5);
+  });
+
+  it('DATA_SERVICE_TOKEN 默认空字符串', async () => {
+    vi.stubEnv('DATA_SERVICE_TOKEN', '');
+    const { config } = await loadConfig();
+    expect(config.dataServiceToken).toBe('');
+  });
+
+  it('DATA_SERVICE_TOKEN 读取环境变量并去除首尾空格（S4-2）', async () => {
+    vi.stubEnv('DATA_SERVICE_TOKEN', '  secret-token  ');
+    const { config } = await loadConfig();
+    expect(config.dataServiceToken).toBe('secret-token');
   });
 });

@@ -47,8 +47,17 @@ npm run dev
 ```bash
 cd data-service
 pip install -r requirements.txt
-uvicorn main:app --host 127.0.0.1 --port 8000
+
+# 设置 DATA_SERVICE_TOKEN（S4-2）：data-service 与主服务之间的共享静态 token，
+# 未配置时 data-service 拒绝启动；公网/跨机器部署时务必使用强随机字符串。
+DATA_SERVICE_TOKEN=change-me-to-a-random-string-at-least-32-chars \
+  uvicorn main:app --host 127.0.0.1 --port 8000
 ```
+
+同时请在主服务 `.env` 中设置相同的 `DATA_SERVICE_TOKEN`。
+
+> **注意（S4-2）**：data-service 自 2026-09-26 起启用 token 鉴权，未配置 `DATA_SERVICE_TOKEN`
+> 时拒绝启动；旧版主服务无法访问新版 data-service，升级需两端同步。
 
 ## 架构一览
 
