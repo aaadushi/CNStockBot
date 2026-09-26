@@ -52,6 +52,19 @@ adb install app/build/outputs/apk/debug/app-debug.apk
 - 服务器地址仅存本机私有 SharedPreferences；"切换服务器"清地址并重建任务栈，
   旧服务器残留状态（含 token）随之丢弃。
 
+## 国内网络注意事项
+
+- `settings.gradle.kts` 已把 Maven 源配成**阿里云镜像优先、官方源兜底**（AGP/Kotlin 插件
+  与依赖库走 maven.aliyun.com），一般无需额外配置；
+- **Gradle 本体**如果 Studio 自动下载失败（`services.gradle.org` 国内不稳，报
+  `Premature EOF` 之类），手动下载：浏览器打开
+  `https://mirrors.cloud.tencent.com/gradle/gradle-8.7-bin.zip`，解压到任意目录（如
+  `D:\gradle-8.7`），然后在 Android Studio：`Settings → Build, Execution, Deployment →
+  Build Tools → Gradle`，把 **Distribution** 改为 **Local installation** 并选该目录，
+  重新 Sync；
+- SDK 组件下载失败同理：`Settings → SDK Update Sites` 添加
+  `https://mirrors.cloud.tencent.com/AndroidSDK/`。
+
 ## 后续（F7-3，未做）
 
 本地通知（收盘日报/异动提醒落地为系统通知）、后台轮询收件箱、应用图标与启动屏、
