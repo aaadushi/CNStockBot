@@ -4,6 +4,8 @@
  * 启动时若发现旧的 data/store.json，自动迁移自选股数据并把原文件改名 .migrated。
  *
  * 表结构：
+ *   users(id, username, password_hash, created_at, updated_at)  用户账号（S4-1）
+ *   sessions(id, user_id, token_hash, expires_at, created_at)   登录会话（S4-1）
  *   watchlists(user_id, code)         自选股，按用户隔离
  *   histories(user_id, messages, updated_at)  会话历史（含工具调用上下文，JSON 数组）
  *   inbox(id, user_id, text, created_at)      离线通知收件箱（WebChat 轮询拉取）
@@ -15,6 +17,7 @@ import { mkdirSync, existsSync, readFileSync, renameSync } from 'node:fs';
 import path from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
 import { config } from '../config.js';
+import { AuthService } from '../auth/service.js';
 import type { AlertCondition, AlertCombinator, AlertRule } from '../alerts/rules.js';
 
 /** 持久化的一条工具调用（与 OpenAI 兼容协议同构） */
@@ -48,10 +51,12 @@ interface AlertRuleRow {
 
 export class Store {
   private db: DatabaseSync;
+  readonly auth: AuthService;
 
   constructor() {
     mkdirSync(config.dataDir, { recursive: true });
     this.db = new DatabaseSync(path.join(config.dataDir, 'store.db'));
+    this.auth = new AuthService(this.db);
     this.db.exec(`
       CREATE TABLE IF NOT EXISTS watchlists (
         user_id TEXT NOT NULL,
@@ -83,6 +88,7 @@ export class Store {
         created_at INTEGER NOT NULL
       );
     `);
+    this.auth.initTables();
     this.migrateLegacyJson();
   }
 

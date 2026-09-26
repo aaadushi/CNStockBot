@@ -8,7 +8,7 @@
 > 功能现状（能用/待做/有问题）看 [STATUS.md](STATUS.md)，原理性架构看
 > [ARCHITECTURE.md](ARCHITECTURE.md)，报错排查看 [PITFALLS.md](PITFALLS.md)。
 
-最后更新：2026-09-21
+最后更新：2026-09-26
 
 ---
 
@@ -208,25 +208,65 @@
   端点统一用 try/except 包成 502 结构化错误，别让堆栈传到主服务；
   **无鉴权，必须绑定回环地址启动**（`--host 127.0.0.1`）。
 
-## 13. WebChat 渠道与离线收件箱
+## 13. 多用户认证体系（S4-1，2026-09-26 完成，解决审计 A-601）
+
+- **实现方式**：WebChat 从单一共享 `ACCESS_TOKEN` 升级为**独立账号 + 服务端 session**：
+  - `POST /api/auth/register`：用户名/密码注册，成功后自动创建 session，返回 `{token, user}`；
+  - `POST /api/auth/login`：校验 bcryptjs 哈希密码，成功后创建 session；
+  - `POST /api/auth/logout`：删除当前 session，token 立即失效；
+  - 会话采用 **opaque token**：`crypto.randomBytes(32).toString('hex')`，数据库存 SHA-256 hash，
+    默认 7 天过期（`SESSION_TTL_HOURS`），启动时清理过期 session；
+  - 密码用 **bcryptjs** 哈希（成本因子 `BCRYPT_ROUNDS`，默认 12），纯 JS 无原生编译依赖；
+  - 登录失败按 IP 计数限速（`LOGIN_RATE_LIMIT_MAX` 次/`LOGIN_RATE_LIMIT_WINDOW_MS` 毫秒），超限返回 429；
+  - `requireSession` 中间件解析 `Authorization: Bearer <token>`，查 sessions 表，把 `{userId, username}` 注入 `req.user`；
+  - 所有业务 `/api/*` 端点位于 `requireSession` 之后，`userId` 参数被静默忽略；静态页面不鉴权。
+- **代码位置**：
+  - 服务端：[src/auth/password.ts](../src/auth/password.ts)（校验/哈希）、
+    [src/auth/token.ts](../src/auth/token.ts)（生成/哈希）、
+    [src/auth/rateLimit.ts](../src/auth/rateLimit.ts)（限速）、
+    [src/auth/service.ts](../src/auth/service.ts)（用户/会话 CRUD）、
+    [src/auth/middleware.ts](../src/auth/middleware.ts)（`requireSession`）、
+    [src/auth/routes.ts](../src/auth/routes.ts)（注册/登录/登出路由）、
+    [src/types/express.d.ts](../src/types/express.d.ts)（`req.user` 类型扩展）
+  - 渠道接线：[src/channels/webchat.ts](../src/channels/webchat.ts)
+  - 前端共享模块：[public/shared/auth.js](../public/shared/auth.js)
+  - 前端页面：[public/webchat/index.html](../public/webchat/index.html)、
+    [public/stocks/index.html](../public/stocks/index.html)、
+    [public/market/index.html](../public/market/index.html)、
+    [public/news/index.html](../public/news/index.html)、
+    [public/funds/index.html](../public/funds/index.html)、
+    [public/sectors/index.html](../public/sectors/index.html)、
+    [public/overseas/index.html](../public/overseas/index.html)、
+    [public/scanner/index.html](../public/scanner/index.html)、
+    [public/backtest/index.html](../public/backtest/index.html)
+- **改动入口**：
+  - 改 session 时长/哈希成本/限速阈值 → `src/config.ts` 的 `auth` 块 + `.env`
+  - 改前端登录浮层/自动带 token 行为 → `public/shared/auth.js`
+  - 业务端点新增/改路由顺序 → `src/channels/webchat.ts`
+  - 新增鉴权相关测试 → `tests/auth/`
+- **注意事项**：
+  - `.env` 中的 `ACCESS_TOKEN` 已**不再用于 WebChat/API 鉴权**（保留字段，当前未使用，未来可用于内部 health check 等可选场景）；
+  - 数据迁移采用**方案 A 冷启动**：旧匿名数据保留在库，但新注册用户/新会话无法访问旧 `userId` 对应的数据；
+  - `kv` 表未改造，飞书 openId→chat_id 映射仍以 openId 作为 key 一部分，WebChat 用户与飞书 openId 暂不强制绑定；
+  - 登录接口错误返回统一为"用户名或密码错误"，不暴露用户名是否存在。
+
+## 14. WebChat 渠道与离线收件箱
 
 - **实现方式**：Express 静态托管 `public/webchat/` 聊天页；`POST /api/chat`
   同步等 Agent 回复；`notify()` 的消息写 SQLite `inbox` 表（2026-09-14 起重启不丢，
   每用户只留最近 100 条），前端轮询 `GET /api/inbox` 取走（读后即删）。
-  **访问口令鉴权（2026-09-14，解决 P5）**：`requireAccessToken` 中间件保护所有 `/api/*`，
-  校验 `Authorization: Bearer <token>`（恒定时间比较，A-607），失败 401；口令来自
-  `config.accessToken`（`.env` 的 `ACCESS_TOKEN`，未配置时启动随机生成并打印控制台）；
-  静态页面不鉴权；前端首次打开弹窗输口令存 localStorage，点取消不阻塞循环、
-  页面内出可点击的重试提示（A-606）。
+  **鉴权（2026-09-26，S4-1）**：`/api/auth` 公开；`/api` 以下所有业务端点由 `requireSession`
+  保护，从 `req.user.userId` 取身份；静态页面不鉴权。前端通过 `public/shared/auth.js` 的
+  `CNStockAuth.apiFetch` 自动带 Bearer token，token 过期/失效时弹出登录/注册浮层。
 - **代码位置**：[src/channels/webchat.ts](../src/channels/webchat.ts)、
-  前端 [public/webchat/](../public/webchat/)、渠道接口 [src/channels/types.ts](../src/channels/types.ts)
-- **改动入口**：改鉴权方式（如多用户）→ `requireAccessToken` 中间件 + 前端 `apiFetch()`；
+  前端 [public/webchat/](../public/webchat/)、渠道接口 [src/channels/types.ts](../src/channels/types.ts)、
+  认证模块 [src/auth/](../src/auth/)
+- **改动入口**：改鉴权/session 行为 → 第 13 节多用户认证体系；
   通知改 WebSocket/SSE → `notify()` 与前端轮询逻辑
-- **注意事项**：口令是明文共享口令、非多用户体系；**同口令持有者之间无身份隔离**
-  （userId 客户端自报，审计 A-601 标注为已知限制，S3-3 解决）；
-  公网部署建议在 .env 固定强口令并配合 HTTPS。
+- **注意事项**：收件箱、自选股、会话历史、监控规则均按 `req.user.userId` 隔离；
+  飞书渠道用户 ID 仍是 openId，与 WebChat UUID 暂不互通（见第 13 节）。
 
-## 14. 飞书渠道（2026-09-14 补完）
+## 15. 飞书渠道（2026-09-14 补完）
 
 - **实现方式**：`/feishu/events` 接收事件——url_verification 挑战应答、
   X-Lark-Signature 验签（HMAC-SHA256，key 为 `FEISHU_ENCRYPT_KEY`，对

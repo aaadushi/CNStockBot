@@ -38,6 +38,14 @@ export const config = {
    */
   host: (process.env.HOST?.trim() || '0.0.0.0'),
 
+  /** 多用户体系（S4-1） */
+  auth: {
+    sessionTtlHours: numEnv('SESSION_TTL_HOURS', 168, 1),
+    bcryptRounds: numEnv('BCRYPT_ROUNDS', 12, 4),
+    loginRateLimitMax: numEnv('LOGIN_RATE_LIMIT_MAX', 5, 1),
+    loginRateLimitWindowMs: numEnv('LOGIN_RATE_LIMIT_WINDOW_MS', 60_000, 1_000),
+  },
+
   /** WebChat API 鉴权口令（请求头 Authorization: Bearer <token>），静态页面不鉴权 */
   accessToken: resolveAccessToken(),
 

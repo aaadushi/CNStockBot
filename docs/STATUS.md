@@ -7,7 +7,7 @@
 > 看 [FEATURES.md](FEATURES.md)；踩过的坑看 [PITFALLS.md](PITFALLS.md)；
 > 数据源接口细节看 [DATA_SOURCES.md](DATA_SOURCES.md)。
 
-最后更新：2026-09-22
+最后更新：2026-09-26
 
 ---
 
@@ -23,7 +23,7 @@
 | 股票搜索 `search_stock` | `src/skills/bundled/search/` | ✅ 可用 | Python 全量表优先，东财 suggest 降级（降级有日志）；覆盖北交所 4/8/920 |
 | 公告查询 `get_stock_announcements` | `src/skills/bundled/announcement/` | ✅ 可用 | 巨潮资讯个股公告，依赖 Python data-service 运行；2026-09-14 新增 |
 | 财报查询 `get_stock_financials` | `src/skills/bundled/financials/` | ✅ 可用 | 新浪财务摘要（按报告期），依赖 Python data-service 运行；2026-09-14 新增 |
-| WebChat 网页聊天 | `src/channels/webchat.ts` + `public/webchat/` | ✅ 可用 | API 需访问口令（Bearer，恒定时间比较），静态页面不鉴权；2026-09-14 解决 P5 |
+| WebChat 网页聊天 | `src/channels/webchat.ts` + `public/webchat/` | ✅ 可用 | 2026-09-26 起升级为多用户体系：注册/登录/登出 API + session token，业务 API 全改 Bearer 鉴权，原 `ACCESS_TOKEN` 共享口令下线；静态页面不鉴权 |
 | 离线通知收件箱（/api/inbox 轮询） | `src/channels/webchat.ts` | ✅ 可用 | **SQLite 持久化**（每用户上限 100 条），重启不丢；同在口令保护内 |
 | 收盘日报定时推送（交易日 15:30） | `src/alerts/scheduler.ts` | ✅ 可用 | 已跳法定节假日（交易日历降级只跳周末）；2026-09-14 解决 P2；2026-09-19 起附加技术面信号摘要（F5-3，复用 F5-1 指标端点，需 data-service，`DAILY_REPORT_SIGNALS=false` 可关） |
 | 异动提醒（盘中轮询，超阈值推送） | `src/alerts/scheduler.ts` | ✅ 可用 | 默认 ±5%、每 5 分钟，每股每日只报一次；推送失败下轮补报；单用户失败不中断他人；2026-09-19 起并入自定义多条件规则（F5-4：`manage_alerts` 技能配置，价格上下限/涨跌幅、AND/OR 组合、条件粒度每日去重，存 SQLite alert_rules 表） |
@@ -85,7 +85,7 @@
 |---|---|---|
 | S3-1 | ~~inbox 落 SQLite~~ | ✅ 已完成（每用户上限 100 条） |
 | S3-2 | ~~飞书 chat_id 映射持久化~~ | ✅ 已完成（kv 表；只学单聊映射，防持仓日报进群） |
-| S3-3 | WebChat 共享口令 → 多用户体系 | **未做，现上升为 F7 公网发布前置硬依赖**。审计 A-601：同口令持有者之间无身份隔离（userId 客户端自报），公网发布前必须完成 |
+| S3-3 | ~~WebChat 共享口令 → 多用户体系~~ | ✅ 已上升为 S4-1 并于 2026-09-26 完成 | 审计 A-601：同口令持有者之间无身份隔离（userId 客户端自报），公网发布前必须完成 |
 | S3-4 | 进程管理加固（P9 善后）：一键启动脚本（双服务同起）+ /health 暴露 data-service 连通性与进程启动时间/git sha；（可选）data-service 健康探针 | 未做。P9 已于 2026-09-19 恢复（双服务重启并实测全链路，见更新日志），本行只剩加固项 |
 
 ### S4 公网发布前置（新增）
@@ -94,7 +94,7 @@
 
 | # | 事项 | 现状 | 必须完成的原因 |
 |---|---|---|---|
-| S4-1 | **S3-3 多用户体系** | 未做，[需求文档](requirements/S4-1-multi-user-system.md) 已建立 | 审计 A-601：共享口令 + 客户端自报 userId 可被任意越权读删收件箱、冒用身份。公网陌生人共用同一口令不可接受 |
+| S4-1 | **S3-3 多用户体系** | ✅ 2026-09-26 完成：注册/登录/登出 API、服务端签发 UUID 会话、业务 API 全改用 session token、密码 bcryptjs 哈希、登录速率限制、前端登录页、测试覆盖；旧匿名数据冷启动隔离 | 审计 A-601：共享口令 + 客户端自报 userId 可被任意越权读删收件箱、冒用身份。公网陌生人共用同一口令不可接受 |
 | S4-2 | **A-508 微服务 token 鉴权** | 未做 | data-service 目前无鉴权，安全仅靠 `127.0.0.1` 绑定。公网/跨机器部署时 8000 端口裸奔，会被任意调用消耗数据源额度、触发限流 |
 | S4-3 | **HTTPS 部署** | 未做 | 多用户体系的登录凭证、ACCESS_TOKEN、微服务 token 均不能明文走公网 HTTP |
 | S4-4 | **服务端监听地址可配置** | ✅ 2026-09-26 完成：新增 `HOST` 环境变量，默认 `0.0.0.0`，写入 `app.listen(config.port, config.host)`；`.env.example` 与测试覆盖 | 当前主服务写死 `app.listen(config.port)` 无 host 参数，默认只绑 IPv4+IPv6 全地址；需显式支持 `HOST` 环境变量，避免公网部署误绑 |
@@ -313,6 +313,15 @@ App 形式在安卓手机上运行——手机上随时查行情/自选股/收�
 
 ## 更新日志
 
+- 2026-09-26（批次 19）：**S4-1 多用户体系完成**——公网发布前置第二项，解决审计 A-601。改动：
+  - 后端：新增 `src/auth/*` 模块（`password.ts`/`token.ts`/`rateLimit.ts`/`service.ts`/`middleware.ts`/`routes.ts`），实现注册/登录/登出、bcryptjs 密码哈希、opaque session token（SHA-256 存库）、IP 登录速率限制；
+  - `src/storage/store.ts` 新增 `users`/`sessions` 表；`src/config.ts` 新增 `auth` 配置块（`SESSION_TTL_HOURS`/`BCRYPT_ROUNDS`/`LOGIN_RATE_LIMIT_*`）；`.env.example` 同步；
+  - `src/channels/webchat.ts` 移除 `ACCESS_TOKEN` 共享口令中间件，业务 API 全部改用 `requireSession` 注入 `req.user`；`userId` 参数静默忽略；
+  - 前端：新建 `public/shared/auth.js` 提供 `CNStockAuth`（登录/注册/登出、`apiFetch` 自动带 Bearer、401 弹登录浮层），`public/webchat/index.html` 改为登录/注册卡片，`public/{stocks,market,news,funds,sectors,overseas,scanner,backtest}/index.html` 全部迁移到 `CNStockAuth.apiFetch` 并加登出入口；
+  - 数据迁移采用方案 A 冷启动：旧匿名数据保留在库但新会话不可访问；
+  - 新增 `tests/auth/*.test.ts` 覆盖密码、速率限制、session CRUD、路由集成与跨用户隔离；
+  - 更新 `docs/STATUS.md` / `README.md` / `CLAUDE.md`（目录地图加 `src/auth/` 与 `public/shared/auth.js`）。
+  - 验证：`npm run typecheck` + `npm test` 全绿（262 测试）。
 - 2026-09-26（批次 18）：**S4-4 服务端监听地址可配置完成**——公网发布前置第一项。改动：
   - `src/config.ts` 新增 `HOST` 环境变量，默认 `0.0.0.0`（监听所有接口），空字符串回退默认值；
   - `src/index.ts` `app.listen` 改为 `app.listen(config.port, config.host)`，启动日志打印监听地址；

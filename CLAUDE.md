@@ -54,7 +54,14 @@ src/
     tencent.ts        腾讯行情（东财的自动降级备份；GBK 文本协议，价格不放大）
     pythonService.ts  AKShare 微服务客户端 + TradeCalendar（交易日历，按年缓存+格式校验）
     index.ts          createProvider()：默认组合（行情东财+腾讯降级 + 新闻微服务）
-  storage/store.ts    SQLite 存储（node:sqlite）：自选股 + 会话历史（含工具上下文）+ 收件箱 + kv + alert_rules 监控规则（F5-4），按 userId 隔离
+  storage/store.ts    SQLite 存储（node:sqlite）：自选股 + 会话历史（含工具上下文）+ 收件箱 + kv + alert_rules 监控规则（F5-4）+ users/sessions 表（S4-1），按 userId 隔离
+  auth/               多用户认证（S4-1）：password/token/rateLimit/service/middleware/routes
+    password.ts       用户名/密码校验、bcryptjs 哈希/校验
+    token.ts          opaque session token 生成与 SHA-256 hash
+    rateLimit.ts      IP 登录失败速率限制
+    service.ts        AuthService：用户/会话 CRUD、过期清理
+    middleware.ts     requireSession：Bearer token → req.user
+    routes.ts         /api/auth/register|login|logout
   channels/
     types.ts          Channel 接口：mount(app, agent) + notify(userId, text)
     webchat.ts        网页聊天 + 收件箱 + 股票浏览页 API（/api/watchlist、/api/stocks/:code、/api/search）
@@ -71,7 +78,7 @@ public/overseas/      外盘联动页（F6-4：美股指数/中概股/国际金�
 public/sectors/       板块轮动页（F6-3：涨跌/资金流排行 + 板块详情（成分股+走势图）+ 个股→板块共振，数据经 data-service）
 public/scanner/       选股扫描页（F5-5：本地日 K 库 + 7 预设策略全市场扫描 + 库状态/手动更新，数据经 data-service）
 public/backtest/      策略回测页（F5-6：单股历史信号回放，T+1/费用/滑点/止损，净值曲线 vs 基准 + 逐笔明细，数据经 data-service）
-public/shared/        前端共享设计系统 theme.css（各页面共用，/shared 静态挂载）
+public/shared/        前端共享设计系统 theme.css + auth.js（S4-1：CNStockAuth 登录/注册/登出/apiFetch）
 tests/                vitest 单测（npm test）；fixtures/eastmoney/ 为真实接口响应回放
 docs/                 文档库：STATUS（功能与问题）/ FEATURES（实现手册）/ PITFALLS（踩坑病例）/ AUDIT（代码审计）/ 架构与数据源
 ```

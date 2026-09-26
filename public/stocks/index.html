@@ -157,6 +157,7 @@
       <a class="nav" href="/scanner">🔍 扫描</a>
       <a class="nav" href="/backtest">🧪 回测</a>
       <a class="nav" href="/webchat">💬 聊天</a>
+      <button class="nav btn-ghost" id="logout-btn" style="display:none">退出</button>
     </div>
   </header>
 
@@ -269,58 +270,16 @@
     <div class="disclaimer">数据仅供参考，不构成投资建议</div>
   </main>
 
-  <!-- 口令鉴权浮层 -->
-  <div class="auth-overlay" id="auth-overlay" hidden>
-    <div class="auth-card">
-      <h2>输入访问口令</h2>
-      <p>口令见服务端启动日志或 .env 的 ACCESS_TOKEN</p>
-      <input id="auth-input" class="input" type="password" placeholder="ACCESS_TOKEN" />
-      <div class="error" id="auth-error"></div>
-      <button class="btn btn-primary" id="auth-confirm">确认</button>
-    </div>
-  </div>
-
+  <script src="/shared/auth.js"></script>
   <script>
     'use strict';
     const $ = (id) => document.getElementById(id);
 
-    /* ================= 鉴权（与 webchat 共用 localStorage 键） ================= */
-    const userId = localStorage.getItem('cnstockbot_uid') ||
-      (() => { const id = 'web_' + Math.random().toString(36).slice(2, 10); localStorage.setItem('cnstockbot_uid', id); return id; })();
-    let accessToken = localStorage.getItem('cnstockbot_token') || '';
-
-    const authOverlay = $('auth-overlay');
-    let authResolve = null;
-    function showAuth(hasError) {
-      $('auth-error').textContent = hasError ? '口令错误，请重新输入' : '';
-      authOverlay.hidden = false;
-      $('auth-input').focus();
-      return new Promise((resolve) => { authResolve = resolve; });
-    }
-    function submitAuth() {
-      const t = $('auth-input').value.trim();
-      if (!t) return;
-      accessToken = t;
-      localStorage.setItem('cnstockbot_token', t);
-      $('auth-input').value = '';
-      authOverlay.hidden = true;
-      if (authResolve) { authResolve(); authResolve = null; }
-    }
-    $('auth-confirm').onclick = submitAuth;
-    $('auth-input').onkeydown = (e) => { if (e.key === 'Enter') submitAuth(); };
-
-    async function apiFetch(url, options = {}) {
-      if (!accessToken) await showAuth(false);
-      options.headers = Object.assign({}, options.headers, { 'Authorization': 'Bearer ' + accessToken });
-      const res = await fetch(url, options);
-      if (res.status === 401) {
-        accessToken = '';
-        localStorage.removeItem('cnstockbot_token');
-        await showAuth(true);
-        return apiFetch(url, options); // 重输口令后重试一次（新口令已带上）
-      }
-      return res;
-    }
+    const logoutBtn = $('logout-btn');
+    logoutBtn.onclick = () => { CNStockAuth.logout(); location.reload(); };
+    window.addEventListener('cnstock:login', () => { logoutBtn.style.display = 'inline-block'; });
+    window.addEventListener('cnstock:logout', () => { logoutBtn.style.display = 'none'; });
+    if (CNStockAuth.isLoggedIn()) logoutBtn.style.display = 'inline-block';
 
     /* ================= 工具 ================= */
     function el(tag, cls, text) {
@@ -420,7 +379,7 @@
       wrap.replaceChildren(el('div', 'skeleton'), el('div', 'skeleton'), el('div', 'skeleton'));
       wrap.querySelectorAll('.skeleton').forEach((s) => { s.style.height = '72px'; });
       try {
-        const res = await apiFetch('/api/watchlist?userId=' + encodeURIComponent(userId));
+        const res = await CNStockAuth.apiFetch('/api/watchlist');
         const data = await res.json();
         watchlistCodes.clear();
         for (const s of data.stocks || []) watchlistCodes.add(s.code);
@@ -454,7 +413,7 @@
     });
     async function doSearch(kw) {
       try {
-        const res = await apiFetch('/api/search?keyword=' + encodeURIComponent(kw));
+        const res = await CNStockAuth.apiFetch('/api/search?keyword=' + encodeURIComponent(kw));
         const data = await res.json();
         searchResults.replaceChildren();
         const list = data.results || [];
@@ -470,10 +429,10 @@
     /* ---- 自选增删 ---- */
     async function addWatch(code) {
       try {
-        const res = await apiFetch('/api/watchlist', {
+        const res = await CNStockAuth.apiFetch('/api/watchlist', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ userId, code }),
+          body: JSON.stringify({ code }),
         });
         const data = await res.json();
         if (data.ok) { watchlistCodes.add(code); return true; }
@@ -483,10 +442,10 @@
     }
     async function removeWatch(code) {
       try {
-        const res = await apiFetch('/api/watchlist', {
+        const res = await CNStockAuth.apiFetch('/api/watchlist', {
           method: 'DELETE',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ userId, code }),
+          body: JSON.stringify({ code }),
         });
         const data = await res.json();
         if (data.ok) { watchlistCodes.delete(code); return true; }
@@ -557,7 +516,7 @@
       renderAi();
       renderTab();
       try {
-        const res = await apiFetch('/api/stocks/' + code);
+        const res = await CNStockAuth.apiFetch('/api/stocks/' + code);
         detailData = await res.json();
         if (currentCode !== code) return; // 已切换
         renderQuote(detailData);
@@ -577,7 +536,7 @@
     /* ---- 形态分析（F6-1）：独立于详情聚合拉取（统计窗口约 3 年日 K），失败只影响本卡 ---- */
     async function loadPatterns() {
       try {
-        const res = await apiFetch(`/api/stocks/${currentCode}/patterns`);
+        const res = await CNStockAuth.apiFetch(`/api/stocks/${currentCode}/patterns`);
         const data = await res.json();
         if (currentCode !== new URLSearchParams(location.search).get('code')) return; // 已切换
         patternsData = data.patterns || null;
@@ -668,7 +627,7 @@
     /* ---- 资金流验货（F6-2）：独立于详情聚合拉取，失败只影响本卡（同形态卡模式） ---- */
     async function loadVerify() {
       try {
-        const res = await apiFetch(`/api/stocks/${currentCode}/verify`);
+        const res = await CNStockAuth.apiFetch(`/api/stocks/${currentCode}/verify`);
         const data = await res.json();
         if (currentCode !== new URLSearchParams(location.search).get('code')) return; // 已切换
         verifyData = data.verify || null;
@@ -717,7 +676,7 @@
     /* ---- 技术指标（F5-1）：独立于详情聚合拉取，失败只影响指标卡与均线叠加 ---- */
     async function loadIndicators() {
       try {
-        const res = await apiFetch(`/api/stocks/${currentCode}/indicators?days=250`);
+        const res = await CNStockAuth.apiFetch(`/api/stocks/${currentCode}/indicators?days=250`);
         const data = await res.json();
         if (currentCode !== new URLSearchParams(location.search).get('code')) return; // 已切换
         indicatorData = data.indicators || null;
@@ -788,11 +747,10 @@
       aiState = { code: currentCode, text: '', error: '', loading: true };
       renderAi();
       try {
-        const res = await apiFetch('/api/chat', {
+        const res = await CNStockAuth.apiFetch('/api/chat', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
-            userId,
             message: '请多维度分析一下' + (currentName || '') + '（' + currentCode + '）',
           }),
         });
@@ -1126,7 +1084,7 @@
       }
       const sk = el('div', 'skeleton'); sk.style.height = '120px';
       box.appendChild(sk);
-      apiFetch(`/api/stocks/${currentCode}/news?sort=${newsSort}`)
+      CNStockAuth.apiFetch(`/api/stocks/${currentCode}/news?sort=${newsSort}`)
         .then((r) => r.json())
         .then((d) => {
           newsCache[newsSort] = d.error ? { items: null, err: d.error } : { items: d.news, err: null };
@@ -1270,7 +1228,7 @@
       const sk = resetChartBox();
       const box = $('chart-box');
       try {
-        const res = await apiFetch(`/api/stocks/${currentCode}/history?days=${currentDays}`);
+        const res = await CNStockAuth.apiFetch(`/api/stocks/${currentCode}/history?days=${currentDays}`);
         const data = await res.json();
         sk.remove();
         if (currentCode !== new URLSearchParams(location.search).get('code')) return;
@@ -1292,7 +1250,7 @@
       const sk = resetChartBox();
       const box = $('chart-box');
       try {
-        const res = await apiFetch(`/api/stocks/${currentCode}/intraday`);
+        const res = await CNStockAuth.apiFetch(`/api/stocks/${currentCode}/intraday`);
         const data = await res.json();
         sk.remove();
         if (currentCode !== new URLSearchParams(location.search).get('code')) return;
