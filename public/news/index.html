@@ -56,56 +56,16 @@
     <div class="disclaimer">数据仅供参考，不构成投资建议</div>
   </main>
 
-  <!-- 口令鉴权浮层（与 webchat/stocks/market 共用 localStorage 键） -->
-  <div class="auth-overlay" id="auth-overlay" hidden>
-    <div class="auth-card">
-      <h2>输入访问口令</h2>
-      <p>口令见服务端启动日志或 .env 的 ACCESS_TOKEN</p>
-      <input id="auth-input" class="input" type="password" placeholder="ACCESS_TOKEN" />
-      <div class="error" id="auth-error"></div>
-      <button class="btn btn-primary" id="auth-confirm">确认</button>
-    </div>
-  </div>
-
+  <script src="/shared/auth.js"></script>
   <script>
     'use strict';
     const $ = (id) => document.getElementById(id);
 
-    /* ================= 鉴权（与 webchat/stocks/market 共用 localStorage 键） ================= */
-    let accessToken = localStorage.getItem('cnstockbot_token') || '';
-
-    const authOverlay = $('auth-overlay');
-    let authResolve = null;
-    function showAuth(hasError) {
-      $('auth-error').textContent = hasError ? '口令错误，请重新输入' : '';
-      authOverlay.hidden = false;
-      $('auth-input').focus();
-      return new Promise((resolve) => { authResolve = resolve; });
-    }
-    function submitAuth() {
-      const t = $('auth-input').value.trim();
-      if (!t) return;
-      accessToken = t;
-      localStorage.setItem('cnstockbot_token', t);
-      $('auth-input').value = '';
-      authOverlay.hidden = true;
-      if (authResolve) { authResolve(); authResolve = null; }
-    }
-    $('auth-confirm').onclick = submitAuth;
-    $('auth-input').onkeydown = (e) => { if (e.key === 'Enter') submitAuth(); };
-
-    async function apiFetch(url, options = {}) {
-      if (!accessToken) await showAuth(false);
-      options.headers = Object.assign({}, options.headers, { 'Authorization': 'Bearer ' + accessToken });
-      const res = await fetch(url, options);
-      if (res.status === 401) {
-        accessToken = '';
-        localStorage.removeItem('cnstockbot_token');
-        await showAuth(true);
-        return apiFetch(url, options); // 重输口令后重试一次（新口令已带上）
-      }
-      return res;
-    }
+    const logoutBtn = $('logout-btn');
+    logoutBtn.onclick = () => { CNStockAuth.logout(); location.reload(); };
+    window.addEventListener('cnstock:login', () => { logoutBtn.style.display = 'inline-block'; });
+    window.addEventListener('cnstock:logout', () => { logoutBtn.style.display = 'none'; });
+    if (CNStockAuth.isLoggedIn()) logoutBtn.style.display = 'inline-block';
 
     /* ================= 工具 ================= */
     function el(tag, cls, text) {
@@ -162,7 +122,7 @@
       btn.disabled = true;
       if (!silent) $('news-list').replaceChildren(el('div', 'block-error', '加载中…'));
       try {
-        const res = await apiFetch('/api/market/news?limit=' + LIMIT);
+        const res = await CNStockAuth.apiFetch('/api/market/news?limit=' + LIMIT);
         const data = await res.json();
         if (!res.ok) throw new Error(data.error || ('HTTP ' + res.status));
         renderList(data.news || []);

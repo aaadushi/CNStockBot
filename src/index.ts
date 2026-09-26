@@ -63,8 +63,9 @@ app.use(((err: unknown, _req: express.Request, res: express.Response, _next: exp
 startScheduler(store, data, channels);
 if (config.healthProbe.enabled) startHealthProbe(store, data, channels);
 
-const server = app.listen(config.port, () => {
+const server = app.listen(config.port, config.host, () => {
   console.log(`✅ CNStockBot 已启动`);
+  console.log(`   监听地址: ${config.host}:${config.port}`);
   console.log(`   WebChat:  http://localhost:${config.port}/webchat`);
   console.log(`   健康检查: http://localhost:${config.port}/health`);
   console.log(`   数据源:   ${data.name} | 技能: ${listSkills().map((s) => s.name).join(', ')}`);

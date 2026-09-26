@@ -66,6 +66,7 @@
       <a class="nav" href="/stocks">📈 自选股</a>
       <a class="nav" href="/scanner">🔍 扫描</a>
       <a class="nav" href="/backtest">🧪 回测</a>
+      <button class="nav btn-ghost" id="logout-btn" style="display:none">退出</button>
     </div>
   </header>
 
@@ -84,53 +85,17 @@
     </div>
   </div>
 
-  <!-- 口令鉴权浮层 -->
-  <div class="auth-overlay" id="auth-overlay" hidden>
-    <div class="auth-card">
-      <h2>输入访问口令</h2>
-      <p>口令见服务端启动日志或 .env 的 ACCESS_TOKEN</p>
-      <input id="auth-input" class="input" type="password" placeholder="ACCESS_TOKEN" />
-      <div class="error" id="auth-error"></div>
-      <button class="btn btn-primary" id="auth-confirm">确认</button>
-    </div>
-  </div>
-
+  <script src="/shared/auth.js"></script>
   <script>
-    // MVP 阶段用本地生成的 userId 标识会话，后续接入真实账号体系
-    const userId = localStorage.getItem('cnstockbot_uid') ||
-      (() => { const id = 'web_' + Math.random().toString(36).slice(2, 10); localStorage.setItem('cnstockbot_uid', id); return id; })();
-
-    // 访问口令：首次打开显示口令卡片，存入 localStorage；401 时清除并要求重输。
-    let accessToken = localStorage.getItem('cnstockbot_token') || '';
-    const authOverlay = document.getElementById('auth-overlay');
-    let authResolve = null;
-    function showAuth(hasError) {
-      document.getElementById('auth-error').textContent = hasError ? '口令错误，请重新输入' : '';
-      authOverlay.hidden = false;
-      document.getElementById('auth-input').focus();
-      return new Promise((resolve) => { authResolve = resolve; });
-    }
-    function submitAuth() {
-      const t = document.getElementById('auth-input').value.trim();
-      if (!t) return;
-      accessToken = t;
-      localStorage.setItem('cnstockbot_token', t);
-      document.getElementById('auth-input').value = '';
-      authOverlay.hidden = true;
-      if (authResolve) { authResolve(); authResolve = null; }
-    }
-    document.getElementById('auth-confirm').onclick = submitAuth;
-    document.getElementById('auth-input').onkeydown = (e) => { if (e.key === 'Enter') submitAuth(); };
-
     const chat = document.getElementById('chat');
     const input = document.getElementById('input');
     const sendBtn = document.getElementById('send');
+    const logoutBtn = document.getElementById('logout-btn');
 
     function addMsg(text, cls) {
       const div = document.createElement('div');
       div.className = 'msg ' + cls;
       div.textContent = text;
-      // 建议 chip 只留欢迎位，首条真实对话后移除
       const sg = document.getElementById('suggestions');
       if (sg && (cls === 'user')) sg.remove();
       chat.appendChild(div);
@@ -138,20 +103,8 @@
       return div;
     }
 
-    // 统一带鉴权头的 fetch；遇 401 清口令并重问
-    async function apiFetch(url, options = {}) {
-      if (!accessToken) await showAuth(false);
-      options.headers = Object.assign({}, options.headers, {
-        'Authorization': 'Bearer ' + accessToken,
-      });
-      const res = await fetch(url, options);
-      if (res.status === 401) {
-        accessToken = '';
-        localStorage.removeItem('cnstockbot_token');
-        await showAuth(true);
-        return apiFetch(url, options);
-      }
-      return res;
+    function updateLogout() {
+      logoutBtn.style.display = CNStockAuth.isLoggedIn() ? 'inline-block' : 'none';
     }
 
     async function send() {
@@ -163,10 +116,10 @@
       const pending = addMsg('思考中', 'bot');
       pending.classList.add('thinking');
       try {
-        const res = await apiFetch('/api/chat', {
+        const res = await CNStockAuth.apiFetch('/api/chat', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ userId, message: text }),
+          body: JSON.stringify({ message: text }),
         });
         const data = await res.json();
         pending.classList.remove('thinking');
@@ -184,7 +137,6 @@
 
     sendBtn.onclick = send;
     input.onkeydown = (e) => { if (e.key === 'Enter') send(); };
-    // 建议 chip 点击直接发送
     document.getElementById('suggestions').addEventListener('click', (e) => {
       const chip = e.target.closest('.chip');
       if (!chip) return;
@@ -192,14 +144,24 @@
       send();
     });
 
-    // 轮询离线通知（收盘日报等推送）；无口令时暂停轮询
+    logoutBtn.onclick = () => {
+      CNStockAuth.logout();
+      updateLogout();
+      addMsg('已退出登录', 'bot');
+    };
+
+    window.addEventListener('cnstock:login', () => updateLogout());
+    window.addEventListener('cnstock:logout', () => updateLogout());
+    updateLogout();
+
+    // 轮询离线通知；未登录时暂停
     setInterval(async () => {
-      if (!accessToken) return;
+      if (!CNStockAuth.isLoggedIn()) return;
       try {
-        const res = await apiFetch('/api/inbox?userId=' + encodeURIComponent(userId));
+        const res = await CNStockAuth.apiFetch('/api/inbox');
         const { messages } = await res.json();
         for (const m of messages || []) addMsg(m, 'bot');
-      } catch { /* 忽略轮询错误（含 401 重输提示） */ }
+      } catch { /* 忽略轮询错误 */ }
     }, 30000);
   </script>
 </body>

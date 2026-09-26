@@ -189,58 +189,19 @@
     </div>
   </main>
 
-  <!-- 口令鉴权浮层（与其他页面共用 localStorage 键） -->
-  <div class="auth-overlay" id="auth-overlay" hidden>
-    <div class="auth-card">
-      <h2>输入访问口令</h2>
-      <p>口令见服务端启动日志或 .env 的 ACCESS_TOKEN</p>
-      <input id="auth-input" class="input" type="password" placeholder="ACCESS_TOKEN" />
-      <div class="error" id="auth-error"></div>
-      <button class="btn btn-primary" id="auth-confirm">确认</button>
-    </div>
-  </div>
-
+  
+  <script src="/shared/auth.js"></script>
   <script>
     'use strict';
     const $ = (id) => document.getElementById(id);
 
-    /* ================= 鉴权（与其他页面共用 localStorage 键） ================= */
-    let accessToken = localStorage.getItem('cnstockbot_token') || '';
+    const logoutBtn = $('logout-btn');
+    logoutBtn.onclick = () => { CNStockAuth.logout(); location.reload(); };
+    window.addEventListener('cnstock:login', () => { logoutBtn.style.display = 'inline-block'; });
+    window.addEventListener('cnstock:logout', () => { logoutBtn.style.display = 'none'; });
+    if (CNStockAuth.isLoggedIn()) logoutBtn.style.display = 'inline-block';
 
-    const authOverlay = $('auth-overlay');
-    let authResolve = null;
-    function showAuth(hasError) {
-      $('auth-error').textContent = hasError ? '口令错误，请重新输入' : '';
-      authOverlay.hidden = false;
-      $('auth-input').focus();
-      return new Promise((resolve) => { authResolve = resolve; });
-    }
-    function submitAuth() {
-      const t = $('auth-input').value.trim();
-      if (!t) return;
-      accessToken = t;
-      localStorage.setItem('cnstockbot_token', t);
-      $('auth-input').value = '';
-      authOverlay.hidden = true;
-      if (authResolve) { authResolve(); authResolve = null; }
-    }
-    $('auth-confirm').onclick = submitAuth;
-    $('auth-input').onkeydown = (e) => { if (e.key === 'Enter') submitAuth(); };
-
-    async function apiFetch(url, options = {}) {
-      if (!accessToken) await showAuth(false);
-      options.headers = Object.assign({}, options.headers, { 'Authorization': 'Bearer ' + accessToken });
-      const res = await fetch(url, options);
-      if (res.status === 401) {
-        accessToken = '';
-        localStorage.removeItem('cnstockbot_token');
-        await showAuth(true);
-        return apiFetch(url, options);
-      }
-      return res;
-    }
-
-    /* ================= 工具 ================= */
+/* ================= 工具 ================= */
     function el(tag, cls, text) {
       const e = document.createElement(tag);
       if (cls) e.className = cls;
@@ -344,7 +305,7 @@
       $('sector-list').replaceChildren(el('div', 'block-error', '加载中…（首次加载需翻页拉取全量板块，约数秒）'));
       $('list-note').textContent = '';
       try {
-        const res = await apiFetch(key === 'flow' ? '/api/sectors/fund-flow?limit=100' : '/api/sectors/rank?limit=100');
+        const res = await CNStockAuth.apiFetch(key === 'flow' ? '/api/sectors/fund-flow?limit=100' : '/api/sectors/rank?limit=100');
         const data = await res.json();
         if (!res.ok) throw new Error(data.error || ('HTTP ' + res.status));
         cache[key] = data;
@@ -376,13 +337,13 @@
       try {
         let code = kw;
         if (!/^\d{6}$/.test(kw)) {
-          const sres = await apiFetch('/api/search?keyword=' + encodeURIComponent(kw));
+          const sres = await CNStockAuth.apiFetch('/api/search?keyword=' + encodeURIComponent(kw));
           const sdata = await sres.json();
           if (!sres.ok) throw new Error(sdata.error || ('HTTP ' + sres.status));
           if (!sdata.results || !sdata.results.length) throw new Error('未找到匹配"' + kw + '"的股票');
           code = sdata.results[0].code;
         }
-        const res = await apiFetch('/api/sectors/of-stock/' + code);
+        const res = await CNStockAuth.apiFetch('/api/sectors/of-stock/' + code);
         const data = await res.json();
         if (seq !== stockSeq) return; // 过期响应丢弃
         box.replaceChildren();
@@ -459,7 +420,7 @@
     async function loadBoardHistory(q, sk) {
       const box = $('chart-box');
       try {
-        const res = await apiFetch('/api/sectors/history?name=' + q + '&days=250');
+        const res = await CNStockAuth.apiFetch('/api/sectors/history?name=' + q + '&days=250');
         const data = await res.json();
         if (currentBoard !== new URLSearchParams(location.search).get('name')) return;
         sk.remove();
@@ -500,7 +461,7 @@
     async function loadBoardCons(q) {
       const tbody = $('cons-body');
       try {
-        const res = await apiFetch('/api/sectors/cons?name=' + q + '&limit=200');
+        const res = await CNStockAuth.apiFetch('/api/sectors/cons?name=' + q + '&limit=200');
         const data = await res.json();
         if (currentBoard !== new URLSearchParams(location.search).get('name')) return;
         if (!res.ok) throw new Error(data.error || ('HTTP ' + res.status));

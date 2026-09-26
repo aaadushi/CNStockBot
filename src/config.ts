@@ -32,6 +32,20 @@ function numEnv(name: string, def: number, min = 0): number {
 export const config = {
   port: numEnv('PORT', 18790, 1),
 
+  /**
+   * 服务端监听地址。默认 0.0.0.0 监听所有接口，便于局域网/容器访问；
+   * 公网部署时若只想让反向代理本地访问可设为 127.0.0.1（S4-4）。
+   */
+  host: (process.env.HOST?.trim() || '0.0.0.0'),
+
+  /** 多用户体系（S4-1） */
+  auth: {
+    sessionTtlHours: numEnv('SESSION_TTL_HOURS', 168, 1),
+    bcryptRounds: numEnv('BCRYPT_ROUNDS', 12, 4),
+    loginRateLimitMax: numEnv('LOGIN_RATE_LIMIT_MAX', 5, 1),
+    loginRateLimitWindowMs: numEnv('LOGIN_RATE_LIMIT_WINDOW_MS', 60_000, 1_000),
+  },
+
   /** WebChat API 鉴权口令（请求头 Authorization: Bearer <token>），静态页面不鉴权 */
   accessToken: resolveAccessToken(),
 

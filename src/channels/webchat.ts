@@ -1,58 +1,8 @@
 /**
  * WebChat 渠道：内置网页聊天界面 + 股票浏览页 API。
- * - GET  /webchat                 聊天静态页面（public/webchat/index.html），不鉴权
- * - GET  /stocks                  股票浏览静态页面（public/stocks/），不鉴权
- * - GET  /market                  全市场涨跌榜静态页面（public/market/），不鉴权
- * - GET  /funds                   基金版块静态页面（public/funds/），不鉴权
- * - GET  /news                    财经快讯静态页面（public/news/），不鉴权
- * - GET  /overseas                外盘联动静态页面（public/overseas/，F6-4），不鉴权
- * - GET  /sectors                 板块轮动静态页面（public/sectors/），不鉴权
- * - GET  /scanner                 选股扫描静态页面（public/scanner/，F5-5），不鉴权
- * - GET  /backtest                策略回测静态页面（public/backtest/，F5-6），不鉴权
- * - GET  /shared                  前端共享静态资源（public/shared/），不鉴权
- * - POST /api/chat                { userId, message } -> { reply }
- * - GET  /api/inbox?userId=       拉取离线通知（读后即删）
- * - GET  /api/watchlist?userId=   自选股列表 + 批量行情（单只失败降级为 {code, error}）
- * - POST /api/watchlist           { userId, code } -> { ok, added }
- * - DELETE /api/watchlist         { userId, code } -> { ok, removed }
- * - GET  /api/stocks/:code        个股详情聚合（行情/新闻/公告/财报/公司资料/资金流/分红送配，各板块独立降级）
- * - GET  /api/stocks/:code/news?sort=hot|time  单块新闻（浏览页排序切换用）
- * - GET  /api/stocks/:code/history?days=  历史 K 线（需 data-service 提供 getHistory）
- * - GET  /api/stocks/:code/intraday       今日分时 1 分钟线（需 data-service 提供 getIntraday，F3-5）
- * - GET  /api/stocks/:code/indicators?days=  技术指标（需 data-service 提供 getIndicators，F5-1）
- * - GET  /api/stocks/:code/patterns?days=    K 线形态识别 + 历史成绩单（需 data-service 提供 getPatterns，F6-1）
- * - GET  /api/stocks/:code/verify?days=      资金流验货（形态信号 × 资金流交叉验证，需 data-service 提供 getFlowVerify，F6-2）
- * - GET  /api/market/movers?limit=  全市场今日涨跌榜（上涨/下跌/平盘 + 家数统计）
- * - GET  /api/market/news?limit=    全市场财经快讯（需 data-service 提供 getMarketNews）
- * - GET  /api/search?keyword=     股票搜索（薄封装 provider.search，上限 20 条）
- * - GET  /api/funds/rank?type=&limit=   开放式基金排行（需 data-service）
- * - GET  /api/funds/search?keyword=     基金搜索（名称/代码/拼音缩写，需 data-service）
- * - GET  /api/funds/etf?limit=          场内 ETF 实时行情榜（需 data-service）
- * - GET  /api/funds/:code?days=         单只基金详情 + 单位净值走势（需 data-service）
- * - GET  /api/overseas/summary          隔夜外盘参考信息 + A 股相关方向提示（需 data-service，F6-4）
- * - GET  /api/sectors/rank?limit=        行业板块涨跌排行（需 data-service，F6-3）
- * - GET  /api/sectors/fund-flow?limit=   行业板块资金流排行（需 data-service，F6-3）
- * - GET  /api/sectors/cons?name=&limit=  板块成分股（需 data-service，F6-3）
- * - GET  /api/sectors/history?name=&days= 板块日 K 走势（需 data-service，F6-3）
- * - GET  /api/sectors/of-stock/:code     个股→板块共振（需 data-service，F6-3）
- * - GET  /api/scanner/strategies          预设扫描策略清单（需 data-service，F5-5）
- * - GET  /api/scanner/scan?strategy=&limit=  全市场选股扫描（需 data-service，F5-5）
- * - GET  /api/scanner/status              本地日 K 库更新状态（需 data-service，F5-5）
- * - POST /api/scanner/update              触发日 K 库更新 {full?}（需 data-service，F5-5）
- * - GET  /api/backtest?code=&strategy=&holdDays=&stopLossPct=&days=  单股策略回测（需 data-service，F5-6）
- *
- * 鉴权：所有 /api/* 请求需带请求头 `Authorization: Bearer <ACCESS_TOKEN>`，
- * 口令来自 config.accessToken（.env 的 ACCESS_TOKEN，未配置时启动时随机生成并打印）。
- * 取舍说明：静态页面本身不鉴权——页面不含任何数据，真正的数据都在 API 后面，
- * 保护 API 即可；这样用户打开页面后能先看到界面再输入口令，体验更顺。
- *
- * 离线通知收件箱存 SQLite（store.inbox 表，2026-09-14 起），重启不丢。
- *
- * 已知限制（审计 A-601）：口令是共享口令，持口令者之间**无身份隔离**——
- * userId 由客户端自报，同口令持有者可读他人收件箱/以他人身份对话/改他人自选股。
- * 自用单人口令场景可接受；多人共用前需做 S3-3 多用户体系。
+ * 所有 /api/* 接口（除 /api/auth/*）需带 Authorization: Bearer <session-token>，
+ * 由 S4-1 多用户体系在登录/注册后签发。静态页面本身不鉴权。
  */
-import crypto from 'node:crypto';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import express from 'express';
@@ -61,7 +11,8 @@ import type { Agent } from '../agent/loop.js';
 import type { Store } from '../storage/store.js';
 import type { DataProvider, Quote, HistoryBar } from '../data/provider.js';
 import { buildOverseasHints } from '../data/overseasHints.js';
-import { config } from '../config.js';
+import { createAuthRouter } from '../auth/routes.js';
+import { requireSession } from '../auth/middleware.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 // dist/channels/webchat.js -> 项目根/public/<子目录>（tsx dev 时 __dirname 是 src/channels，同样上溯两级）
@@ -78,8 +29,6 @@ const SHARED_ROOT = path.resolve(__dirname, '../../public/shared');
 
 /** 股票代码统一校验：6 位数字 */
 const CODE_RE = /^\d{6}$/;
-
-/** 取错误文本（中文错误信息约定：err.message 原样回前端） */
 function errText(err: unknown): string {
   return err instanceof Error ? err.message : String(err);
 }
@@ -126,23 +75,6 @@ async function mapBatch<T, R>(
   return out;
 }
 
-/** 校验 Authorization: Bearer <token>，失败返回 401。恒定时间比较防时序侧信道（审计 A-607） */
-function requireAccessToken(
-  req: express.Request,
-  res: express.Response,
-  next: express.NextFunction,
-): void {
-  const header = req.header('authorization') ?? '';
-  const token = header.startsWith('Bearer ') ? header.slice(7).trim() : '';
-  const a = Buffer.from(token);
-  const b = Buffer.from(config.accessToken);
-  if (!token || a.length !== b.length || !crypto.timingSafeEqual(a, b)) {
-    res.status(401).json({ error: '未授权：请提供正确的访问口令' });
-    return;
-  }
-  next();
-}
-
 export class WebChatChannel implements Channel {
   readonly name = 'webchat';
 
@@ -163,17 +95,18 @@ export class WebChatChannel implements Channel {
     app.use('/backtest', express.static(BACKTEST_ROOT));
     app.use('/shared', express.static(SHARED_ROOT));
 
-    // 只保护 /api/*，静态资源（/webchat、/stocks、/market、/news、/shared）不鉴权
-    app.use('/api', requireAccessToken);
+    // 公开认证路由；之后所有 /api/* 都需要 session token（静态资源不在 /api 下，不鉴权）
+    app.use('/api/auth', createAuthRouter(this.store.auth));
+    app.use('/api', requireSession(this.store.auth));
 
     app.post('/api/chat', async (req, res) => {
-      const { userId, message } = req.body as { userId?: string; message?: string };
-      if (!userId || !message) {
-        res.status(400).json({ error: '需要 userId 和 message 字段' });
+      const { message } = req.body as { message?: string };
+      if (!message) {
+        res.status(400).json({ error: '需要 message 字段' });
         return;
       }
       try {
-        const reply = await agent.handleMessage(userId, message);
+        const reply = await agent.handleMessage(req.user!.userId, message);
         res.json({ reply });
       } catch (err) {
         res.status(500).json({ error: errText(err) });
@@ -181,20 +114,14 @@ export class WebChatChannel implements Channel {
     });
 
     app.get('/api/inbox', (req, res) => {
-      const userId = String(req.query.userId ?? '');
-      res.json({ messages: this.store.drainInbox(userId) });
+      res.json({ messages: this.store.drainInbox(req.user!.userId) });
     });
 
     // ---- 股票浏览页 API ----
 
     // 自选股列表 + 批量行情：单只失败（停牌/退市 getQuote 抛错，见 PITFALLS）不拖垮整列
     app.get('/api/watchlist', async (req, res) => {
-      const userId = String(req.query.userId ?? '');
-      if (!userId) {
-        res.status(400).json({ error: '需要 userId 参数' });
-        return;
-      }
-      const codes = this.store.getWatchlist(userId);
+      const codes = this.store.getWatchlist(req.user!.userId);
       const stocks = await mapBatch(codes, 5, async (code) => {
         try {
           return pickQuote(await this.data.getQuote(code));
@@ -208,30 +135,22 @@ export class WebChatChannel implements Channel {
     // 加入自选股：不预先校验股票是否存在（停牌股 getQuote 会抛错，会误杀合法代码），
     // 直接信任 store 的写入结果（INSERT OR IGNORE，重复加入返回 added=false）
     app.post('/api/watchlist', (req, res) => {
-      const { userId, code } = req.body as { userId?: string; code?: string };
-      if (!userId) {
-        res.status(400).json({ error: '需要 userId 字段' });
-        return;
-      }
+      const { code } = req.body as { code?: string };
       if (!code || !CODE_RE.test(code)) {
         res.status(400).json({ error: 'code 必须是 6 位数字' });
         return;
       }
-      const added = this.store.addToWatchlist(userId, code);
+      const added = this.store.addToWatchlist(req.user!.userId, code);
       res.json({ ok: true, added });
     });
 
     app.delete('/api/watchlist', (req, res) => {
-      const { userId, code } = req.body as { userId?: string; code?: string };
-      if (!userId) {
-        res.status(400).json({ error: '需要 userId 字段' });
-        return;
-      }
+      const { code } = req.body as { code?: string };
       if (!code || !CODE_RE.test(code)) {
         res.status(400).json({ error: 'code 必须是 6 位数字' });
         return;
       }
-      const removed = this.store.removeFromWatchlist(userId, code);
+      const removed = this.store.removeFromWatchlist(req.user!.userId, code);
       res.json({ ok: true, removed });
     });
 

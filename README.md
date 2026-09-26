@@ -15,7 +15,7 @@
 - 📮 收盘日报：每个交易日 15:30 自动推送自选股当日表现（跳法定节假日），附加技术面信号摘要（金叉/超买等客观状态描述，需 data-service）
 - 🚨 异动提醒：盘中自选股涨跌幅超阈值（默认 ±5%）主动推送；支持自定义多条件监控规则（"涨到 X 元 / 跌幅超 Y% 提醒我"，对话中设置，AND/OR 组合，每日去重）
 - 🩺 行情健康探针：定时探测行情链路，状态见 /health（故障推送默认关，需 `HEALTH_PROBE_ALERT_PUSH=true`）
-- 🌐 内置网页聊天界面（WebChat，API 访问口令保护）；飞书渠道已实现（验签/回复/主动推送），默认关闭
+- 🌐 内置网页聊天界面（WebChat，**S4-1 多用户体系**：注册/登录/登出 + session token 鉴权）；飞书渠道已实现（验签/回复/主动推送），默认关闭
 - 📊 股票浏览页（/stocks）：自选股卡片列表 + 页内搜索 + 个股详情页（行情含估值与市值、成交额/换手率/量比、涨跌停价/52 周高低、公司资料、资金流向、分红送配、分时/日K 走势图（含 VWAP 均价线与成交量副图）、技术指标面板与均线叠加（MA/MACD/RSI/KDJ/BOLL + 支撑/压力位）、形态分析（17 种经典 K 线形态识别 + 历史成绩单，历史统计口径）、资金流验货（近期形态信号 × 资金流方向交叉验证，重点观察/中性/存疑三档客观结论）、AI 多维分析（一键生成，复用聊天链路）、新闻/公告/财报）
 - 🚀 全市场涨跌榜（/market）：今日涨幅榜/跌幅榜/平盘 + 涨跌平家数总览，点卡片跳个股详情
 - 📰 财经快讯（/news + `get_market_news` 技能）：全市场财经快讯滚动列表，60s 自动刷新（需 data-service）
@@ -35,10 +35,12 @@ cp .env.example .env   # 填入 LLM_API_KEY（推荐 DeepSeek，国内直连且�
 npm run dev
 ```
 
-打开 http://localhost:18790/webchat 、http://localhost:18790/stocks 、http://localhost:18790/market 、http://localhost:18790/news 、http://localhost:18790/funds 或 http://localhost:18790/overseas ，按提示输入访问口令
-打开 http://localhost:18790/webchat 、http://localhost:18790/stocks 、http://localhost:18790/market 、http://localhost:18790/news 、http://localhost:18790/funds 或 http://localhost:18790/sectors ，按提示输入访问口令
-选股扫描页为 http://localhost:18790/scanner 、策略回测页为 http://localhost:18790/backtest （均需 data-service 且已回填日 K 库，见下）。
-（口令 = `.env` 的 `ACCESS_TOKEN`；未配置时启动日志会打印一个随机口令）。
+服务默认监听 `0.0.0.0:18790`（可通过 `.env` 的 `HOST`/`PORT` 调整）。
+打开 http://localhost:18790/webchat ，按提示注册或登录账号后使用。
+其他页面入口：/stocks、/market、/news、/funds、/overseas、/sectors、/scanner、/backtest。
+选股扫描与策略回测需 data-service 且已回填日 K 库（见下）。
+
+> **注意（S4-1）**：WebChat 已改为多用户体系，需先注册/登录获取 session token；旧的共享 `ACCESS_TOKEN` 不再作为常规 API 鉴权方式。
 
 **启用新闻/公告/财报/历史走势/搜索/财经快讯/基金版块/板块轮动/选股扫描/策略回测功能**（需要 Python ≥ 3.10；行情/指数/涨跌榜不需要 data-service）：
 
@@ -61,7 +63,8 @@ skills/bundled/    技能（quote / search / news / announcement / financials / 
    │
 data/              数据源抽象：东财直连（行情/指数）+ Python AKShare 微服务（新闻/公告/财报/搜索/历史K线/交易日历）
    │
-storage/store.ts   SQLite 存储（node:sqlite）：自选股 + 会话历史 + 离线收件箱 + kv，按 userId 隔离
+storage/store.ts   SQLite 存储（node:sqlite）：自选股 + 会话历史 + 离线收件箱 + kv + users/sessions 表（S4-1），按 userId 隔离
+auth/              多用户认证：密码哈希、session token、登录限速、requireSession 中间件
 ```
 
 详见 [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)。开发者/Agent 交接信息见 [CLAUDE.md](CLAUDE.md)。
