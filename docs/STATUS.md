@@ -45,6 +45,7 @@
 | 资金流验货（"狙击手"模式，F6-2） | `data-service` `/verify/{code}` + `/api/stocks/:code/verify` + 详情页"资金流验货"卡 + `analyze_stock` 第七块 | ✅ 可用 | 近 60 交易日形态信号 × 日级资金流（复用 F3-4 取数，东财五档/新浪两档带 source 标注）交叉验证，三档结论（重点观察/中性/存疑，透明阈值规则）+ 客观依据；日级口径（分笔 tick 未接入，尾盘维度缺失）；按 (code,days) 缓存 1h；依赖 data-service；2026-09-21 新增 |
 | 选股扫描（/scanner + scan_market 技能，F5-5） | `data-service` `/market-bars/*` + `/scan*` + `public/scanner/` + `src/skills/bundled/scanner/` | ✅ 可用 | 本地全市场日 K 库（baostock→SQLite，仅沪深，盘后增量更新）+ 宽表向量化 7 个预设策略扫描（秒级）；网页独立页 + 聊天技能 + 盘后自动更新（默认开）/扫描摘要推送（默认关 `SCANNER_PUSH_ENABLED`）；客观命中名单口径 + 免责声明；2026-09-21 新增 |
 | 策略回测（/backtest，F5-6） | `data-service` `/backtest/{code}` + `public/backtest/` + `GET /api/backtest` | ✅ 可用 | 本地日 K 库单股历史信号回放：7 个预设策略（与扫描同口径同 key）+ 真实 A 股规则（T+1/整手/佣金万2.5/印花税/滑点/止损/持有期）；统计（胜率/盈亏比/最大回撤/累计 vs 买入持有基准）+ 净值曲线 + 逐笔明细；历史业绩不代表未来，页面显著标注；2026-09-22 新增 |
+| 安卓 WebView 壳 App（F7-2） | `android/` 独立 Gradle 工程 | ✅ 工程完成 | 首屏服务器地址配置（release 仅 HTTPS / debug 放行局域网明文）+ WebView 装载 /webchat；SSL fail-closed、外链交系统浏览器；认证由网页端 CNStockAuth 完成（壳不经手 token）；**APK 构建/真机验收待构建者在 Android Studio 执行**；2026-09-26 新增 |
 
 ## 二、待办优先级总表（下一个 agent 从这里开始）
 
@@ -296,7 +297,7 @@ App 形式在安卓手机上运行——手机上随时查行情/自选股/收�
 | 阶段 0 | **S4-3** | HTTPS 部署文档 + 配置：反向代理（nginx/Caddy/traefik）+ 证书 + HSTS 建议 | S4-1/S4-2 完成后 |
 | 阶段 0 | **S4-4** | 服务端监听地址可配置：`HOST` 环境变量，默认 `0.0.0.0`，文档说明绑定风险 | 无 |
 | 阶段 1 | **F7-1** | 后端对公网可达（S4 完成后自然达成）：验证多用户登录 API、HTTPS 端到端 | S4 全部 |
-| 阶段 2 | **F7-2** | WebView/TWA 壳跑通：App 内配置服务端地址、登录/注册页、全页面验收 | S4 全部 |
+| 阶段 2 | **F7-2** | ~~WebView/TWA 壳跑通~~ ✅ 2026-09-26 完成：android/ 原生 WebView 壳工程（零依赖，详见更新日志批次 22 与 FEATURES 第 40 节） | S4 全部 |
 | 阶段 3 | **F7-3** | 体验加固：本地通知、后台轮询、图标/启动屏、生物识别/指纹登录（可选） | F7-2 |
 
 落点建议：新目录 `android/`（或独立仓库），不动现有 `src/` 与 `public/`；
@@ -314,6 +315,30 @@ App 形式在安卓手机上运行——手机上随时查行情/自选股/收�
 
 ## 更新日志
 
+- 2026-09-26（批次 22）：**F7-2 安卓 WebView 壳 App 工程完成（F7 阶段 2）**——S4 收官后
+  进入 F7 的第一项产出。改动：
+  - 新增 `android/` 独立 Gradle 工程（路线 A：原生 WebView 壳）：applicationId
+    `com.cnstockbot.app`，minSdk 24 / targetSdk 34，Kotlin（AGP 8.5.2 + KGP 1.9.24），
+    **零第三方依赖**（纯 Android 框架，Android Studio 打开即 Sync），构建与安装说明
+    见 [android/README.md](../android/README.md)；
+  - 首屏服务端地址配置：`ServerUrl.normalize()` 纯函数归一化（缺协议补 https、
+    只保留 scheme+authority），release 拒绝明文 HTTP（主 manifest 恒
+    `usesCleartextTraffic=false`），debug 包经 `src/debug/AndroidManifest.xml` 单独
+    放开明文供局域网调试；地址存私有 SharedPreferences；
+  - WebView 主界面：进度条、返回键按历史回退、同源链接内开/外部链接交系统浏览器、
+    错误页+重试、**SSL 校验失败一律阻断无绕过**、菜单（刷新/切换服务器/关于）；
+  - 认证不经手：登录/注册由网页端 `CNStockAuth` 完成，session token 存 WebView
+    localStorage，`src/`、`public/`、data-service 零改动；
+  - 最小自适应图标（vector，indigo 主题色，无 PNG 素材）；
+  - 需求文档 [docs/requirements/F7-2-android-webview-shell.md](requirements/F7-2-android-webview-shell.md)，
+    FEATURES.md 新增第 40 节；
+  - 验证：全部 XML 通过合法性解析、工程文件齐全自洽（applicationId/包名/资源引用
+    一致）；**APK 构建与真机验收未做（本机无 Android SDK/Gradle），由构建者在
+    Android Studio 中执行 REQ-F7-2 验收标准 1~6**；主服务 `npm run typecheck` +
+    `npm test` 不受影响（278 测试）。
+  - **F7-1 说明**：公网可达端到端验证依赖真实公网部署（域名 + 反向代理 + 证书，
+    按 [docs/deploy/HTTPS.md](deploy/HTTPS.md)），壳可先用局域网地址开发调试，
+    两者并行不冲突。
 - 2026-09-26（批次 21）：**S4-3 HTTPS 部署完成——S4 公网发布前置全部收官**。改动：
   - 新增 [docs/deploy/HTTPS.md](deploy/HTTPS.md) 部署指南：反向代理架构（443 →
     127.0.0.1:18790，data-service 永不对外）、Caddy（自动 ACME）与 nginx+certbot 两套

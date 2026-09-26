@@ -11,3 +11,9 @@ __pycache__/
 
 # Claude agent worktrees（本地运行时产物）
 .claude/worktrees/
+
+# Android 工程本地构建产物（F7-2）
+android/.gradle/
+android/**/build/
+android/local.properties
+android/.idea/

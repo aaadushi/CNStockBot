@@ -1,0 +1,27 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">CNStockBot</string>
+
+    <!-- 服务器配置页 -->
+    <string name="config_title">连接服务器</string>
+    <string name="config_subtitle">请输入你的 CNStockBot 服务器地址</string>
+    <string name="config_hint">如 stock.example.com</string>
+    <string name="config_save">保存并进入</string>
+    <string name="config_https_note">正式版仅支持 HTTPS 地址；http:// 仅限调试包在局域网内调试使用。地址仅保存于本机。</string>
+    <string name="config_version">App 版本 %1$s</string>
+    <string name="config_error_invalid">地址格式不正确，请输入如 stock.example.com 或 https://stock.example.com</string>
+    <string name="config_error_http">正式版仅支持 HTTPS 连接。局域网调试请安装 debug 包。</string>
+
+    <!-- 主界面菜单 -->
+    <string name="menu_refresh">刷新</string>
+    <string name="menu_switch_server">切换服务器</string>
+    <string name="menu_about">关于</string>
+
+    <!-- 错误页 -->
+    <string name="error_load">页面加载失败（%1$s）。\n请检查手机网络与服务器状态后重试。</string>
+    <string name="error_ssl">服务器证书校验失败，已阻断连接。\n可能原因：证书过期、域名不匹配或网络被劫持。为保障账号安全，请勿强行继续。</string>
+    <string name="retry">重试</string>
+
+    <!-- 关于 -->
+    <string name="about_text">CNStockBot App\n版本 %1$s\n服务器：%2$s\n\n本 App 为网页端的容器，所有数据与账号均来自你所配置的服务器。仅供参考，不构成投资建议。</string>
+</resources>

@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <style name="Theme.CNStockBot" parent="android:Theme.Material.Light.NoActionBar">
+        <item name="android:colorPrimary">@color/indigo</item>
+        <item name="android:colorPrimaryDark">@color/indigo_dark</item>
+        <item name="android:colorAccent">@color/indigo</item>
+        <item name="android:statusBarColor">@color/indigo_dark</item>
+        <item name="android:windowBackground">@android:color/white</item>
+    </style>
+</resources>

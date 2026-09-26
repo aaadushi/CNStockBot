@@ -1,0 +1,17 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- 框架 Toolbar（非 appcompat）只认 android:showAsAction；
+     所有项均为 never → 进入溢出菜单，无需 app 命名空间 -->
+<menu xmlns:android="http://schemas.android.com/apk/res/android">
+    <item
+        android:id="@+id/action_refresh"
+        android:title="@string/menu_refresh"
+        android:showAsAction="never" />
+    <item
+        android:id="@+id/action_switch_server"
+        android:title="@string/menu_switch_server"
+        android:showAsAction="never" />
+    <item
+        android:id="@+id/action_about"
+        android:title="@string/menu_about"
+        android:showAsAction="never" />
+</menu>

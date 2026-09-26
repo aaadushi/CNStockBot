@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- 与网页端主题色一致（public/shared/theme.css 的 indigo CTA） -->
+    <color name="indigo">#4F46E5</color>
+    <color name="indigo_dark">#3730A3</color>
+    <color name="ic_launcher_background">#4F46E5</color>
+    <color name="text_primary">#1F2937</color>
+    <color name="text_secondary">#6B7280</color>
+</resources>
