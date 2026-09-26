@@ -35,6 +35,7 @@ cp .env.example .env   # 填入 LLM_API_KEY（推荐 DeepSeek，国内直连且�
 npm run dev
 ```
 
+服务默认监听 `0.0.0.0:18790`（可通过 `.env` 的 `HOST`/`PORT` 调整）。
 打开 http://localhost:18790/webchat 、http://localhost:18790/stocks 、http://localhost:18790/market 、http://localhost:18790/news 、http://localhost:18790/funds 或 http://localhost:18790/overseas ，按提示输入访问口令
 打开 http://localhost:18790/webchat 、http://localhost:18790/stocks 、http://localhost:18790/market 、http://localhost:18790/news 、http://localhost:18790/funds 或 http://localhost:18790/sectors ，按提示输入访问口令
 选股扫描页为 http://localhost:18790/scanner 、策略回测页为 http://localhost:18790/backtest （均需 data-service 且已回填日 K 库，见下）。

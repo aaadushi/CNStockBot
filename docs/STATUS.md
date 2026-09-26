@@ -97,7 +97,7 @@
 | S4-1 | **S3-3 多用户体系** | 未做，[需求文档](requirements/S4-1-multi-user-system.md) 已建立 | 审计 A-601：共享口令 + 客户端自报 userId 可被任意越权读删收件箱、冒用身份。公网陌生人共用同一口令不可接受 |
 | S4-2 | **A-508 微服务 token 鉴权** | 未做 | data-service 目前无鉴权，安全仅靠 `127.0.0.1` 绑定。公网/跨机器部署时 8000 端口裸奔，会被任意调用消耗数据源额度、触发限流 |
 | S4-3 | **HTTPS 部署** | 未做 | 多用户体系的登录凭证、ACCESS_TOKEN、微服务 token 均不能明文走公网 HTTP |
-| S4-4 | **服务端监听地址可配置** | 未做 | 当前主服务写死 `app.listen(config.port)` 无 host 参数，默认只绑 IPv4+IPv6 全地址；需显式支持 `HOST` 环境变量，避免公网部署误绑 |
+| S4-4 | **服务端监听地址可配置** | ✅ 2026-09-26 完成：新增 `HOST` 环境变量，默认 `0.0.0.0`，写入 `app.listen(config.port, config.host)`；`.env.example` 与测试覆盖 | 当前主服务写死 `app.listen(config.port)` 无 host 参数，默认只绑 IPv4+IPv6 全地址；需显式支持 `HOST` 环境变量，避免公网部署误绑 |
 
 **建议顺序**：S4-4 → S4-1 → S4-2 → S4-3（HTTPS 可与 S4-1/S4-2 并行准备），全部完成后才进入公网 Beta。
 
@@ -313,6 +313,12 @@ App 形式在安卓手机上运行——手机上随时查行情/自选股/收�
 
 ## 更新日志
 
+- 2026-09-26（批次 18）：**S4-4 服务端监听地址可配置完成**——公网发布前置第一项。改动：
+  - `src/config.ts` 新增 `HOST` 环境变量，默认 `0.0.0.0`（监听所有接口），空字符串回退默认值；
+  - `src/index.ts` `app.listen` 改为 `app.listen(config.port, config.host)`，启动日志打印监听地址；
+  - `.env.example` 增加 `HOST` 配置项与注释；
+  - 新增 `tests/config.test.ts` 覆盖 HOST 默认值/环境变量覆盖/数值回退行为；
+  - `docs/STATUS.md` S4-4 行更新为完成，测试：typecheck + 243 测试全绿。
 - 2026-09-26（批次 17）：**建立"新功能前必须先写需求文档"的工程规范**——用户明确后续新功能开发前必须建立需求文档，以便审计功能时对照验收、避免实现 agent 扩大/裁剪范围、便于维护。改动：
   - [CLAUDE.md](CLAUDE.md) 开发工作流新增需求文档流程（必须遵守）；文档维护义务表新增"开始实现新功能前 → docs/requirements/"一行；
   - 新建 `docs/requirements/` 目录；
