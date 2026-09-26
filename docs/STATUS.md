@@ -96,10 +96,11 @@
 |---|---|---|---|
 | S4-1 | **S3-3 多用户体系** | ✅ 2026-09-26 完成：注册/登录/登出 API、服务端签发 UUID 会话、业务 API 全改用 session token、密码 bcryptjs 哈希、登录速率限制、前端登录页、测试覆盖；旧匿名数据冷启动隔离 | 审计 A-601：共享口令 + 客户端自报 userId 可被任意越权读删收件箱、冒用身份。公网陌生人共用同一口令不可接受 |
 | S4-2 | **A-508 微服务 token 鉴权** | ✅ 2026-09-26 完成：data-service 全局 `Authorization: Bearer <token>` / `X-Data-Service-Token: <token>` 校验（含 `/health`），未配置 `DATA_SERVICE_TOKEN` 拒绝启动；主服务 `pythonService.ts` 的 get/post、`TradeCalendar` 统一带 token；`.env.example`/`config.ts` 新增配置；启动自检警告；新增 5 条 Node 测试 + 2 条 config 测试；需求文档 [REQ-S4-2](requirements/S4-2-data-service-token.md) | data-service 目前无鉴权，安全仅靠 `127.0.0.1` 绑定。公网/跨机器部署时 8000 端口裸奔，会被任意调用消耗数据源额度、触发限流 |
-| S4-3 | **HTTPS 部署** | 未做 | 多用户体系的登录凭证、ACCESS_TOKEN、微服务 token 均不能明文走公网 HTTP |
+| S4-3 | **HTTPS 部署** | ✅ 2026-09-26 完成：TLS 统一由反向代理终止（应用零证书逻辑）；新增 `docs/deploy/HTTPS.md` 完整部署指南（Caddy 自动证书 / nginx+certbot 两套配置、HSTS 分阶段建议、飞书回调、防火墙端口原则、验证清单）；修复代理部署真实隐患——Express 默认不信代理头会使登录限速退化为全局限速/可被 XFF 伪造绕过，新增 `TRUST_PROXY` 配置（默认 false 零变化，`loopback`=同机反代推荐值，`true` 带滥用风险提示）+ 路由装配前 `app.set('trust proxy', …)`；需求文档 [REQ-S4-3](requirements/S4-3-https-deployment.md)；新增 6 条 config 解析用例 + 4 条 trust proxy 集成用例 | 多用户体系的登录凭证、ACCESS_TOKEN、微服务 token 均不能明文走公网 HTTP |
 | S4-4 | **服务端监听地址可配置** | ✅ 2026-09-26 完成：新增 `HOST` 环境变量，默认 `0.0.0.0`，写入 `app.listen(config.port, config.host)`；`.env.example` 与测试覆盖 | 当前主服务写死 `app.listen(config.port)` 无 host 参数，默认只绑 IPv4+IPv6 全地址；需显式支持 `HOST` 环境变量，避免公网部署误绑 |
 
 **建议顺序**：S4-4 → S4-1 → S4-2 → S4-3（HTTPS 可与 S4-1/S4-2 并行准备），全部完成后才进入公网 Beta。
+**✅ S4 全部四项已于 2026-09-26 完成，公网发布前置收官；下一步进入 F7 安卓端 App（阶段 1 起）。**
 
 **原路线图（公告/财报/飞书/持久化/异动提醒/大盘指数）已于 2026-09-14 全部完成；**
 **P5 鉴权、P2 法定节假日、P6 测试基座、P3 工具上下文、P4 健康探针同日完成。**
@@ -313,6 +314,26 @@ App 形式在安卓手机上运行——手机上随时查行情/自选股/收�
 
 ## 更新日志
 
+- 2026-09-26（批次 21）：**S4-3 HTTPS 部署完成——S4 公网发布前置全部收官**。改动：
+  - 新增 [docs/deploy/HTTPS.md](deploy/HTTPS.md) 部署指南：反向代理架构（443 →
+    127.0.0.1:18790，data-service 永不对外）、Caddy（自动 ACME）与 nginx+certbot 两套
+    可复制配置、HSTS 分阶段建议（300s 验证 → 1 年 + includeSubDomains 风险提示）、
+    飞书回调 URL、防火墙端口硬约束、部署后验证清单与故障排查表；
+  - 修复代理部署真实隐患：Express 默认 `trust proxy=false` 时 `req.ip` 退化为代理
+    地址，S4-1 登录限速会变成全局限速（所有用户共享 5 次/60s）或被 XFF 伪造绕过；
+    [src/config.ts](config.ts) 新增 `TRUST_PROXY`（默认 false 零变化 / `loopback` 同机
+    反代推荐 / 数字跳数 / `true` 带滥用警告），[src/index.ts](../src/index.ts) 路由
+    装配前 `app.set('trust proxy', config.trustProxy)`；
+  - `.env.example` 新增 `TRUST_PROXY` 配置与风险注释；README 新增"公网部署"节；
+  - 需求文档 [docs/requirements/S4-3-https-deployment.md](requirements/S4-3-https-deployment.md)；
+  - 测试：`tests/config.test.ts` +6 条（未配置/true/false/数字/字符串解析）、新增
+    `tests/trustProxy.test.ts` 4 条（默认不信伪造 XFF / loopback 取真实 IP / 数字 1 /
+    true 信任链），实测还验证了 Express 信任链安全语义：多跳 XFF 中不可信代理地址
+    不会被错当客户端 IP；
+  - 验证：`npm run typecheck` + `npm test` 全绿（278 测试）。
+  - **交接提醒（生产）**：S4-2 已合 main 但生产双服务仍跑旧代码；生产 `.env` 本次
+    已补 `DATA_SERVICE_TOKEN`（64 位十六进制强随机，gitignored），下次重启 data-service
+    前无需再手动配置。
 - 2026-09-26（批次 20）：**S4-2 微服务 token 鉴权完成**——公网发布前置第三项，解决审计
   A-508。改动：
   - data-service：[data-service/main.py](data-service/main.py) 启动时读 `DATA_SERVICE_TOKEN`，

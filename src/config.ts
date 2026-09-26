@@ -38,6 +38,21 @@ export const config = {
    */
   host: (process.env.HOST?.trim() || '0.0.0.0'),
 
+  /**
+   * Express `trust proxy` 取值（S4-3，HTTPS 反向代理部署）。
+   * 未配置 = false（不信任任何代理头，req.ip = socket 对端，直接暴露部署的安全默认）；
+   * 'true' = 信任每一跳 XFF（仅当流量不可能绕过代理时使用，否则可伪造 XFF 绕过登录限速）；
+   * 数字 = 只信任最近 N 跳；其余字符串原样透传（Express 信任列表语法，如 'loopback'）。
+   */
+  trustProxy: ((): boolean | number | string => {
+    const raw = process.env.TRUST_PROXY?.trim();
+    if (!raw) return false;
+    if (raw === 'true') return true;
+    if (raw === 'false') return false;
+    if (/^\d+$/.test(raw)) return Number(raw);
+    return raw;
+  })(),
+
   /** 多用户体系（S4-1） */
   auth: {
     sessionTtlHours: numEnv('SESSION_TTL_HOURS', 168, 1),

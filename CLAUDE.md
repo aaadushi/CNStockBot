@@ -10,6 +10,7 @@
 > 4. [docs/AUDIT.md](docs/AUDIT.md) —— 代码审计记录：审查发现的问题与修复备注（含审查进度表）
 > 5. [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) / [docs/DATA_SOURCES.md](docs/DATA_SOURCES.md) —— 架构原理与数据源细节
 > 6. [docs/WORKFLOW.md](docs/WORKFLOW.md) —— **提交规范与版本管理：改动必须走分支 + PR，禁止直接推 main**
+> 7. [docs/deploy/HTTPS.md](docs/deploy/HTTPS.md) —— 公网部署指南（S4-3：反向代理 + TLS + HSTS）
 
 ## 项目目的与定位
 

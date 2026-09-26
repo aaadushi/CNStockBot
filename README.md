@@ -59,6 +59,15 @@ DATA_SERVICE_TOKEN=change-me-to-a-random-string-at-least-32-chars \
 > **注意（S4-2）**：data-service 自 2026-09-26 起启用 token 鉴权，未配置 `DATA_SERVICE_TOKEN`
 > 时拒绝启动；旧版主服务无法访问新版 data-service，升级需两端同步。
 
+## 公网部署（S4-3）
+
+发布给他人使用前必须走 HTTPS 反向代理：TLS 由 Caddy/nginx 终止，主服务与
+data-service 只监听本机回环。完整指南（Caddyfile / nginx+certbot 配置、HSTS 分阶段
+建议、飞书回调、防火墙原则、部署后验证清单）见 [docs/deploy/HTTPS.md](docs/deploy/HTTPS.md)。
+
+要点：`.env` 设 `HOST=127.0.0.1`（S4-4）与 `TRUST_PROXY=loopback`（S4-3，登录限速
+按真实客户端 IP 生效）；公网只开放 80/443，18790/8000 绝不对外。
+
 ## 架构一览
 
 ```
