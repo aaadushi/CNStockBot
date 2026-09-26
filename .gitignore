@@ -4,6 +4,7 @@ data/*.json
 data/*.db
 data-service/data/
 !.gitkeep
+logs/
 .env
 *.log
 __pycache__/
