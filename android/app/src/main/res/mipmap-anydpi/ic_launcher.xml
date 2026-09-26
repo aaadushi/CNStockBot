@@ -1,0 +1,22 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- API 24~25 回退：vector 直接作图标，不依赖 PNG 素材 -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="48dp"
+    android:height="48dp"
+    android:viewportWidth="48"
+    android:viewportHeight="48">
+    <path
+        android:pathData="M0,0h48v48h-48z"
+        android:fillColor="#4F46E5" />
+    <path
+        android:pathData="M10,33 L18,23 L24,28 L34,13 L40,19"
+        android:strokeColor="#FFFFFF"
+        android:strokeWidth="3"
+        android:strokeLineCap="round"
+        android:strokeLineJoin="round" />
+    <path
+        android:pathData="M10,40 L40,40"
+        android:strokeColor="#99FFFFFF"
+        android:strokeWidth="2"
+        android:strokeLineCap="round" />
+</vector>

@@ -1,0 +1,19 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- 自适应图标前景：白线走势图，居中于安全区（viewport 108dp） -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+    <path
+        android:pathData="M28,74 L44,54 L56,64 L78,32 L90,44"
+        android:strokeColor="#FFFFFF"
+        android:strokeWidth="7"
+        android:strokeLineCap="round"
+        android:strokeLineJoin="round" />
+    <path
+        android:pathData="M28,88 L90,88"
+        android:strokeColor="#99FFFFFF"
+        android:strokeWidth="4"
+        android:strokeLineCap="round" />
+</vector>

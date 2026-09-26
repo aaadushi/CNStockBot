@@ -71,6 +71,7 @@ src/
   alerts/rules.ts     监控规则领域逻辑（条件类型/校验/求值/文案，纯函数，scheduler 与 manage_alerts 技能共用）
   alerts/healthProbe.ts 行情健康探针：定时探测常青股票，故障记日志+入 /health，推送默认关（P4）
 data-service/         Python FastAPI + AKShare 微服务（新闻/公告/财报/历史K线；AKShare 调用统一 30s 超时）；含本地全市场日 K 库（baostock→SQLite data/market_bars.db，F5-5 选股扫描底座，线程内禁止裸调 AKShare，见 PITFALLS 2026-09-21 条目）
+android/              F7-2 安卓 WebView 壳 App（独立 Gradle 工程，零第三方依赖）：首屏服务器地址配置 + WebView 装载 /webchat；认证由网页端 CNStockAuth 完成，壳不经手 token；构建见 android/README.md
 public/webchat/       内置聊天网页
 public/stocks/        股票浏览页 + 个股详情页 SPA（F1/F2，手写 SVG 走势图）
 public/market/        全市场涨跌榜页（涨幅/跌幅/平盘三 Tab + 家数总览，东财 clist/ulist）
@@ -198,8 +199,12 @@ uvicorn main:app --host 127.0.0.1 --port 8000
    - **S4-3 HTTPS 部署**：反向代理 + TLS 证书 + HSTS 建议，禁止登录凭证/微服务 token 明文走公网；
    - **S4-4 服务端监听地址可配置**：支持 `HOST` 环境变量，默认 `0.0.0.0`，文档说明绑定风险。
    完成顺序建议：S4-4 → S4-1 → S4-2 → S4-3（HTTPS 可与 S4-1/S4-2 并行准备）。
-7. **F7 安卓端 App**（用户 2026-09-22 指定，目标：**公网发布给别人使用**）：保留现有网页端，新增安卓 App 入口。**不再以局域网方案为发布目标**，公网部署是唯一发布目标；客户端开发（WebView/TWA 壳起步 → Capacitor 升级本地通知）必须在 S4 全部完成后才开始。
+7. **F7 安卓端 App**（用户 2026-09-22 指定，目标：**公网发布给别人使用**）：保留现有网页端，新增安卓 App 入口。**不再以局域网方案为发布目标**，公网部署是唯一发布目标。
    关键前提、阶段拆分与路线候选见 [docs/STATUS.md](docs/STATUS.md) 第四节 F7。
+   **进度：S4 全部四项已于 2026-09-26 完成（公网发布前置收官）；F7-2 安卓 WebView 壳
+   工程同日完成**（android/ 独立 Gradle 工程，零依赖；APK 构建/真机验收待 Android
+   Studio 执行）；剩余 F7-1（公网部署后端到端验证，依赖域名+反代+证书落地）与
+   F7-3（本地通知/图标启动屏等体验加固）。
 8. P8：LLM 429 重试（Kimi 低等级账号限流，用户决定暂不修，复发时做）。
 
 后续迭代按 [docs/STATUS.md](docs/STATUS.md) 第四节执行。

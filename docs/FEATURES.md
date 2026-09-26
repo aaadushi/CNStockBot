@@ -1086,3 +1086,44 @@
   - `/health` 也纳入校验意味着容器/外部健康探测需带 token；
   - token 轮换需改两端 .env 并重启，无热更机制；
   - 日志/错误信息不得打印完整 token（如需要只保留前 4 位）。
+
+## 40. 安卓 WebView 壳 App（F7-2，2026-09-26 新增）
+
+- **定位**：F7 安卓端 App 的阶段 2（路线 A：原生 WebView 壳）。包装现有网页端，
+  `public/` 全部页面零改动；壳内**零业务逻辑**——登录/注册由网页端
+  `CNStockAuth`（session token 存 WebView localStorage）完成，壳只做
+  "服务端地址配置 + WebView 装载 + 基础体验与安全基线"。
+- **工程**（[android/](../android/)，独立 Gradle 工程）：applicationId
+  `com.cnstockbot.app`（debug 加 `.debug` 后缀共存），minSdk 24 / targetSdk 34，
+  Kotlin（AGP 8.5.2 + KGP 1.9.24，JDK 17），**零第三方依赖**（不含 androidx，
+  纯 Android 框架，任何较新版本 Android Studio 可打开直接 Sync）。构建说明见
+  [android/README.md](../android/README.md)。
+- **首屏地址配置**（`ServerConfigActivity` + `ServerUrl.kt` 纯函数）：
+  - `ServerUrl.normalize()`：缺协议补 `https://`，经 `Uri` 解析只保留
+    scheme+authority（剥离路径/参数/尾斜杠/域名末位点），非法输入返回 null；
+  - release 构建填 `http://` 被拒绝并提示（正式版仅 HTTPS）；debug 包放开明文供
+    局域网调试（`src/debug/AndroidManifest.xml` 单独 `usesCleartextTraffic=true`，
+    主 manifest 恒为 false）；
+  - 合法地址存私有 SharedPreferences（`ServerConfigStore`），之后启动直接进
+    WebView。
+- **WebView 主界面**（`MainActivity`）：
+  - 设置：`javaScriptEnabled`/`domStorageEnabled`（localStorage 存 token 的硬依赖），
+    `allowFileAccess`/`allowContentAccess=false`，`mediaPlaybackRequiresUserGesture`；
+  - 顶部进度条（`WebChromeClient.onProgressChanged`）；返回键按浏览历史回退；
+  - `shouldOverrideUrlLoading`：仅与配置服务器同源的 http(s) 在 WebView 内打开，
+    其余（外部域名/tel/mailto 等）交 `Intent` 给系统浏览器；
+  - 主帧加载失败 → 错误页 + 重试；`onReceivedSslError` → **一律
+    `handler.cancel()` 阻断，无继续访问入口**（fail-closed）；
+  - 菜单：刷新 / 切换服务器（清地址 + `FLAG_ACTIVITY_NEW_TASK|CLEAR_TASK` 重建任务栈，
+    旧服务器 WebView 状态含 token 随之丢弃）/ 关于（版本 + 服务器地址）。
+- **图标**：自适应图标（v26）+ vector 回退（24~25），白线走势图前景 + indigo 底色，
+  与网页端主题色一致，不依赖 PNG 素材。
+- **范围外（F7-3）**：本地通知/后台轮询、图标与启动屏、生物识别登录、
+  Capacitor（路线 B）评估。
+- **改动入口**：壳行为调整改 `MainActivity`/`ServerConfigActivity`；地址归一化规则改
+  `ServerUrl.kt`；**不要在壳内加业务逻辑**（业务迭代走网页端，App 免发版）。
+- **注意事项**：
+  - 本机无 Android SDK/Gradle，**APK 构建与真机验收未做**（以 XML 合法性 + 工程
+    自洽为准），由构建者在 Android Studio 中执行（REQ-F7-2 验收标准 1~6）；
+  - F7-1（公网可达端到端验证）依赖真实公网部署（域名+反代+证书），与壳开发并行，
+    壳可先用局域网地址开发调试。

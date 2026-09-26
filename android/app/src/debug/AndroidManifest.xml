@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- debug 专属 manifest：仅调试包允许明文 HTTP（局域网 http://192.168.x.x:18790 调试用）。
+     release 构建不会合并本文件，保持 usesCleartextTraffic=false。 -->
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:tools="http://schemas.android.com/tools">
+
+    <application
+        android:usesCleartextTraffic="true"
+        tools:ignore="UsesCleartextTraffic" />
+
+</manifest>
