@@ -38,6 +38,9 @@ const channels: Channel[] = [new WebChatChannel(store, data)];
 if (config.feishu.enabled) channels.push(new FeishuChannel(store));
 
 const app = express();
+// 反向代理（S4-3）下信任 X-Forwarded-For 以取真实客户端 IP（登录限速按 IP 生效）；
+// 未配置 TRUST_PROXY 时不信任任何代理头，行为与直接暴露部署完全一致
+app.set('trust proxy', config.trustProxy);
 // verify 回调保留原始请求体，飞书事件验签（HMAC 对 raw body 计算）需要它
 app.use(
   express.json({

@@ -65,4 +65,34 @@ describe('config 数值解析', () => {
     const { config } = await loadConfig();
     expect(config.dataServiceToken).toBe('secret-token');
   });
+
+  it('TRUST_PROXY 未配置时默认 false（S4-3）', async () => {
+    vi.stubEnv('TRUST_PROXY', '');
+    const { config } = await loadConfig();
+    expect(config.trustProxy).toBe(false);
+  });
+
+  it('TRUST_PROXY=true 解析为布尔 true', async () => {
+    vi.stubEnv('TRUST_PROXY', 'true');
+    const { config } = await loadConfig();
+    expect(config.trustProxy).toBe(true);
+  });
+
+  it('TRUST_PROXY=false 解析为布尔 false', async () => {
+    vi.stubEnv('TRUST_PROXY', 'false');
+    const { config } = await loadConfig();
+    expect(config.trustProxy).toBe(false);
+  });
+
+  it('TRUST_PROXY=1 解析为数字 1（只信任最近一跳）', async () => {
+    vi.stubEnv('TRUST_PROXY', '1');
+    const { config } = await loadConfig();
+    expect(config.trustProxy).toBe(1);
+  });
+
+  it('TRUST_PROXY=loopback 原样透传字符串', async () => {
+    vi.stubEnv('TRUST_PROXY', 'loopback');
+    const { config } = await loadConfig();
+    expect(config.trustProxy).toBe('loopback');
+  });
 });
