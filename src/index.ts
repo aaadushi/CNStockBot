@@ -12,6 +12,7 @@ import { FeishuChannel } from './channels/feishu.js';
 import { startScheduler } from './alerts/scheduler.js';
 import { getHealthProbeStatus, startHealthProbe } from './alerts/healthProbe.js';
 import { listSkills } from './skills/registry.js';
+import { getDataServiceStatus, gitSha, startedAt, version } from './health.js';
 import type { Channel } from './channels/types.js';
 
 const store = new Store();
@@ -50,10 +51,16 @@ app.use(
   }),
 );
 
-app.get('/health', (_req, res) => {
+app.get('/health', async (_req, res) => {
+  // dataService 探测自带 30s 缓存与异常兜底（S3-4），失败不影响主服务自身健康
+  const dataService = await getDataServiceStatus();
   res.json({
     ok: true,
+    version,
+    gitSha,
+    startedAt,
     dataProvider: data.name,
+    dataService,
     skills: listSkills().map((s) => s.name),
     quoteProbe: getHealthProbeStatus(),
   });

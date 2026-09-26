@@ -72,6 +72,7 @@ src/
   alerts/healthProbe.ts 行情健康探针：定时探测常青股票，故障记日志+入 /health，推送默认关（P4）
 data-service/         Python FastAPI + AKShare 微服务（新闻/公告/财报/历史K线；AKShare 调用统一 30s 超时）；含本地全市场日 K 库（baostock→SQLite data/market_bars.db，F5-5 选股扫描底座，线程内禁止裸调 AKShare，见 PITFALLS 2026-09-21 条目）
 android/              F7-2 安卓 WebView 壳 App（独立 Gradle 工程，零第三方依赖）：首屏服务器地址配置 + WebView 装载 /webchat；认证由网页端 CNStockAuth 完成，壳不经手 token；构建见 android/README.md
+scripts/              S3-4 进程管理：service.mjs 一键拉起/停止 data-service + 主服务（start/stop/status/restart，端口预检、日志落盘 logs/、PID 文件），start-all/stop-all 的 .bat/.sh 包装
 public/webchat/       内置聊天网页
 public/stocks/        股票浏览页 + 个股详情页 SPA（F1/F2，手写 SVG 走势图）
 public/market/        全市场涨跌榜页（涨幅/跌幅/平盘三 Tab + 家数总览，东财 clist/ulist）
