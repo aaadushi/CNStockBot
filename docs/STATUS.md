@@ -87,7 +87,7 @@
 | S3-1 | ~~inbox 落 SQLite~~ | ✅ 已完成（每用户上限 100 条） |
 | S3-2 | ~~飞书 chat_id 映射持久化~~ | ✅ 已完成（kv 表；只学单聊映射，防持仓日报进群） |
 | S3-3 | ~~WebChat 共享口令 → 多用户体系~~ | ✅ 已上升为 S4-1 并于 2026-09-26 完成 | 审计 A-601：同口令持有者之间无身份隔离（userId 客户端自报），公网发布前必须完成 |
-| S3-4 | 进程管理加固（P9 善后）：一键启动脚本（双服务同起）+ /health 暴露 data-service 连通性与进程启动时间/git sha；（可选）data-service 健康探针 | 未做。P9 已于 2026-09-19 恢复（双服务重启并实测全链路，见更新日志），本行只剩加固项。**优先级背景更新（2026-09-26）**：当日为启用 S4 多用户体系重启过双服务，data-service 按 S4-2 要求必须带 `DATA_SERVICE_TOKEN` 环境变量启动（从主 .env 读取）；目前双服务随 agent 会话后台进程运行，电脑重启即失，一键启动脚本更显必要 |
+| S3-4 | ~~进程管理加固（P9 善后）：一键启动脚本（双服务同起）+ /health 暴露 data-service 连通性与进程启动时间/git sha；（可选）data-service 健康探针~~ | ✅ 2026-09-26 完成：`scripts/service.mjs`（start/stop/status/restart + --env-file，端口预检拒双开、日志落盘 logs/、PID 文件、进程树清理）+ .bat/.sh 包装 + npm script；/health 新增 version/gitSha/startedAt/dataService（30s 缓存轻量探测）；定时推送型微服务探针不做（/health 连通性已覆盖观测面，与告警默认关的口径一致）。需求文档 [REQ-S3-4](requirements/S3-4-process-management.md)，FEATURES 第 41 节 |
 | S3-5 | 进程守护层：开机自启 + 崩溃自动拉起（Windows 任务计划程序 / pm2-windows-service；Linux 公网部署建议直接 systemd unit） | ⏸️ **挂起（2026-09-26 用户登记）：用户不主动提出前不做，任何 agent 不得自行启动本项**。背景：S3-4 一键脚本（PR #44）是前台监督模式——关窗即停、崩溃整体退出不拉起、注销会话杀进程；用户确认"不关机+不关窗"的当前形态可接受，守护层优先级延后。用户主动提及时，按规范先写需求文档再实现 |
 
 ### S4 公网发布前置（新增）
@@ -320,6 +320,32 @@ App 形式在安卓手机上运行——手机上随时查行情/自选股/收�
   确认 S3-4 一键脚本（PR #44）的"不关机 + 不关窗口 + 服务不崩"运行形态当前可接受，
   守护层（Windows 任务计划程序 / pm2-windows-service / Linux systemd）优先级延后；
   **用户不主动提出前不做**。仅文档改动，无代码。
+- 2026-09-26（批次 23）：**S3-4 进程管理加固完成（P9 善后项清零）**——一键启动脚本 +
+  /health 可观测性。改动：
+  - 新增 [scripts/service.mjs](../scripts/service.mjs)（Node 单文件零新依赖，跨平台）：
+    `start` 前台监督模式（端口占用预检拒双开 → data-service 走 venv uvicorn 带
+    `DATA_SERVICE_TOKEN` + 主服务走 `node tsx src/index.ts` 非 watch；日志同屏镜像 +
+    追加 logs/；PID 文件；任一子进程退出整体杀树收尾）、`stop`（taskkill /T /F 或
+    SIGTERM→SIGKILL，陈旧 PID 自动清理，幂等）、`status`（PID+端口双指标，全运行
+    退出码 0）、`restart`、`--env-file`（文件值优先，替代端口并行验证不碰生产）；
+    薄包装 `scripts/start-all.bat`/`stop-all.bat`（**ASCII-only + chcp 65001**：.bat 写
+    中文注释会在 GBK 控制台被 cmd 误解析成命令，实测踩到）与 `start-all.sh`/
+    `stop-all.sh`；npm script `start:all`/`stop:all`/`status:all`；`.gitignore` 加 logs/；
+  - /health 新增 `version`/`gitSha`/`startedAt`/`dataService` 四字段（[src/health.ts](../src/health.ts)）：
+    dataService 为带 token 调微服务 /health 的轻量探测，3s 超时、进程内缓存 30s
+    （两次 /health 仅一次真实探测，实测 data-service 侧仅 1 条 access log）、异常
+    绝不抛出（data-service 停止时主服务仍 ok:true + dataService.ok:false，实测）；
+  - 需求文档 [docs/requirements/S3-4-process-management.md](requirements/S3-4-process-management.md)，
+    FEATURES 新增第 41 节，README 新增"一键启动双服务"节；
+  - 验证：`npm run typecheck` + `npm test` 全绿（286 测试，新增 health.test.ts 8 条：
+    构建信息 3 + 探测器成功/无 token/非 2xx/连接异常/缓存 TTL/并发共享在途 6）；
+    端到端实测（替代端口 8127/18827 + 临时 env 文件，验后已停并清理）：一键拉起
+    双服务、/health 四新字段正确（gitSha 与 main HEAD 一致）、探测缓存命中、
+    重复 start 被预检拒绝、status/stop/重复 stop 退出码与端口释放全部正确、
+    缺 token 直接报错、.bat 包装可用、data-service 停机时 /health 优雅降级。
+  - **范围说明**：崩溃自动拉起/开机自启/systemd/pm2 注册、定时推送型 data-service
+    健康探针均按需求文档明确不做；生产实例（18790）未动，如需切换为脚本管理，
+    先停旧进程再 `scripts/start-all.bat`。
 - 2026-09-26（批次 22）：**F7-2 安卓 WebView 壳 App 工程完成（F7 阶段 2）**——S4 收官后
   进入 F7 的第一项产出。改动：
   - 新增 `android/` 独立 Gradle 工程（路线 A：原生 WebView 壳）：applicationId

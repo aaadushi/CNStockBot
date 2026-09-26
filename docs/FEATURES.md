@@ -1127,3 +1127,37 @@
     自洽为准），由构建者在 Android Studio 中执行（REQ-F7-2 验收标准 1~6）；
   - F7-1（公网可达端到端验证）依赖真实公网部署（域名+反代+证书），与壳开发并行，
     壳可先用局域网地址开发调试。
+
+## 41. 进程管理加固：一键启动 + /health 可观测性（S3-4，2026-09-26 新增）
+
+- **定位**：P9（进程管理失控）善后加固。解决"双服务手工启动步骤分散易错、旧进程
+  占端口无防御、/health 看不出版本与微服务连通性"三个痛点。需求文档
+  [docs/requirements/S3-4-process-management.md](requirements/S3-4-process-management.md)。
+- **一键启动脚本**（[scripts/service.mjs](../scripts/service.mjs)，Node 单文件零新依赖，
+  Windows/POSIX 通用）：
+  - `start`（前台监督模式）：端口占用预检（拒绝双开，PITFALLS 占端口事故防线）→
+    拉起 data-service（优先 `data-service/.venv` 内 uvicorn，回退 PATH
+    `python -m uvicorn`；host/port 从 `PYTHON_SERVICE_URL` 解析）与主服务
+    （`node node_modules/tsx/dist/cli.mjs src/index.ts`，**不用 tsx watch**——避开
+    热重载失效坑）；日志同屏镜像 + 追加写 `logs/<服务>.log`；PID 写
+    `logs/<服务>.pid`；`DATA_SERVICE_TOKEN` 为空直接报错退出；任一子进程退出
+    （含崩溃）→ 杀进程树整体收尾；`--env-file <path>` 可指定 env 文件（文件值优先，
+    便于替代端口并行验证）；
+  - `stop`：按 PID 文件停止（win32 `taskkill /T /F` 杀树，POSIX 先 SIGTERM 后
+    SIGKILL），陈旧 PID 文件自动清理，可重复执行；
+  - `status`：PID 存活 + 端口监听双指标，全部运行退出码 0 否则 1；
+  - `restart` = stop + start；
+  - 薄包装：`scripts/start-all.bat` / `stop-all.bat`（ASCII 内容 + `chcp 65001`，
+    中文注释在 GBK 控制台下会被 cmd 误解析——.bat 里不要写非 ASCII）、
+    `scripts/start-all.sh` / `stop-all.sh`；npm script `start:all` / `stop:all` /
+    `status:all`；
+  - 范围外（需求文档明确不做）：崩溃自动拉起、开机自启、systemd/pm2、日志轮转。
+- **/health 增强**（[src/health.ts](../src/health.ts)）：新增 `version`（package.json）、
+  `gitSha`（启动时 `git rev-parse --short HEAD`，无 git 环境为 null）、`startedAt`
+  （进程启动 ISO 时间）、`dataService`（带 token 调微服务 `/health`，3s 超时，
+  **结果进程内缓存 30s** 防轮询打爆微服务；ok:false 时带 error，绝不抛出——
+  /health 自身必须始终可用）。探测器经 `createDataServiceProber` 工厂注入
+  fetch/now 便于单测。响应为纯增量字段，既有字段（ok/dataProvider/skills/
+  quoteProbe）不变。
+- **排障动线**：怀疑"改了代码没生效"→ `status` 看 PID/端口 → `curl /health` 对比
+  gitSha 与当前 main → `dataService.ok` 区分"微服务挂了"还是"上游数据源挂了"。

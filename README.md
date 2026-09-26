@@ -60,6 +60,27 @@ DATA_SERVICE_TOKEN=change-me-to-a-random-string-at-least-32-chars \
 > **注意（S4-2）**：data-service 自 2026-09-26 起启用 token 鉴权，未配置 `DATA_SERVICE_TOKEN`
 > 时拒绝启动；旧版主服务无法访问新版 data-service，升级需两端同步。
 
+## 一键启动双服务（S3-4）
+
+开发/自托管场景下一条命令拉起主服务 + data-service（前台监督模式：日志同屏输出并
+追加写 `logs/`，任一服务退出则整体停止；关闭窗口或 Ctrl+C 即停止）：
+
+```bash
+# Windows（双击或在命令行执行）
+scripts\start-all.bat
+
+# Linux / macOS
+scripts/start-all.sh
+
+# 或 npm script
+npm run start:all        # 启动；npm run stop:all 停止；npm run status:all 查看状态
+```
+
+停止用 `scripts\stop-all.bat`（或 `stop-all.sh` / `npm run stop:all`），按 PID 文件清理，
+可重复执行。启动前自动做端口占用预检（拒绝双开）；`DATA_SERVICE_TOKEN` 未配置会直接
+报错提示。查看运行状态与版本信息：`curl http://localhost:18790/health`（暴露
+version/gitSha/启动时间/data-service 连通性）。
+
 ## 公网部署（S4-3）
 
 发布给他人使用前必须走 HTTPS 反向代理：TLS 由 Caddy/nginx 终止，主服务与
