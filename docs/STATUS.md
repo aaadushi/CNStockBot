@@ -88,6 +88,7 @@
 | S3-2 | ~~飞书 chat_id 映射持久化~~ | ✅ 已完成（kv 表；只学单聊映射，防持仓日报进群） |
 | S3-3 | ~~WebChat 共享口令 → 多用户体系~~ | ✅ 已上升为 S4-1 并于 2026-09-26 完成 | 审计 A-601：同口令持有者之间无身份隔离（userId 客户端自报），公网发布前必须完成 |
 | S3-4 | ~~进程管理加固（P9 善后）：一键启动脚本（双服务同起）+ /health 暴露 data-service 连通性与进程启动时间/git sha；（可选）data-service 健康探针~~ | ✅ 2026-09-26 完成：`scripts/service.mjs`（start/stop/status/restart + --env-file，端口预检拒双开、日志落盘 logs/、PID 文件、进程树清理）+ .bat/.sh 包装 + npm script；/health 新增 version/gitSha/startedAt/dataService（30s 缓存轻量探测）；定时推送型微服务探针不做（/health 连通性已覆盖观测面，与告警默认关的口径一致）。需求文档 [REQ-S3-4](requirements/S3-4-process-management.md)，FEATURES 第 41 节 |
+| S3-5 | 进程守护层：开机自启 + 崩溃自动拉起（Windows 任务计划程序 / pm2-windows-service；Linux 公网部署建议直接 systemd unit） | ⏸️ **挂起（2026-09-26 用户登记）：用户不主动提出前不做，任何 agent 不得自行启动本项**。背景：S3-4 一键脚本（PR #44）是前台监督模式——关窗即停、崩溃整体退出不拉起、注销会话杀进程；用户确认"不关机+不关窗"的当前形态可接受，守护层优先级延后。用户主动提及时，按规范先写需求文档再实现 |
 
 ### S4 公网发布前置（新增）
 
@@ -315,6 +316,10 @@ App 形式在安卓手机上运行——手机上随时查行情/自选股/收�
 
 ## 更新日志
 
+- 2026-09-26：**登记 S3-5 进程守护层（开机自启 + 崩溃自动拉起）为挂起任务**——用户
+  确认 S3-4 一键脚本（PR #44）的"不关机 + 不关窗口 + 服务不崩"运行形态当前可接受，
+  守护层（Windows 任务计划程序 / pm2-windows-service / Linux systemd）优先级延后；
+  **用户不主动提出前不做**。仅文档改动，无代码。
 - 2026-09-26（批次 23）：**S3-4 进程管理加固完成（P9 善后项清零）**——一键启动脚本 +
   /health 可观测性。改动：
   - 新增 [scripts/service.mjs](../scripts/service.mjs)（Node 单文件零新依赖，跨平台）：
