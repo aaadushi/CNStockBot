@@ -375,6 +375,20 @@ App 形式在安卓手机上运行——手机上随时查行情/自选股/收�
 
 ## 更新日志
 
+- 2026-09-27（批次 25）：**修复 S4-1 迁移引入的生产事故——6 个页面整页无数据
+  （S1 级）**。背景：用户报告"基金、涨跌榜、快讯等菜单页面都没数据"，排查发现
+  S4-1 迁移（9-26）给每页头部脚本加了 `logoutBtn.onclick = ...`，但
+  funds/news/overseas/scanner/backtest/sectors 六页 header **漏加
+  `id="logout-btn"` 元素**——脚本启动即 TypeError，整页内联 JS 死亡，
+  页面表现为永远加载中且**不发任何 API 请求**（服务端 curl 同接口全绿，
+  所以 S3-6 的 API 级巡检未能发现；market/stocks/webchat 三页元素齐全未受影响，
+  涨跌榜空白另属东财封禁 P11）。改动：
+  - 6 页 header 统一补登出按钮（与 market/stocks/webchat 同款）；
+  - 新增回归测试 [tests/frontend-pages.test.ts](../tests/frontend-pages.test.ts)：
+    扫描全部 9 个页面的内联脚本 `$('id')` 引用 vs HTML 实际定义，防复发；
+  - PITFALLS 回填病例（含"S3-6 只 curl API 验证不了前端执行链路"的教训）；
+  - 验证：`npm run typecheck` + `npm test` 全绿（295 测试，新增 9 条页面结构用例）；
+    Express 静态目录直读磁盘，**生产免重启已生效**，浏览器强刷即可。
 - 2026-09-27（批次 24）：**S3-6 全页面数据链路巡检完成**——按"S3-6 巡检清单"逐页
   建立基线。巡检方式：服务端 curl 全量业务 API（注册临时账号 audit_s36 走真实
   Bearer 鉴权，验后登出），对话链路走 /api/chat 实测。巡检时东财对本机 IP 的
