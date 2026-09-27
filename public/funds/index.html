@@ -116,9 +116,10 @@
     </div>
   </header>
 
-  <main class="page">
+  <main class="page page-wide">
     <!-- ========== 列表视图 ========== -->
     <section id="view-list">
+      <h1 class="page-title">基金</h1>
       <div class="search-wrap">
         <div class="search-box">
           <span class="icon">🔍</span>
@@ -148,35 +149,47 @@
 
     <!-- ========== 详情视图（?code=） ========== -->
     <section id="view-detail" hidden>
-      <div class="card" style="margin-bottom: 16px;">
-        <div class="detail-top" style="margin-bottom: 16px;">
-          <a class="back-link" href="/funds">← 返回基金列表</a>
-          <div class="title">
-            <span class="name" id="d-name"></span>
-            <span class="code" id="d-code"></span>
-            <span class="badge" id="d-type" style="margin-left: 8px;"></span>
-          </div>
+      <div class="detail-top" style="margin-bottom: 16px;">
+        <a class="back-link" href="/funds">← 返回基金列表</a>
+        <div class="title">
+          <h1 class="page-title name" style="display:inline;" id="d-name"></h1>
+          <span class="code" id="d-code"></span>
+          <span class="badge" id="d-type" style="margin-left: 8px;"></span>
         </div>
-        <div class="nav-main">
-          <span class="nav-value" id="d-nav">—</span>
-          <span id="d-daypct"></span>
-          <span class="time" id="d-date"></span>
-        </div>
-        <div class="stat-grid" id="d-stats"></div>
       </div>
 
-      <div class="card">
-        <div class="chart-head">
-          <h3>单位净值走势</h3>
-          <div class="type-pills" id="range-pills" style="margin-bottom: 0;">
-            <button data-n="22">近1月</button>
-            <button data-n="63">近3月</button>
-            <button data-n="126">近6月</button>
-            <button data-n="252" class="active">近1年</button>
+      <!-- F 型两栏（REQ-UI-2）：净值走势居左主栏，统计格居右侧栏，≤900px 堆叠 -->
+      <div class="layout-2col">
+        <div class="layout-main">
+          <div class="card">
+            <div class="nav-main">
+              <span class="nav-value" id="d-nav">—</span>
+              <span id="d-daypct"></span>
+              <span class="time" id="d-date"></span>
+            </div>
+          </div>
+
+          <div class="card">
+            <div class="chart-head">
+              <h3>单位净值走势</h3>
+              <div class="type-pills" id="range-pills" style="margin-bottom: 0;">
+                <button data-n="22">近1月</button>
+                <button data-n="63">近3月</button>
+                <button data-n="126">近6月</button>
+                <button data-n="252" class="active">近1年</button>
+              </div>
+            </div>
+            <div class="chart-box" id="chart-box">
+              <div class="chart-tip" id="chart-tip"></div>
+            </div>
           </div>
         </div>
-        <div class="chart-box" id="chart-box">
-          <div class="chart-tip" id="chart-tip"></div>
+
+        <div class="layout-aside">
+          <div class="card">
+            <h3 style="margin-top: 0;">基金概况</h3>
+            <div class="stat-grid" id="d-stats"></div>
+          </div>
         </div>
       </div>
     </section>

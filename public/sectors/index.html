@@ -121,9 +121,10 @@
     </div>
   </header>
 
-  <main class="page">
+  <main class="page page-wide">
     <!-- ========== 列表视图 ========== -->
     <section id="view-list">
+      <h1 class="page-title">板块轮动</h1>
       <div class="card" style="margin-bottom: 16px;">
         <div class="stock-sector-box">
           <input id="stock-input" class="input" placeholder="查个股所属板块：输入股票代码或名称（如 600519 / 茅台）" autocomplete="off" />
@@ -144,47 +145,56 @@
 
     <!-- ========== 板块详情视图（?name=） ========== -->
     <section id="view-detail" hidden>
-      <div class="card" style="margin-bottom: 16px;">
-        <div class="detail-top" style="margin-bottom: 16px;">
-          <a class="back-link" href="/sectors">← 返回板块列表</a>
-          <div class="title">
-            <span class="name" id="d-name"></span>
-            <span class="code" id="d-code"></span>
-            <span id="d-badge" style="margin-left: 8px;"></span>
-          </div>
-        </div>
-        <div class="stat-grid" id="d-stats"></div>
-      </div>
-
-      <div class="card" style="margin-bottom: 16px;">
-        <div class="chart-head">
-          <h3>板块走势（日 K 收盘）</h3>
-          <div class="range-pills" id="range-pills">
-            <button data-n="22">近1月</button>
-            <button data-n="63" class="active">近3月</button>
-            <button data-n="126">近6月</button>
-            <button data-n="250">近1年</button>
-          </div>
-        </div>
-        <div class="chart-box" id="chart-box">
-          <div class="chart-tip" id="chart-tip"></div>
+      <div class="detail-top" style="margin-bottom: 16px;">
+        <a class="back-link" href="/sectors">← 返回板块列表</a>
+        <div class="title">
+          <h1 class="page-title name" style="display:inline;" id="d-name"></h1>
+          <span class="code" id="d-code"></span>
+          <span id="d-badge" style="margin-left: 8px;"></span>
         </div>
       </div>
 
-      <div class="card">
-        <div class="chart-head">
-          <h3>成分股</h3>
-          <span class="text-3" style="font-size: 12px;" id="cons-note"></span>
-        </div>
-        <div style="overflow-x: auto;">
-          <table class="cons-table">
-            <thead>
-              <tr><th>名称</th><th>最新价</th><th>涨跌幅</th><th>换手率</th><th>成交额</th></tr>
-            </thead>
+      <!-- F 型两栏（REQ-UI-2）：走势与成分股居左主栏，统计格居右侧栏，≤900px 堆叠 -->
+      <div class="layout-2col">
+        <div class="layout-main">
+          <div class="card" style="margin-bottom: 0;">
+            <div class="chart-head">
+              <h3>板块走势（日 K 收盘）</h3>
+              <div class="range-pills" id="range-pills">
+                <button data-n="22">近1月</button>
+                <button data-n="63" class="active">近3月</button>
+                <button data-n="126">近6月</button>
+                <button data-n="250">近1年</button>
+              </div>
+            </div>
+            <div class="chart-box" id="chart-box">
+              <div class="chart-tip" id="chart-tip"></div>
+            </div>
+          </div>
+
+          <div class="card">
+            <div class="chart-head">
+              <h3>成分股</h3>
+              <span class="text-3" style="font-size: 12px;" id="cons-note"></span>
+            </div>
+            <div style="overflow-x: auto;">
+              <table class="cons-table">
+                <thead>
+                  <tr><th>名称</th><th>最新价</th><th>涨跌幅</th><th>换手率</th><th>成交额</th></tr>
+                </thead>
             <tbody id="cons-body"></tbody>
           </table>
         </div>
         <div class="list-note">点击成分股跳个股详情页</div>
+          </div>
+        </div>
+
+        <div class="layout-aside">
+          <div class="card">
+            <h3 style="margin-top: 0;">板块概况</h3>
+            <div class="stat-grid" id="d-stats"></div>
+          </div>
+        </div>
       </div>
     </section>
 

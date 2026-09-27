@@ -431,14 +431,19 @@
 
 ## 22. 前端共享设计系统（theme.css，2026-09-15 新增，2026-09-27 改造为 Soft UI）
 
-- **实现方式**：Soft UI（柔和界面风）单一 CSS 文件（无构建）：CSS 变量定义
+- **实现方式**：Soft UI（柔和界面风）视觉 + F 型布局（REQ-UI-2 混合方案，
+  冲突仲裁见需求文档）单一 CSS 文件（无构建）：CSS 变量定义
   slate-50 浅底 + indigo 低饱和主色 + A 股红涨绿跌语义色；圆角 16px（组件）/
   24px（卡片），阴影一律带 slate/indigo 色调 + 透明度（无硬边框、无纯黑硬影）；
   交互为 hover 上浮 + 彩色柔影扩散（duration 200~300ms）、active 轻按缩放、
   输入框 focus 柔光环（--ring）；含 prefers-reduced-motion 降级。
-  通用组件类（.card/.btn/.input/.badge/.icon-chip/.skeleton/.auth-overlay）。
+  布局工具类：`.page-wide`（1080px 全宽列表页容器）、`.page-title`（每页 h1）、
+  `.prose`（42em 限行长）、`.layout-2col/.layout-main/.layout-aside`（详情页
+  桌面主+侧两栏、≤900px 堆叠）。通用组件类（.card/.btn/.input/.badge/
+  .icon-chip/.skeleton/.auth-overlay）。
   经 `express.static('/shared')` 提供，全部 9 页 `<link>` 引入后只写页内少量
-  特有样式。风格规则与验收口径见 [requirements/UI-1-soft-ui-style.md](requirements/UI-1-soft-ui-style.md)。
+  特有样式。风格规则与验收口径见 [requirements/UI-1-soft-ui-style.md](requirements/UI-1-soft-ui-style.md)
+  与 [requirements/UI-2-f-pattern-layout.md](requirements/UI-2-f-pattern-layout.md)。
 - **代码位置**：[public/shared/theme.css](../public/shared/theme.css)
 - **改动入口**：全局风格（色板/圆角/阴影/字号层级）→ 改 `:root` 变量与组件类；
   新页面 → 引入 theme.css 并复用组件类，不要另起色板

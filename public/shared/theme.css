@@ -58,6 +58,39 @@ body {
   gap: 24px;             /* gap-6：宽松的卡片间距 */
 }
 
+/* F 型布局（REQ-UI-2）：全宽内容页容器 + 标题层级 + 限行长 + 主侧两栏 */
+.page-wide {
+  max-width: 1080px;
+  margin: 0 auto;
+  padding: 24px 20px 48px;
+  display: flex;
+  flex-direction: column;
+  gap: 24px;
+}
+.page-title {
+  font-size: 20px;
+  font-weight: 600;
+  color: var(--text);
+  line-height: 1.4;
+}
+.prose { max-width: 42em; }   /* F 型 max-w-prose：65~75 字符行长 */
+
+.layout-2col { display: flex; gap: 24px; align-items: flex-start; }
+.layout-main {
+  flex: 1 1 0; min-width: 0;
+  display: flex; flex-direction: column; gap: 24px;
+}
+.layout-aside {
+  flex: 0 0 300px;
+  display: flex; flex-direction: column; gap: 24px;
+}
+@media (max-width: 900px) {
+  .layout-2col { flex-direction: column; }
+  .layout-main, .layout-aside { flex: none; width: 100%; }
+}
+/* 侧栏内的统计格自动降为两列（侧栏宽 300px，放不下四列） */
+.layout-aside .stat-grid { grid-template-columns: 1fr 1fr !important; }
+
 .page-header {
   background: var(--card);
   border: 0;

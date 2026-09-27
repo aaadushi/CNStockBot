@@ -375,6 +375,26 @@ App 形式在安卓手机上运行——手机上随时查行情/自选股/收�
 
 ## 更新日志
 
+- 2026-09-27（批次 28）：**全站布局改造为 F 型布局（REQ-UI-2，与 UI-1 Soft UI
+  视觉共存的混合方案）**。用户拍板冲突仲裁：布局/信息层级按 F 型布局（顶部优先、
+  左对齐、标题层级 h1>h2>h3、可扫描、max-w-prose 限行长、响应式主+侧两栏），
+  视觉 token 维持 Soft UI（圆角/阴影/边框不回退）。改动：
+  - 需求文档 [docs/requirements/UI-2-f-pattern-layout.md](requirements/UI-2-f-pattern-layout.md)
+    先行（REQ-UI-2），含冲突仲裁表与非目标（侧栏只搬移已有内容、不捏造
+    "热门推荐/标签云"类装饰区）；
+  - theme.css 新增布局工具类：`.page-wide`（1080px 全宽容器）、`.page-title`
+    （h1 样式）、`.prose`（42em 限行长）、`.layout-2col/.layout-main/
+    .layout-aside`（桌面主+侧两栏，≤900px 堆叠，侧栏 stat-grid 自动降两列）；
+  - 列表页全宽化 + 补 h1：market（今日涨跌榜）/ news（财经快讯，摘要限行长）/
+    scanner（选股扫描）/ backtest（策略回测）/ overseas（外盘联动）/
+    stocks（我的自选股）/ funds（基金）/ sectors（板块轮动）；
+  - 详情页两栏重排（容器级，元素 id 全部保留）：stocks 左=行情+走势图+技术
+    指标+AI/形态/验货+新闻公告财报 Tab，右=关键指标+公司资料+资金流向+分红送配；
+    funds 左=净值主区+净值走势，右=基金概况；sectors 左=板块走势+成分股，
+    右=板块概况；
+  - webchat 聊天页为对话式 UI，F 扫描模型不适用，维持窄栏不变；
+  - 9 页 HTML 标签配平校验通过、id 唯一性校验通过；typecheck + 300 单测全绿；
+  - 浏览器逐页目检（桌面 + 375px）待用户本地确认。
 - 2026-09-27（批次 27）：**全站 UI 风格改造为 Soft UI（柔和界面风，REQ-UI-1）**。
   用户指定把原 ShadcnUI 风格（黑白灰、细边框、12px 圆角、轻阴影）全站改为
   Soft UI：圆润大圆角（16/24px）、indigo 彩色柔影、无硬边框、hover 上浮 +

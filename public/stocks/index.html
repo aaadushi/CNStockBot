@@ -165,9 +165,10 @@
     </div>
   </header>
 
-  <main class="page">
+  <main class="page page-wide">
     <!-- ========== 列表视图 ========== -->
     <section id="view-list">
+      <h1 class="page-title">我的自选股</h1>
       <div class="search-wrap">
         <div class="search-box">
           <span class="icon">🔍</span>
@@ -183,91 +184,102 @@
       <div class="detail-top">
         <a class="back-link" href="/stocks" id="back-link">← 返回</a>
         <div class="title">
-          <span class="name" id="d-name">—</span><span class="code" id="d-code"></span>
+          <h1 class="page-title name" style="display:inline;" id="d-name">—</h1><span class="code" id="d-code"></span>
         </div>
         <button class="btn btn-primary" id="watch-toggle">加入自选</button>
       </div>
 
-      <div class="card" id="quote-card">
-        <div class="quote-main">
-          <span class="price" id="d-price">—</span>
-          <span id="d-badge"></span>
-          <span class="time" id="d-time"></span>
-        </div>
-        <div class="stat-grid" id="d-stats"></div>
-      </div>
-
-      <div class="card" id="profile-card" hidden>
-        <h3 style="margin-top: 0;">公司资料</h3>
-        <div class="stat-grid" id="d-profile"></div>
-      </div>
-
-      <div class="card" id="fundflow-card" hidden>
-        <h3 style="margin-top: 0;">资金流向</h3>
-        <div id="d-fundflow"></div>
-      </div>
-
-      <div class="card" id="dividend-card" hidden>
-        <h3 style="margin-top: 0;">分红送配</h3>
-        <div id="d-dividend"></div>
-      </div>
-
-      <div class="card">
-        <div class="chart-head">
-          <h3 id="chart-title">分时走势</h3>
-          <span class="ma-legend" id="ma-legend" hidden></span>
-          <div class="chart-controls">
-            <div class="range-pills" id="mode-pills">
-              <button data-mode="intraday" class="active">分时</button>
-              <button data-mode="daily">日K</button>
-            </div>
-            <div class="range-pills" id="range-pills" hidden>
-              <button data-days="30">近1月</button>
-              <button data-days="90">近3月</button>
-              <button data-days="120" class="active">近6月</button>
-              <button data-days="250">近1年</button>
+      <!-- F 型两栏（REQ-UI-2）：主内容居左，统计/资料类辅助卡居右侧栏，≤900px 堆叠 -->
+      <div class="layout-2col">
+        <div class="layout-main">
+          <div class="card" id="quote-card">
+            <div class="quote-main">
+              <span class="price" id="d-price">—</span>
+              <span id="d-badge"></span>
+              <span class="time" id="d-time"></span>
             </div>
           </div>
+
+          <div class="card">
+            <div class="chart-head">
+              <h3 id="chart-title">分时走势</h3>
+              <span class="ma-legend" id="ma-legend" hidden></span>
+              <div class="chart-controls">
+                <div class="range-pills" id="mode-pills">
+                  <button data-mode="intraday" class="active">分时</button>
+                  <button data-mode="daily">日K</button>
+                </div>
+                <div class="range-pills" id="range-pills" hidden>
+                  <button data-days="30">近1月</button>
+                  <button data-days="90">近3月</button>
+                  <button data-days="120" class="active">近6月</button>
+                  <button data-days="250">近1年</button>
+                </div>
+              </div>
+            </div>
+            <div class="chart-box" id="chart-box">
+              <div class="chart-tip" id="chart-tip"></div>
+            </div>
+          </div>
+
+          <div class="card" id="indicator-card" hidden>
+            <h3 style="margin-top: 0;">技术指标</h3>
+            <div id="d-indicators"></div>
+          </div>
+
+          <!-- AI 多维分析（F5-2）：复用 /api/chat 链路，回复同步进聊天页会话历史 -->
+          <div class="card" id="ai-card">
+            <div class="chart-head">
+              <h3 style="margin: 0;">AI 多维分析</h3>
+              <button class="btn btn-primary btn-sm" id="ai-run">生成分析</button>
+            </div>
+            <div id="ai-result" class="ai-result prose"></div>
+            <div class="flow-note">AI 综合行情估值、资金流、技术指标、财报与新闻等公开数据生成客观解读；分析结果会同步出现在聊天页的对话记录中。仅供参考，不构成投资建议。</div>
+          </div>
+
+          <!-- 形态分析（F6-1）：独立于详情聚合拉取，失败只影响本卡 -->
+          <div class="card" id="patterns-card" hidden>
+            <h3 style="margin-top: 0;">形态分析</h3>
+            <div id="d-patterns"></div>
+          </div>
+
+          <!-- 资金流验货（F6-2）：形态信号 × 资金流交叉验证，独立区块，失败只影响本卡 -->
+          <div class="card" id="verify-card" hidden>
+            <h3 style="margin-top: 0;">资金流验货</h3>
+            <div id="d-verify"></div>
+          </div>
+
+          <div class="card">
+            <div class="tabs" id="tabs">
+              <button data-tab="news" class="active">新闻</button>
+              <button data-tab="announcements">公告</button>
+              <button data-tab="financials">财报</button>
+            </div>
+            <div id="tab-content"></div>
+          </div>
         </div>
-        <div class="chart-box" id="chart-box">
-          <div class="chart-tip" id="chart-tip"></div>
+
+        <div class="layout-aside">
+          <div class="card">
+            <h3 style="margin-top: 0;">关键指标</h3>
+            <div class="stat-grid" id="d-stats"></div>
+          </div>
+
+          <div class="card" id="profile-card" hidden>
+            <h3 style="margin-top: 0;">公司资料</h3>
+            <div class="stat-grid" id="d-profile"></div>
+          </div>
+
+          <div class="card" id="fundflow-card" hidden>
+            <h3 style="margin-top: 0;">资金流向</h3>
+            <div id="d-fundflow"></div>
+          </div>
+
+          <div class="card" id="dividend-card" hidden>
+            <h3 style="margin-top: 0;">分红送配</h3>
+            <div id="d-dividend"></div>
+          </div>
         </div>
-      </div>
-
-      <div class="card" id="indicator-card" hidden>
-        <h3 style="margin-top: 0;">技术指标</h3>
-        <div id="d-indicators"></div>
-      </div>
-
-      <!-- AI 多维分析（F5-2）：复用 /api/chat 链路，回复同步进聊天页会话历史 -->
-      <div class="card" id="ai-card">
-        <div class="chart-head">
-          <h3 style="margin: 0;">AI 多维分析</h3>
-          <button class="btn btn-primary btn-sm" id="ai-run">生成分析</button>
-        </div>
-        <div id="ai-result" class="ai-result"></div>
-        <div class="flow-note">AI 综合行情估值、资金流、技术指标、财报与新闻等公开数据生成客观解读；分析结果会同步出现在聊天页的对话记录中。仅供参考，不构成投资建议。</div>
-      </div>
-
-      <!-- 形态分析（F6-1）：独立于详情聚合拉取，失败只影响本卡 -->
-      <div class="card" id="patterns-card" hidden>
-        <h3 style="margin-top: 0;">形态分析</h3>
-        <div id="d-patterns"></div>
-      </div>
-
-      <!-- 资金流验货（F6-2）：形态信号 × 资金流交叉验证，独立区块，失败只影响本卡 -->
-      <div class="card" id="verify-card" hidden>
-        <h3 style="margin-top: 0;">资金流验货</h3>
-        <div id="d-verify"></div>
-      </div>
-
-      <div class="card">
-        <div class="tabs" id="tabs">
-          <button data-tab="news" class="active">新闻</button>
-          <button data-tab="announcements">公告</button>
-          <button data-tab="financials">财报</button>
-        </div>
-        <div id="tab-content"></div>
       </div>
     </section>
 
