@@ -71,7 +71,7 @@ src/
   alerts/rules.ts     监控规则领域逻辑（条件类型/校验/求值/文案，纯函数，scheduler 与 manage_alerts 技能共用）
   alerts/healthProbe.ts 行情健康探针：定时探测常青股票，故障记日志+入 /health，推送默认关（P4）
 data-service/         Python FastAPI + AKShare 微服务（新闻/公告/财报/历史K线；AKShare 调用统一 30s 超时）；含本地全市场日 K 库（baostock→SQLite data/market_bars.db，F5-5 选股扫描底座，线程内禁止裸调 AKShare，见 PITFALLS 2026-09-21 条目）
-android/              F7-2 安卓 WebView 壳 App（独立 Gradle 工程，零第三方依赖）：首屏服务器地址配置 + WebView 装载 /webchat；认证由网页端 CNStockAuth 完成，壳不经手 token；构建见 android/README.md
+android/              F7-2 安卓 WebView 壳 App + F7-3 本地通知/启动屏（独立 Gradle 工程，零第三方依赖）：首屏服务器地址配置 + WebView 装载 /webchat + 收件箱 JS 桥系统通知；认证与通知内容均由网页端完成，壳不经手 token、不自行轮询 /api/inbox（drain 语义防抢消息）；构建见 android/README.md
 scripts/              S3-4 进程管理：service.mjs 一键拉起/停止 data-service + 主服务（start/stop/status/restart，端口预检、日志落盘 logs/、PID 文件），start-all/stop-all 的 .bat/.sh 包装
 public/webchat/       内置聊天网页
 public/stocks/        股票浏览页 + 个股详情页 SPA（F1/F2，手写 SVG 走势图）
@@ -204,8 +204,9 @@ uvicorn main:app --host 127.0.0.1 --port 8000
    关键前提、阶段拆分与路线候选见 [docs/STATUS.md](docs/STATUS.md) 第四节 F7。
    **进度：S4 全部四项已于 2026-09-26 完成（公网发布前置收官）；F7-2 安卓 WebView 壳
    工程同日完成**（android/ 独立 Gradle 工程，零依赖；APK 构建/真机验收待 Android
-   Studio 执行）；剩余 F7-1（公网部署后端到端验证，依赖域名+反代+证书落地）与
-   F7-3（本地通知/图标启动屏等体验加固）。
+   Studio 执行）；**F7-3 体验加固于 2026-09-27 完成**（收件箱本地通知 + 通知开关 +
+   品牌启动屏，REQ-F7-3；生物识别/真后台推送明确不做）。剩余 F7-1（公网部署后端
+   到端验证，依赖域名+反代+证书落地）。
 8. P8：LLM 429 重试（Kimi 低等级账号限流，用户决定暂不修，复发时做）。
 
 后续迭代按 [docs/STATUS.md](docs/STATUS.md) 第四节执行。

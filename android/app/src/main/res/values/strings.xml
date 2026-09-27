@@ -13,9 +13,14 @@
     <string name="config_error_http">正式版仅支持 HTTPS 连接。局域网调试请安装 debug 包。</string>
 
     <!-- 主界面菜单 -->
+    <string name="menu_notifications">新通知</string>
     <string name="menu_refresh">刷新</string>
     <string name="menu_switch_server">切换服务器</string>
     <string name="menu_about">关于</string>
+
+    <!-- 收件箱本地通知（REQ-F7-3） -->
+    <string name="notify_channel_name">收件箱通知</string>
+    <string name="notify_multi">%1$d 条新通知：%2$s</string>
 
     <!-- 错误页 -->
     <string name="error_load">页面加载失败（%1$s）。\n请检查手机网络与服务器状态后重试。</string>

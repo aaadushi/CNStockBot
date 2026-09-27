@@ -161,6 +161,12 @@
         const res = await CNStockAuth.apiFetch('/api/inbox');
         const { messages } = await res.json();
         for (const m of messages || []) addMsg(m, 'bot');
+        // App 壳桥接（REQ-F7-3）：本页是 /api/inbox 唯一轮询者（drain 语义），
+        // 把 drain 到的消息转交原生层弹系统通知；浏览器无桥对象，try/catch 兜底，
+        // 桥接失败绝不影响聊天渲染。
+        if ((messages || []).length && window.CNStockAndroid) {
+          try { window.CNStockAndroid.onInboxMessages(JSON.stringify(messages)); } catch { /* 桥接失败不影响聊天 */ }
+        }
       } catch { /* 忽略轮询错误 */ }
     }, 30000);
   </script>
