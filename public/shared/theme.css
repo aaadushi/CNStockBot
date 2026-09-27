@@ -120,6 +120,12 @@ body { padding-left: 180px; }
   transition: all 200ms ease-in-out;
 }
 .page-header a.nav:hover { background: var(--accent-soft); color: var(--accent); }
+/* 当前页导航项：保留显示并加深底色标识选中（REQ-UI-2 §7-S6） */
+.page-header a.nav.active {
+  background: #e0e7ff;   /* indigo-100，比 hover 的 accent-soft 更深一档 */
+  color: var(--accent);
+  font-weight: 600;
+}
 .page-header button.nav {
   display: block; width: 100%; text-align: left;
   font-family: var(--font);
