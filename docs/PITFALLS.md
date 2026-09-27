@@ -31,6 +31,26 @@
 
 ## 1. TypeScript / Node.js / 工具链
 
+### [2026-09-27] 热点切换后网络被识别为"公用网络"，防火墙拦入站——手机连不上但服务一切正常
+- **现象**：手机 App/浏览器连服务器超时、"没有任何数据"；但服务端三查全绿——
+  `service.mjs status` 双服务在线、本机 `curl 127.0.0.1:18790/health` 200、
+  出站 curl（baidu/腾讯/新浪）全通；且 **logs/main.log 里没有任何新请求记录**
+  （请求根本没到服务）。
+- **根因**：电脑在两个手机热点间切换后，Windows 把热点网络重新识别为
+  **公用网络（Public）**——公用配置文件的防火墙默认策略拦绝大部分入站连接，
+  node 服务无放行规则即被拦。网络配置文件可在热点重启/切换后被重置，
+  "昨天同一个热点能连"不代表今天还是专用网络。
+- **解法**（二选一，均需管理员）：
+  - A. 改网络类别：`Set-NetConnectionProfile -InterfaceAlias "WLAN" -NetworkCategory Private`；
+  - B. 加端口放行规则（本项目实际采用）：
+    `netsh advfirewall firewall add rule name="CNStockBot Main 18790" dir=in action=allow protocol=TCP localport=18790`。
+    Git Bash 直接跑 netsh 报"需要提升"时，用
+    `powershell -Command "Start-Process netsh -ArgumentList '...' -Verb RunAs -Wait"` 弹 UAC 执行。
+- **预防**：手机端"连不上/无数据"三连定位——① 本机 curl 端口通不通；② 出站 curl 通不通；
+  ③ 服务日志有没有新请求。①②通+③无 = **入站被防火墙拦**，跑
+  `Get-NetConnectionProfile` 看 NetworkCategory 是否为 Public。
+  同热源症状还包括：手机与电脑是否真在同一热点（热点切换只换了一端）。
+
 ### [2026-09-14] Windows 下 node:sqlite 不关连接，临时目录 rmSync 报 EPERM
 - **现象**：测试用 `DATA_DIR` 指向临时目录起真实 SQLite，用例全绿，但 `afterAll` 里
   `rmSync(tmpDir, { recursive: true })` 报 `EPERM: operation not permitted`。
