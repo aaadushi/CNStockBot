@@ -1161,3 +1161,43 @@
   quoteProbe）不变。
 - **排障动线**：怀疑"改了代码没生效"→ `status` 看 PID/端口 → `curl /health` 对比
   gitSha 与当前 main → `dataService.ok` 区分"微服务挂了"还是"上游数据源挂了"。
+
+## 42. 安卓 App 体验加固：本地通知 + 启动屏（F7-3，2026-09-27 新增）
+
+- **定位**：F7 阶段 3。落地 STATUS 既定推送口径的"中间态"——**App 内轮询 +
+  本地通知**：收盘日报/异动提醒等收件箱消息到达聊天页的同时弹系统通知。
+  需求文档 [docs/requirements/F7-3-app-experience.md](requirements/F7-3-app-experience.md)。
+- **核心设计约束（改动前必读）**：`GET /api/inbox` 是 **drain 语义（读后即删）**，
+  webchat 页是唯一轮询者。因此**原生层绝不自行轮询该端点**（否则与网页端抢消息、
+  聊天窗丢消息），也**不经手 token**——通知内容全部由网页端桥接转交。
+- **网页 → 原生桥接**（[public/webchat/index.html](../public/webchat/index.html) 约 6 行）：
+  收件箱 30s 轮询 drain 到消息后，渲染进聊天窗（addMsg，原有行为不变），随后若
+  `window.CNStockAndroid` 存在则调 `onInboxMessages(JSON)` 把整批消息转交原生层；
+  存在性判断 + try/catch 兜底，桥异常绝不影响聊天渲染；浏览器（无桥）行为零变化。
+  契约由 [tests/webchat-bridge.test.ts](../tests/webchat-bridge.test.ts) 5 条用例守护。
+- **原生侧**（[android/](../android/)，仍零第三方依赖）：
+  - `AndroidBridge.kt`：`@JavascriptInterface`（注入名 `CNStockAndroid`）只暴露
+    "弹通知"一个无副作用能力；org.json 解析失败静默丢弃（Log.w，不崩溃）；
+  - `NotificationHelper.kt`：通知渠道 `inbox`（API 26+，IMPORTANCE_DEFAULT）；
+    1 条显示摘要、N 条显示"N 条新通知：首条摘要"，BigTextStyle 展开整批；
+    专用白色 vector 小图标 `ic_stat_notify`；点通知 → MainActivity
+    （`launchMode=singleTop`，不产生重复实例）；API 33+ 首次进入主界面请求
+    `POST_NOTIFICATIONS`（只主动请求一次，拒绝不影响其他功能）；
+  - 通知开关：菜单可勾选项"新通知"（默认开，SharedPreferences 持久化，
+    与服务器无关——切换服务器不清除）；关闭时消息照常进聊天窗仅不弹通知，
+    打开时无权限则重新请求；
+  - 启动屏：`windowBackground` 改为 `splash_background.xml`（indigo 底 +
+    居中 96dp 白色走势图 Logo，复用 `ic_launcher_foreground`）；
+  - 版本号 versionCode 2 / versionName 0.2.0。
+- **通知覆盖范围（明确边界）**：App **前台**期间（网页轮询存活）实时弹通知；
+  后台/杀进程期间不弹（Doze 挂起 JS 定时器；可靠后台需前台服务 + native 持有
+  token + 非破坏性 peek 端点，与"壳不经手 token"口径冲突；厂商推送通道维持
+  不作首版目标的既定决策）。后台期间到达的消息由 drain 语义 + SQLite 持久化
+  保证不丢，回到前台时照常进聊天窗并弹通知。
+- **范围外（需求文档明确不做）**：生物识别登录（androidx.biometric 破坏零依赖；
+  框架 FingerprintManager 已废弃；威胁模型收益低）、路线 B Capacitor 升级
+  （评估结论：原生桥已覆盖其核心诉求，成本远大于收益）、真后台推送。
+- **验证**：XML 合法性 + webchat 内联 JS 语法 + `npm run typecheck` / `npm test`
+  全绿（300 测试，新增桥接契约 5 条）；**APK 构建与真机验收（通知弹出/权限弹窗/
+  启动屏/开关保持）由构建者在 Android Studio 执行**（REQ-F7-3 验收标准 1~7），
+  本机无 Android SDK。

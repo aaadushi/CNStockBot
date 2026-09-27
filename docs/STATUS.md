@@ -7,7 +7,7 @@
 > 看 [FEATURES.md](FEATURES.md)；踩过的坑看 [PITFALLS.md](PITFALLS.md)；
 > 数据源接口细节看 [DATA_SOURCES.md](DATA_SOURCES.md)。
 
-最后更新：2026-09-26
+最后更新：2026-09-27
 
 ---
 
@@ -45,7 +45,7 @@
 | 资金流验货（"狙击手"模式，F6-2） | `data-service` `/verify/{code}` + `/api/stocks/:code/verify` + 详情页"资金流验货"卡 + `analyze_stock` 第七块 | ✅ 可用 | 近 60 交易日形态信号 × 日级资金流（复用 F3-4 取数，东财五档/新浪两档带 source 标注）交叉验证，三档结论（重点观察/中性/存疑，透明阈值规则）+ 客观依据；日级口径（分笔 tick 未接入，尾盘维度缺失）；按 (code,days) 缓存 1h；依赖 data-service；2026-09-21 新增 |
 | 选股扫描（/scanner + scan_market 技能，F5-5） | `data-service` `/market-bars/*` + `/scan*` + `public/scanner/` + `src/skills/bundled/scanner/` | ✅ 可用 | 本地全市场日 K 库（baostock→SQLite，仅沪深，盘后增量更新）+ 宽表向量化 7 个预设策略扫描（秒级）；网页独立页 + 聊天技能 + 盘后自动更新（默认开）/扫描摘要推送（默认关 `SCANNER_PUSH_ENABLED`）；客观命中名单口径 + 免责声明；2026-09-21 新增 |
 | 策略回测（/backtest，F5-6） | `data-service` `/backtest/{code}` + `public/backtest/` + `GET /api/backtest` | ✅ 可用 | 本地日 K 库单股历史信号回放：7 个预设策略（与扫描同口径同 key）+ 真实 A 股规则（T+1/整手/佣金万2.5/印花税/滑点/止损/持有期）；统计（胜率/盈亏比/最大回撤/累计 vs 买入持有基准）+ 净值曲线 + 逐笔明细；历史业绩不代表未来，页面显著标注；2026-09-22 新增 |
-| 安卓 WebView 壳 App（F7-2） | `android/` 独立 Gradle 工程 | ✅ 工程完成 | 首屏服务器地址配置（release 仅 HTTPS / debug 放行局域网明文）+ WebView 装载 /webchat；SSL fail-closed、外链交系统浏览器；认证由网页端 CNStockAuth 完成（壳不经手 token）；**APK 构建/真机验收待构建者在 Android Studio 执行**；2026-09-26 新增 |
+| 安卓 WebView 壳 App（F7-2）+ 本地通知/启动屏（F7-3） | `android/` 独立 Gradle 工程 | ✅ 工程完成 | F7-2：首屏服务器地址配置（release 仅 HTTPS / debug 放行局域网明文）+ WebView 装载 /webchat；SSL fail-closed、外链交系统浏览器；认证由网页端 CNStockAuth 完成（壳不经手 token）。F7-3（2026-09-27）：收件箱消息经 JS 桥转交原生层弹系统通知（网页端唯一轮询 drain 语义，原生不抢消息、不持 token）、菜单通知开关、品牌启动屏；生物识别/真后台推送按需求文档明确不做。**APK 构建/真机验收待构建者在 Android Studio 执行** |
 
 ## 二、待办优先级总表（下一个 agent 从这里开始）
 
@@ -358,7 +358,7 @@ App 形式在安卓手机上运行——手机上随时查行情/自选股/收�
 | 阶段 0 | **S4-4** | 服务端监听地址可配置：`HOST` 环境变量，默认 `0.0.0.0`，文档说明绑定风险 | 无 |
 | 阶段 1 | **F7-1** | 后端对公网可达（S4 完成后自然达成）：验证多用户登录 API、HTTPS 端到端 | S4 全部 |
 | 阶段 2 | **F7-2** | ~~WebView/TWA 壳跑通~~ ✅ 2026-09-26 完成：android/ 原生 WebView 壳工程（零依赖，详见更新日志批次 22 与 FEATURES 第 40 节） | S4 全部 |
-| 阶段 3 | **F7-3** | 体验加固：本地通知、后台轮询、图标/启动屏、生物识别/指纹登录（可选） | F7-2 |
+| 阶段 3 | **F7-3** | ~~体验加固~~ ✅ 2026-09-27 完成：收件箱本地通知（JS 桥 + 系统通知 + 菜单开关）、品牌启动屏（详见更新日志批次 26 与 FEATURES 第 42 节）；**生物识别/真后台推送按需求文档 REQ-F7-3 明确不做**（零依赖基线 + 威胁模型收益低） | F7-2 |
 
 落点建议：新目录 `android/`（或独立仓库），不动现有 `src/` 与 `public/`；
 多用户体系改动走正常分支 + PR 流程。
@@ -374,6 +374,36 @@ App 形式在安卓手机上运行——手机上随时查行情/自选股/收�
 ---
 
 ## 更新日志
+
+- 2026-09-27（批次 26）：**F7-3 安卓 App 体验加固完成——收件箱本地通知 +
+  品牌启动屏（F7 阶段 3 收官）**。落地 STATUS 既定推送口径的"中间态"
+  （App 内轮询 + 本地通知）。改动：
+  - 需求文档 [docs/requirements/F7-3-app-experience.md](requirements/F7-3-app-experience.md)
+    先行（REQ-F7-3），明确记录范围裁剪：生物识别登录（破坏零依赖基线 + 威胁
+    模型收益低）与真后台推送/杀进程收通知（与"壳不经手 token"口径冲突，
+    厂商通道维持不作首版目标）**均不做**，路线 B Capacitor 评估结论不升级；
+  - **核心设计约束**：`/api/inbox` 是 drain 语义，webchat 页是唯一轮询者——
+    原生层绝不自行轮询（否则抢消息致聊天窗丢消息）、不经手 token；
+  - 网页端（[public/webchat/index.html](../public/webchat/index.html)，约 6 行）：
+    收件箱轮询 drain 到消息渲染进聊天窗后，若 `window.CNStockAndroid` 存在则
+    调 `onInboxMessages(JSON)` 转交原生层；存在性判断 + try/catch 兜底，
+    浏览器行为零变化；
+  - 原生端（`android/`，零第三方依赖不回退）：新增 `AndroidBridge.kt`
+    （@JavascriptInterface 只暴露"弹通知"一个无副作用能力）与
+    `NotificationHelper.kt`（渠道 inbox、单条摘要/N 条计数+首条摘要、
+    BigTextStyle 展开、专用 vector 小图标、点通知 singleTop 回 MainActivity、
+    API 33+ 一次性权限请求）；菜单新增"新通知"可勾选项（默认开、持久化、
+    切换服务器不清除）；`windowBackground` 品牌启动屏（indigo 底 + 居中白色
+    走势图 Logo）；versionCode 2 / versionName 0.2.0；
+  - 通知覆盖边界：App 前台期间实时弹通知；后台/杀进程期间不弹，但消息由
+    drain + SQLite 持久化保证不丢，回前台照常进聊天窗并弹通知；
+  - 新增回归测试 [tests/webchat-bridge.test.ts](../tests/webchat-bridge.test.ts)
+    5 条（桥调用存在/顺序在 addMsg 后/存在性判断/try/catch 兜底）；
+  - 验证：`npm run typecheck` + `npm test` 全绿（300 测试，新增 5 条）；
+    13 个 XML 文件合法性解析通过；webchat 内联 JS 语法检查通过；
+    **APK 构建与真机验收未做（本机无 Android SDK），由构建者在 Android Studio
+    执行 REQ-F7-3 验收标准 1~7**；Express 静态目录直读磁盘，webchat 桥接
+    改动生产免重启已生效（浏览器/App 强刷即可）。
 
 - 2026-09-27（批次 25）：**修复 S4-1 迁移引入的生产事故——6 个页面整页无数据
   （S1 级）**。背景：用户报告"基金、涨跌榜、快讯等菜单页面都没数据"，排查发现

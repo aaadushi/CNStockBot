@@ -68,6 +68,11 @@ class MainActivity : Activity() {
             mediaPlaybackRequiresUserGesture = true
         }
 
+        // REQ-F7-3：收件箱本地通知桥。网页端是唯一轮询 /api/inbox 的一方（drain 语义），
+        // 原生层只接收网页转交的消息文本弹通知，不自行轮询、不经手 token。
+        webView.addJavascriptInterface(AndroidBridge(this), "CNStockAndroid")
+        NotificationHelper.requestPermissionOnce(this)
+
         webView.webChromeClient = object : WebChromeClient() {
             override fun onProgressChanged(view: WebView, newProgress: Int) {
                 progress.progress = newProgress
@@ -117,10 +122,20 @@ class MainActivity : Activity() {
 
     override fun onCreateOptionsMenu(menu: Menu): Boolean {
         menuInflater.inflate(R.menu.main, menu)
+        menu.findItem(R.id.action_notifications)?.isChecked =
+            NotificationHelper.isEnabled(this)
         return true
     }
 
     override fun onOptionsItemSelected(item: MenuItem): Boolean = when (item.itemId) {
+        R.id.action_notifications -> {
+            // 通知开关（REQ-F7-3 F11）：本机偏好，与服务器无关，切换服务器不清除
+            val enabled = !item.isChecked
+            item.isChecked = enabled
+            NotificationHelper.setEnabled(this, enabled)
+            if (enabled) NotificationHelper.requestPermission(this)
+            true
+        }
         R.id.action_refresh -> {
             errorView.visibility = View.GONE
             webView.reload()

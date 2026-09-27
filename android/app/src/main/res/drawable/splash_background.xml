@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- 启动屏背景（REQ-F7-3 F13）：indigo 纯色底 + 居中白色走势图 Logo。
+     layer-list item 的 width/height 自 API 23 起支持，minSdk 24 可用。
+     Android 12+ 系统默认启动画面会基于本背景 + 应用图标自行绘制，效果一致。 -->
+<layer-list xmlns:android="http://schemas.android.com/apk/res/android">
+    <item android:drawable="@color/indigo" />
+    <item
+        android:drawable="@drawable/ic_launcher_foreground"
+        android:gravity="center"
+        android:width="96dp"
+        android:height="96dp" />
+</layer-list>
