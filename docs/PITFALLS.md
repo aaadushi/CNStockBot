@@ -31,6 +31,27 @@
 
 ## 1. TypeScript / Node.js / 工具链
 
+### [2026-09-27] S4-1 迁移漏加页面元素：整页 JS 启动即 TypeError，页面"永远没数据"且 API 巡检完全发现不了
+- **现象**：6 个页面（funds/news/overseas/scanner/backtest/sectors）打开后导航正常、
+  内容区永远空白"加载中"，**Network 里没有任何业务 API 请求**；服务端 curl 同一接口
+  200 真实数据；Console 无业务报错（用户看到的是浏览器扩展噪音）。
+- **根因**：S4-1 多用户迁移（commit 5599a14）给每个页面头部脚本加了
+  `const logoutBtn = $('logout-btn'); logoutBtn.onclick = ...`，但 6 个页面的 header
+  HTML 里**没有 `id="logout-btn"` 元素**（market/stocks/webchat 三页加了，所以那三页正常）。
+  脚本启动即 `TypeError: Cannot set properties of null`，整个内联 `<script>` 死亡，
+  `loadList()` 永远不执行。语法检查（`node --check`）完全查不出——语法没错，是运行时
+  DOM 缺失。
+- **解法**：6 页 header 补 `<button class="nav btn-ghost" id="logout-btn" style="display:none">退出</button>`；
+  新增回归测试 `tests/frontend-pages.test.ts`（扫所有 `public/*/index.html`，内联脚本里
+  `$('id')` 引用的 id 必须在同文件 HTML 中定义，9 页 9 条用例）。
+- **涉及文件**：`public/{funds,news,overseas,scanner,backtest,sectors}/index.html`、
+  `tests/frontend-pages.test.ts`
+- **预防**：① 改页面内联 JS 时，引用的元素 id 必须同文件可 grep 到（回归测试已兜底）；
+  ② **只 curl API 的巡检验证不了前端 JS 执行链路**——S3-6 全页面巡检（批次 24）
+  10 页 API 全绿但 6 页浏览器全挂，教训：页面级验收必须真实打开浏览器看 Network
+  有没有发出请求；③ 用户报"没数据"时让 TA 截 F12 Network，"没有请求"和"请求报错"
+  是两条完全不同的排查路径。
+
 ### [2026-09-27] 热点切换后网络被识别为"公用网络"，防火墙拦入站——手机连不上但服务一切正常
 - **现象**：手机 App/浏览器连服务器超时、"没有任何数据"；但服务端三查全绿——
   `service.mjs status` 双服务在线、本机 `curl 127.0.0.1:18790/health` 200、
