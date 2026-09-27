@@ -86,6 +86,32 @@
 
 ## 2. 东方财富接口（行情数据源）
 
+### [2026-09-27] 东财 IP 封禁升级为连接级（push2+push2delay 同挂）；"降级腾讯行情: fetch failed" 是迷惑性日志
+- **现象**：日志刷屏三种报错——
+  `history 东财源失败，降级新浪: ('Connection aborted.', RemoteDisconnected('Remote end closed connection without response'))`、
+  `东财涨跌榜 https://push2.eastmoney.com 失败，尝试下一宿主: fetch failed`（push2delay 同样失败）、
+  `东财行情失败，降级腾讯行情: fetch failed`、健康探针 `600519 探测失败: fetch failed`。
+  curl 实测：push2/push2delay 返回 `000`（TCP 连接直接被重置，约 0.6s 快速失败）；
+  **腾讯 qt.gtimg.cn 与新浪 finance.sina.com.cn 均正常**（腾讯返回 600519 真实行情）。
+- **根因**：东财 CDN 对本机 IP 的封禁从 HTTP 层（返回错误响应）升级为**连接层**
+  （TCP RST/直接断连），push2 与 push2delay 是同 IP 的两个宿主，一封全挂。
+  data-service 的东财源（push2his）与主服务行情源共用同一出口 IP，同受此封禁影响。
+- **关键点 1（迷惑性日志）**：`src/data/index.ts:24` 那行
+  `[data] 东财行情失败，降级腾讯行情: fetch failed` 行尾的 "fetch failed" 是**东财的
+  错误信息**（触发降级的原因），不是腾讯的——腾讯降级路径成功时**不打日志**。
+  看到该行 ≠ 腾讯也挂了，必须实测 qt.gtimg.cn 再下结论（本次即因此误诊了一轮）。
+- **关键点 2（真缺口）**：涨跌榜（`/api/market/movers`）的降级链只有
+  push2 → push2delay 两个**同 IP** 宿主，东财全挂期间该页面**没有任何数据**；
+  行情（腾讯）/日K（新浪）/资金流（新浪）/分时（新浪）/新闻公告基金（AKShare
+  异源）均有非同 IP 托底，东财全挂也正常。
+- **解法**：无需修——封禁几小时到一天自行解除（9-15、9-16、9-26 各发生过一次，
+  均自行恢复）。涨跌榜缺口若要补需引入非同 IP 的第三降级源，已登记 STATUS P11，
+  排期靠后。
+- **涉及文件**：`src/data/index.ts:24`、`src/data/eastmoney.ts:277`、`data-service/main.py`
+- **预防**：看到 fetch failed 刷屏时，先 curl 分别实测各源（push2 / push2delay /
+  qt.gtimg.cn / sina）再归因；`/market` 页面空白而其他页面正常 = 东财双宿主全挂，
+  属周期性外部事件，等解封，不动代码。
+
 ### [2026-09-19] 腾讯美股行情代码不能带交易所后缀（.OQ/.N），带了整批 none_match
 - **现象**：`qt.gtimg.cn/q=usAAPL.OQ,usBABA.N,usPDD.OQ` 整批返回 `v_pv_none_match="1"`；
   去掉后缀 `q=usAAPL,usBABA` 则正常返回全部行情。
