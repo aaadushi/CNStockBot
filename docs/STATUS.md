@@ -34,7 +34,7 @@
 | 股票浏览页 + 个股详情页（/stocks） | `public/stocks/` + `src/channels/webchat.ts` | ✅ 可用 | F1/F2 完成：自选股圆角卡片列表、页内搜索（同款卡片结果）、详情页行情（含涨跌停价/52 周高低，F3-6）/公司资料/资金流/分红送配（F3-6）/走势图（分时/日K 切换，F3-5）/新闻/公告/财报；API 全部在口令鉴权后；2026-09-15 |
 | 历史 K 线数据（走势图数据源） | `data-service/main.py` `/history` + `DataProvider.getHistory` | ✅ 可用 | 前复权日 K；东财 `stock_zh_a_hist` 失败自动降级新浪 `stock_zh_a_daily`（push2his 限流托底，见 PITFALLS）；2026-09-15 起东财源透出成交额/换手率（F3-3），新浪降级源无此列、成交量已归一（股→手）；2026-09-16 起取数链抽为 `_load_bars` 与 /indicators 共用（F5-1） |
 | 技术指标分析（F5-1） | `data-service/main.py` `/indicators` + 详情页技术指标卡/均线叠加 | ✅ 可用 | MA/EMA/MACD/RSI/KDJ/BOLL + 支撑/压力关键价位 + 客观信号（金叉/超买等状态描述，非买卖建议），与 /history 同源纯本地 pandas 计算（口径见 DATA_SOURCES）；详情页日 K 叠加 MA5/10/20/60 均线；依赖 data-service 运行；2026-09-16 新增 |
-| 前端共享设计系统 | `public/shared/theme.css` | ✅ 可用 | ShadcnUI 风格（黑白灰 + indigo CTA、圆角卡片、微阴影）；webchat 与 stocks 两页共用；2026-09-15 UI 重设计 |
+| 前端共享设计系统 | `public/shared/theme.css` | ✅ 可用 | Soft UI 柔和界面风（rounded-2xl/3xl 大圆角、indigo 彩色柔影、无硬边框、hover 上浮交互）；全部 9 页共用；2026-09-15 初版，2026-09-27 按 REQ-UI-1 全面改造为 Soft UI |
 | 全市场涨跌榜（/market） | `public/market/` + `src/channels/webchat.ts` `/api/market/movers` | ✅ 可用 | 今日涨幅榜/跌幅榜/平盘三 Tab + 涨跌平家数总览（沪深京）；东财 clist/ulist 接口，push2 限流自动降级 push2delay（延时 15 分钟，页面标注）；不依赖 data-service；2026-09-15 新增 |
 | 基金版块（/funds + 基金技能，F4-B） | `public/funds/` + `src/skills/bundled/fundrank/`、`fundinfo/` + data-service `/funds/*` | ✅ 可用 | 开放式基金排行（按类型）/基金搜索/基金详情净值走势/场内 ETF 实时榜；天天基金数据（支付宝同源）经微服务，依赖 data-service 运行；2026-09-15 新增 |
 | 财经快讯（/news + `get_market_news` 技能） | `public/news/` + `src/skills/bundled/marketnews/` + data-service `/market-news` | ✅ 可用 | 全市场财经快讯（区别于个股新闻）；东财全球快讯主源、财联社降级，进程内缓存 90s；网页 60s 自动刷新；依赖 data-service；2026-09-15 新增（F4-A） |
@@ -375,6 +375,24 @@ App 形式在安卓手机上运行——手机上随时查行情/自选股/收�
 
 ## 更新日志
 
+- 2026-09-27（批次 27）：**全站 UI 风格改造为 Soft UI（柔和界面风，REQ-UI-1）**。
+  用户指定把原 ShadcnUI 风格（黑白灰、细边框、12px 圆角、轻阴影）全站改为
+  Soft UI：圆润大圆角（16/24px）、indigo 彩色柔影、无硬边框、hover 上浮 +
+  阴影扩散、输入框 Halo Focus 柔光环。改动：
+  - 需求文档 [docs/requirements/UI-1-soft-ui-style.md](requirements/UI-1-soft-ui-style.md)
+    先行（REQ-UI-1），明确非目标：不引入 Tailwind/构建工具（Tailwind token
+    映射为 CSS 变量）、不动布局与 JS 逻辑（纯视觉层）、保留红涨绿跌语义色；
+  - [public/shared/theme.css](../public/shared/theme.css) token 重写：背景
+    slate-50、卡片 rounded-3xl + 柔影、按钮/输入框 rounded-2xl、
+    `--shadow-lg/xl` 一律带 slate/indigo 色调与透明度、`--ring` 柔光环、
+    新增 `.icon-chip` 圆形图标底、prefers-reduced-motion 降级；
+  - 9 个页面内联样式同步清扫：聊天气泡/建议 chip/输入栏（webchat）、
+    可点卡片悬浮反馈（stocks/market/funds/sectors/scanner）、搜索下拉与
+    图表悬浮提示去边框柔影、警示条去硬边框（backtest/scanner）、
+    外盘行情瓦片改 slate 底 + hover 高亮（overseas）；
+  - 表格细分隔线（border-bottom 1px 浅色）按需求文档 §3.2 豁免保留，
+    红涨绿跌语义色未动；typecheck + 300 单测全绿；
+  - 端到端目检：静态检查为准，浏览器逐页目检待用户在本地环境确认。
 - 2026-09-27（批次 26）：**F7-3 安卓 App 体验加固完成——收件箱本地通知 +
   品牌启动屏（F7 阶段 3 收官）**。落地 STATUS 既定推送口径的"中间态"
   （App 内轮询 + 本地通知）。改动：

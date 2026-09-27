@@ -11,9 +11,11 @@
     .card .block-note { font-size: 12px; color: var(--text-3); margin-top: 12px; }
     .quote-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 10px; }
     .quote-tile {
-      border: 1px solid var(--border); border-radius: 10px; padding: 10px 12px;
+      background: #f8fafc; border: 0; border-radius: 16px; padding: 12px 14px;
       display: flex; flex-direction: column; gap: 2px;
+      transition: all 200ms ease-in-out;
     }
+    .quote-tile:hover { background: var(--accent-soft); transform: translateY(-1px); }
     .quote-tile .name { font-size: 12px; color: var(--text-2); }
     .quote-tile .price { font-size: 16px; font-weight: 600; font-variant-numeric: tabular-nums; }
     .quote-tile .time { font-size: 11px; color: var(--text-3); }

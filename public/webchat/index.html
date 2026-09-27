@@ -22,23 +22,30 @@
     }
     .user {
       align-self: flex-end; background: var(--accent); color: #fff;
-      border-radius: 16px 16px 4px 16px;
+      border-radius: 18px 18px 6px 18px;
+      box-shadow: 0 4px 12px rgba(79, 70, 229, .25);
     }
     .bot {
       align-self: flex-start; background: var(--card);
-      border: 1px solid var(--border); border-radius: 16px 16px 16px 4px;
-      box-shadow: var(--shadow-sm);
+      border: 0; border-radius: 18px 18px 18px 6px;
+      box-shadow: var(--shadow-md);
     }
-    .bot.error { background: var(--up-soft); color: var(--up); border-color: #fecaca; }
+    .bot.error { background: var(--up-soft); color: var(--up); }
 
     /* 欢迎建议 chip */
     .suggestions { display: flex; flex-wrap: wrap; gap: 8px; align-self: flex-start; }
     .chip {
       font-size: 13px; color: var(--text-2); background: var(--card);
-      border: 1px solid var(--border); border-radius: 999px; padding: 6px 14px;
-      cursor: pointer; transition: all 150ms ease;
+      border: 0; border-radius: 999px; padding: 8px 16px;
+      box-shadow: var(--shadow-sm);
+      cursor: pointer; transition: all 200ms ease-in-out;
     }
-    .chip:hover { border-color: var(--accent); color: var(--accent); background: var(--accent-soft); }
+    .chip:hover {
+      color: var(--accent); background: var(--accent-soft);
+      transform: translateY(-1px);
+      box-shadow: 0 6px 16px rgba(99, 102, 241, .2);
+    }
+    .chip:active { transform: scale(.97); }
 
     /* 思考中三点动画 */
     .thinking::after {
@@ -50,11 +57,12 @@
     /* 输入区 */
     #bar {
       display: flex; gap: 10px; background: var(--card);
-      border: 1px solid var(--border); border-radius: 16px;
-      box-shadow: var(--shadow-sm); padding: 10px;
+      border: 0; border-radius: 20px;
+      box-shadow: var(--shadow-lg); padding: 10px;
     }
     #input { border: none; box-shadow: none !important; background: transparent; }
-    #send { border-radius: 10px; }
+    #input:focus { box-shadow: none !important; }
+    #send { border-radius: 14px; }
   </style>
 </head>
 <body>

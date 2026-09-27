@@ -16,7 +16,7 @@
     .search-box .input { padding-left: 38px; border-radius: var(--radius); }
     .search-results {
       position: absolute; top: calc(100% + 8px); left: 0; right: 0; z-index: 20;
-      background: var(--card); border: 1px solid var(--border); border-radius: var(--radius);
+      background: var(--card); border: 0; border-radius: 18px;
       box-shadow: var(--shadow-md); padding: 8px; display: none;
       max-height: 380px; overflow-y: auto;
     }
@@ -26,11 +26,15 @@
     .fund-list { display: flex; flex-direction: column; gap: 12px; }
     .fund-card {
       display: flex; align-items: center; gap: 12px;
-      background: var(--card); border: 1px solid var(--border); border-radius: var(--radius);
-      box-shadow: var(--shadow-sm); padding: 16px 20px; cursor: pointer;
-      transition: box-shadow 150ms ease, transform 150ms ease;
+      background: var(--card); border: 0; border-radius: var(--radius-lg);
+      box-shadow: var(--shadow-lg); padding: 18px 22px; cursor: pointer;
+      transition: all 200ms ease-in-out;
     }
-    .fund-card:hover { box-shadow: var(--shadow-md); transform: translateY(-1px); }
+    .fund-card:hover {
+      box-shadow: 0 12px 28px rgba(100, 116, 139, .16), 0 8px 20px rgba(99, 102, 241, .12);
+      transform: translateY(-2px);
+    }
+    .fund-card:active { transform: scale(.99); }
     .fund-card .meta { flex: 1; min-width: 0; }
     .fund-card .name { font-size: 16px; font-weight: 600; }
     .fund-card .code { font-size: 13px; color: var(--text-2); font-variant-numeric: tabular-nums; }
@@ -60,7 +64,7 @@
     .detail-top { display: flex; align-items: center; gap: 12px; }
     .back-link {
       font-size: 13px; color: var(--text-2); text-decoration: none;
-      padding: 6px 10px; border-radius: 8px; transition: background 150ms ease, color 150ms ease;
+      padding: 6px 12px; border-radius: 999px; transition: all 200ms ease-in-out;
     }
     .back-link:hover { background: var(--border); color: var(--text); }
     .detail-top .title { flex: 1; min-width: 0; }
@@ -84,7 +88,7 @@
     .chart-box svg { display: block; width: 100%; height: auto; }
     .chart-tip {
       position: absolute; pointer-events: none; display: none; z-index: 5;
-      background: var(--text); color: #fff; font-size: 12px; border-radius: 8px;
+      background: var(--text); color: #fff; font-size: 12px; border-radius: 10px;
       padding: 6px 10px; line-height: 1.5; white-space: nowrap;
       transform: translate(-50%, -100%); font-variant-numeric: tabular-nums;
     }

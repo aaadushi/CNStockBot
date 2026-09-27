@@ -429,12 +429,16 @@
   （降级链即为此设计，PITFALLS.md Python 条目）；新浪源不覆盖北交所；
   东财直连模式（无微服务）下 `getHistory` 不存在，API 返回 503 提示。
 
-## 22. 前端共享设计系统（theme.css，2026-09-15 新增）
+## 22. 前端共享设计系统（theme.css，2026-09-15 新增，2026-09-27 改造为 Soft UI）
 
-- **实现方式**：ShadcnUI 风格单一 CSS 文件（无构建）：CSS 变量定义黑白灰色板 +
-  indigo CTA 强调色 + A 股红涨绿跌语义色，通用组件类（.card/.btn/.input/.badge/
-  .skeleton/.auth-overlay）。经 `express.static('/shared')` 提供，webchat 与 stocks
-  两页 `<link>` 引入后只写页内少量特有样式。
+- **实现方式**：Soft UI（柔和界面风）单一 CSS 文件（无构建）：CSS 变量定义
+  slate-50 浅底 + indigo 低饱和主色 + A 股红涨绿跌语义色；圆角 16px（组件）/
+  24px（卡片），阴影一律带 slate/indigo 色调 + 透明度（无硬边框、无纯黑硬影）；
+  交互为 hover 上浮 + 彩色柔影扩散（duration 200~300ms）、active 轻按缩放、
+  输入框 focus 柔光环（--ring）；含 prefers-reduced-motion 降级。
+  通用组件类（.card/.btn/.input/.badge/.icon-chip/.skeleton/.auth-overlay）。
+  经 `express.static('/shared')` 提供，全部 9 页 `<link>` 引入后只写页内少量
+  特有样式。风格规则与验收口径见 [requirements/UI-1-soft-ui-style.md](requirements/UI-1-soft-ui-style.md)。
 - **代码位置**：[public/shared/theme.css](../public/shared/theme.css)
 - **改动入口**：全局风格（色板/圆角/阴影/字号层级）→ 改 `:root` 变量与组件类；
   新页面 → 引入 theme.css 并复用组件类，不要另起色板

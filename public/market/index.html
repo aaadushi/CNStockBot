@@ -10,11 +10,15 @@
     .stock-list { display: flex; flex-direction: column; gap: 12px; }
     .stock-card {
       display: flex; align-items: center; gap: 12px;
-      background: var(--card); border: 1px solid var(--border); border-radius: var(--radius);
-      box-shadow: var(--shadow-sm); padding: 16px 20px; cursor: pointer;
-      transition: box-shadow 150ms ease, transform 150ms ease;
+      background: var(--card); border: 0; border-radius: var(--radius-lg);
+      box-shadow: var(--shadow-lg); padding: 18px 22px; cursor: pointer;
+      transition: all 200ms ease-in-out;
     }
-    .stock-card:hover { box-shadow: var(--shadow-md); transform: translateY(-1px); }
+    .stock-card:hover {
+      box-shadow: 0 12px 28px rgba(100, 116, 139, .16), 0 8px 20px rgba(99, 102, 241, .12);
+      transform: translateY(-2px);
+    }
+    .stock-card:active { transform: scale(.99); }
     .stock-card .meta { flex: 1; min-width: 0; }
     .stock-card .name { font-size: 16px; font-weight: 600; }
     .stock-card .code { font-size: 13px; color: var(--text-2); font-variant-numeric: tabular-nums; }
