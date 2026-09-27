@@ -91,34 +91,64 @@ body {
 /* 侧栏内的统计格自动降为两列（侧栏宽 300px，放不下四列） */
 .layout-aside .stat-grid { grid-template-columns: 1fr 1fr !important; }
 
+/* ---- 左侧导航边栏（F 型布局垂直线；REQ-UI-2 补充：2026-09-27 用户指定
+      顶部导航改左侧竖排、去图标、超高可滑动；≤768px 退化为顶部横滑条） ---- */
+body { padding-left: 180px; }
+
 .page-header {
-  background: var(--card);
-  border: 0;
+  position: fixed; left: 0; top: 0; bottom: 0; width: 180px;
+  background: var(--card); border: 0;
   box-shadow: var(--shadow-sm);
-  padding: 0 20px;
+  padding: 20px 14px;
+  overflow-y: auto;          /* 一列排不下 → 竖向滑动 */
+  z-index: 50;
 }
 .page-header .inner {
-  max-width: 720px;
-  margin: 0 auto;
-  height: 56px;
-  display: flex;
-  align-items: center;
-  gap: 10px;
+  max-width: none; margin: 0; height: auto; min-height: 100%;
+  display: flex; flex-direction: column; align-items: stretch; gap: 4px;
 }
-.page-header .brand { font-size: 16px; font-weight: 600; }
-.page-header .sub { font-size: 12px; color: var(--text-3); }
+.page-header .brand { font-size: 17px; font-weight: 600; display: block; padding: 4px 10px 14px; }
+.page-header .sub { display: block; font-size: 11px; color: var(--text-3); line-height: 1.5; padding: 0 10px 16px; }
 .page-header .spacer { flex: 1; }
 .page-header a.nav {
-  font-size: 13px;
+  display: block;
+  font-size: 14px;
   color: var(--text-2);
   text-decoration: none;
-  padding: 6px 14px;
-  border-radius: 999px;
+  padding: 10px 14px;
+  border-radius: 12px;
   transition: all 200ms ease-in-out;
 }
-.page-header a.nav:hover {
-  background: var(--accent-soft);
-  color: var(--accent);
+.page-header a.nav:hover { background: var(--accent-soft); color: var(--accent); }
+.page-header button.nav {
+  display: block; width: 100%; text-align: left;
+  font-family: var(--font);
+  font-size: 14px; font-weight: 400;
+  color: var(--text-2); background: transparent;
+  border: 0; border-radius: 12px;
+  box-shadow: none;
+  padding: 10px 14px; margin-top: 4px;
+  cursor: pointer;
+  transition: all 200ms ease-in-out;
+}
+.page-header button.nav:hover {
+  background: var(--up-soft); color: var(--up);
+  transform: none; box-shadow: none;
+}
+
+@media (max-width: 768px) {
+  body { padding-left: 0; padding-top: 52px; }
+  .page-header {
+    width: 100%; height: 52px; bottom: auto;
+    padding: 0 10px;
+    overflow-x: auto; overflow-y: hidden;   /* 横向放不下的导航 → 横滑 */
+  }
+  .page-header .inner { flex-direction: row; align-items: center; gap: 2px; height: 52px; min-height: 0; }
+  .page-header .brand { font-size: 15px; padding: 0 10px 0 4px; white-space: nowrap; }
+  .page-header .sub { display: none; }
+  .page-header .spacer { display: none; }
+  .page-header a.nav { display: inline-block; white-space: nowrap; padding: 8px 10px; font-size: 13px; }
+  .page-header button.nav { display: inline-block; width: auto; white-space: nowrap; padding: 6px 10px; margin-top: 0; }
 }
 
 /* ---- 卡片 ---- */
