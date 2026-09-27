@@ -31,6 +31,26 @@
 
 ## 1. TypeScript / Node.js / 工具链
 
+### [2026-09-27] 热点切换后网络被识别为"公用网络"，防火墙拦入站——手机连不上但服务一切正常
+- **现象**：手机 App/浏览器连服务器超时、"没有任何数据"；但服务端三查全绿——
+  `service.mjs status` 双服务在线、本机 `curl 127.0.0.1:18790/health` 200、
+  出站 curl（baidu/腾讯/新浪）全通；且 **logs/main.log 里没有任何新请求记录**
+  （请求根本没到服务）。
+- **根因**：电脑在两个手机热点间切换后，Windows 把热点网络重新识别为
+  **公用网络（Public）**——公用配置文件的防火墙默认策略拦绝大部分入站连接，
+  node 服务无放行规则即被拦。网络配置文件可在热点重启/切换后被重置，
+  "昨天同一个热点能连"不代表今天还是专用网络。
+- **解法**（二选一，均需管理员）：
+  - A. 改网络类别：`Set-NetConnectionProfile -InterfaceAlias "WLAN" -NetworkCategory Private`；
+  - B. 加端口放行规则（本项目实际采用）：
+    `netsh advfirewall firewall add rule name="CNStockBot Main 18790" dir=in action=allow protocol=TCP localport=18790`。
+    Git Bash 直接跑 netsh 报"需要提升"时，用
+    `powershell -Command "Start-Process netsh -ArgumentList '...' -Verb RunAs -Wait"` 弹 UAC 执行。
+- **预防**：手机端"连不上/无数据"三连定位——① 本机 curl 端口通不通；② 出站 curl 通不通；
+  ③ 服务日志有没有新请求。①②通+③无 = **入站被防火墙拦**，跑
+  `Get-NetConnectionProfile` 看 NetworkCategory 是否为 Public。
+  同热源症状还包括：手机与电脑是否真在同一热点（热点切换只换了一端）。
+
 ### [2026-09-14] Windows 下 node:sqlite 不关连接，临时目录 rmSync 报 EPERM
 - **现象**：测试用 `DATA_DIR` 指向临时目录起真实 SQLite，用例全绿，但 `afterAll` 里
   `rmSync(tmpDir, { recursive: true })` 报 `EPERM: operation not permitted`。
@@ -85,6 +105,32 @@
   （8000 无监听）且主服务 /health 不反映其状态——完整记录见 STATUS.md P9/P10。
 
 ## 2. 东方财富接口（行情数据源）
+
+### [2026-09-27] 东财 IP 封禁升级为连接级（push2+push2delay 同挂）；"降级腾讯行情: fetch failed" 是迷惑性日志
+- **现象**：日志刷屏三种报错——
+  `history 东财源失败，降级新浪: ('Connection aborted.', RemoteDisconnected('Remote end closed connection without response'))`、
+  `东财涨跌榜 https://push2.eastmoney.com 失败，尝试下一宿主: fetch failed`（push2delay 同样失败）、
+  `东财行情失败，降级腾讯行情: fetch failed`、健康探针 `600519 探测失败: fetch failed`。
+  curl 实测：push2/push2delay 返回 `000`（TCP 连接直接被重置，约 0.6s 快速失败）；
+  **腾讯 qt.gtimg.cn 与新浪 finance.sina.com.cn 均正常**（腾讯返回 600519 真实行情）。
+- **根因**：东财 CDN 对本机 IP 的封禁从 HTTP 层（返回错误响应）升级为**连接层**
+  （TCP RST/直接断连），push2 与 push2delay 是同 IP 的两个宿主，一封全挂。
+  data-service 的东财源（push2his）与主服务行情源共用同一出口 IP，同受此封禁影响。
+- **关键点 1（迷惑性日志）**：`src/data/index.ts:24` 那行
+  `[data] 东财行情失败，降级腾讯行情: fetch failed` 行尾的 "fetch failed" 是**东财的
+  错误信息**（触发降级的原因），不是腾讯的——腾讯降级路径成功时**不打日志**。
+  看到该行 ≠ 腾讯也挂了，必须实测 qt.gtimg.cn 再下结论（本次即因此误诊了一轮）。
+- **关键点 2（真缺口）**：涨跌榜（`/api/market/movers`）的降级链只有
+  push2 → push2delay 两个**同 IP** 宿主，东财全挂期间该页面**没有任何数据**；
+  行情（腾讯）/日K（新浪）/资金流（新浪）/分时（新浪）/新闻公告基金（AKShare
+  异源）均有非同 IP 托底，东财全挂也正常。
+- **解法**：无需修——封禁几小时到一天自行解除（9-15、9-16、9-26 各发生过一次，
+  均自行恢复）。涨跌榜缺口若要补需引入非同 IP 的第三降级源，已登记 STATUS P11，
+  排期靠后。
+- **涉及文件**：`src/data/index.ts:24`、`src/data/eastmoney.ts:277`、`data-service/main.py`
+- **预防**：看到 fetch failed 刷屏时，先 curl 分别实测各源（push2 / push2delay /
+  qt.gtimg.cn / sina）再归因；`/market` 页面空白而其他页面正常 = 东财双宿主全挂，
+  属周期性外部事件，等解封，不动代码。
 
 ### [2026-09-19] 腾讯美股行情代码不能带交易所后缀（.OQ/.N），带了整批 none_match
 - **现象**：`qt.gtimg.cn/q=usAAPL.OQ,usBABA.N,usPDD.OQ` 整批返回 `v_pv_none_match="1"`；
