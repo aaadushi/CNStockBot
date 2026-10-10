@@ -20,6 +20,18 @@ export class PythonServiceProvider implements DataProvider {
   /** 指数行情始终走东财直连（免 key，与微服务可用性无关；审计 A-305） */
   private indexQuote = new EastmoneyProvider();
 
+  /** 提取微服务错误体里的 detail 字段（FastAPI HTTPException 的 {"detail": "..."} 格式），
+   *  取不到则截断原文。避免把 JSON 残渣抛给前端用户（2026-10-10 真机验收改进）。 */
+  private errDetail(body: string): string {
+    try {
+      const j = JSON.parse(body) as { detail?: unknown };
+      if (typeof j.detail === 'string' && j.detail) return j.detail;
+    } catch {
+      /* 非 JSON 错误体，退回原文截断 */
+    }
+    return body.slice(0, 200);
+  }
+
   private async get<T>(path: string, timeoutMs: number = FETCH_TIMEOUT_MS): Promise<T> {
     let res: Response;
     try {
@@ -35,10 +47,7 @@ export class PythonServiceProvider implements DataProvider {
     }
     if (!res.ok) {
       const body = await res.text();
-      throw new Error(
-        `数据服务请求失败 ${res.status}: ${body.slice(0, 200)}` +
-          (res.status >= 500 ? '（服务已响应但上游数据源失败，按 PITFALLS.md AKShare 条目排查）' : ''),
-      );
+      throw new Error(`数据服务请求失败 ${res.status}：${this.errDetail(body)}`);
     }
     return (await res.json()) as T;
   }
@@ -59,10 +68,7 @@ export class PythonServiceProvider implements DataProvider {
     }
     if (!res.ok) {
       const body = await res.text();
-      throw new Error(
-        `数据服务请求失败 ${res.status}: ${body.slice(0, 200)}` +
-          (res.status >= 500 ? '（服务已响应但上游数据源失败，按 PITFALLS.md AKShare 条目排查）' : ''),
-      );
+      throw new Error(`数据服务请求失败 ${res.status}：${this.errDetail(body)}`);
     }
     return (await res.json()) as T;
   }

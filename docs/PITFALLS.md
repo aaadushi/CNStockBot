@@ -635,6 +635,30 @@
   （10 分钟窗口，2026-09-14 起已实现于 feishu.ts）。
 - **涉及文件**：`src/channels/feishu.ts`
 
+## 7. 前端 / 安卓 WebView
+
+### [2026-10-10] 安卓 WebView 旧内核缺 `replaceChildren`：除聊天页外全部页面"无数据"，服务端 API 全绿
+- **现象**（F7-2 真机验收）：Vivo V1838A（Android 10）上 App 聊天页一切正常，
+  但 /market /stocks /funds /sectors /news /overseas /scanner /backtest 全部
+  "没有数据"；同一时刻用 PC curl 带 session token 逐个打这些页的 API 全部 200
+  有数据——**问题不在服务端，在前端页面脚本**。
+- **根因**：国产 ROM 无 Google Play，WebView 冻结在出厂版本。该机
+  `dumpsys webviewupdate` 显示 WebView = **Chrome 83**（2020），而所有数据页
+  首屏渲染都调用 `Element.replaceChildren`（**Chrome 86+** 才有）→ 脚本在
+  首个渲染调用处抛 TypeError，整页卡死。/webchat 是唯一没用 replaceChildren
+  的页面，所以聊天正常——"只有某个页面好使"正是"某个 API 缺失"的指纹。
+- **解法**：新增 [public/shared/compat.js](../public/shared/compat.js)
+  （replaceChildren 的规范等价 polyfill：清空子节点 + append 多参），
+  全部 9 个页面在 `/shared/auth.js` 之前引入。静态文件 express.static 按请求
+  读盘，**无需重启主服务**，刷新页面即生效。
+- **排查指纹**：以后真机上出现"部分页面空白/无数据但聊天正常"，
+  先 `adb shell dumpsys webviewupdate` 看内核版本，再 grep 页面用到的
+  浏览器 API 对照 caniuse 的 Chrome 版本要求（页面都在
+  `public/*/index.html` + `public/shared/`，无构建步骤）。
+- **预防**：新增前端代码时避免使用 Chrome 86+ API（replaceChildren、
+  replaceAll(85)、Array.prototype.at(92)、structuredClone(98) 等）；
+  必须用时先扩 compat.js 并在注释里标注需要的内核版本。
+
 ---
 
 ## 排查速查

@@ -76,6 +76,20 @@ describe('PythonServiceProvider 基金方法', () => {
     await expect(new PythonServiceProvider().getEtfRank()).rejects.toThrow('502');
   });
 
+  it('错误体提取 detail 字段：不再把 JSON 残渣抛给调用方（502 友好文案）', async () => {
+    mockFetchJson({ detail: 'AKShare 历史行情获取失败（上游不可用）' }, 502);
+    await expect(new PythonServiceProvider().getEtfRank()).rejects.toThrow(
+      '数据服务请求失败 502：AKShare 历史行情获取失败（上游不可用）',
+    );
+
+    // 非 JSON 错误体退回原文截断
+    const fn = vi.fn(async () => new Response('upstream exploded', { status: 502 }));
+    vi.stubGlobal('fetch', fn);
+    await expect(new PythonServiceProvider().getEtfRank()).rejects.toThrow(
+      '数据服务请求失败 502：upstream exploded',
+    );
+  });
+
   it('连接失败（服务未启动）抛错并提示启动 data-service', async () => {
     vi.stubGlobal(
       'fetch',

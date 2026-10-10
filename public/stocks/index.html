@@ -287,6 +287,7 @@
     <div class="disclaimer">数据仅供参考，不构成投资建议</div>
   </main>
 
+  <script src="/shared/compat.js"></script>
   <script src="/shared/auth.js"></script>
   <script>
     'use strict';
@@ -472,6 +473,14 @@
     }
 
     /* ================= 详情视图 ================= */
+    // 历史 K 线类板块（技术指标/形态分析/资金流验货）的错误提示助手。
+    // 这两类原因最常见：① 上市时间较短、历史数据不足（MA60/750 天形态与验货
+    // 硬性需要长历史，N 字头新股必然如此）；② 东财封禁期北交所股票无日 K 降级源。
+    // 友好主文案在前，原始错误信息附后便于排查。
+    function histBlockError(prefix, err) {
+      return prefix + '：该股上市时间较短或行情源维护中，此板块需要较长历史数据'
+        + (err ? '（' + err + '）' : '');
+    }
     let currentCode = null;
     let currentName = '';
     let currentDays = 120;
@@ -574,7 +583,7 @@
       if (!patternsData && !patternsError) { card.hidden = true; return; }
       card.hidden = false;
       if (!patternsData) {
-        box.appendChild(el('div', 'block-error', '形态分析暂不可用：' + (patternsError || '未知原因')));
+        box.appendChild(el('div', 'block-error', histBlockError('形态分析暂不可用', patternsError)));
         return;
       }
       const list = patternsData.patterns || [];
@@ -665,7 +674,7 @@
       if (!verifyData && !verifyError) { card.hidden = true; return; }
       if (!verifyData) {
         card.hidden = false;
-        box.appendChild(el('div', 'block-error', '资金流验货暂不可用：' + (verifyError || '未知原因')));
+        box.appendChild(el('div', 'block-error', histBlockError('资金流验货暂不可用', verifyError)));
         return;
       }
       const signals = verifyData.signals || [];
@@ -715,7 +724,7 @@
       if (!indicatorData && !indicatorError) { card.hidden = true; return; }
       card.hidden = false;
       if (!indicatorData) {
-        box.appendChild(el('div', 'block-error', '技术指标暂不可用：' + (indicatorError || '未知原因')));
+        box.appendChild(el('div', 'block-error', histBlockError('技术指标暂不可用', indicatorError)));
         return;
       }
       const t = indicatorData.latest;
