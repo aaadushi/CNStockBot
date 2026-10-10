@@ -31,6 +31,23 @@
 
 ## 1. TypeScript / Node.js / 工具链
 
+### [2026-10-10] Quick Tunnel 隧道注册成功但访问报 Error 1033 / HTTP 530：国内网络 QUIC(UDP 7844) 不通，强制 --protocol http2 解决
+- **现象**：`cloudflared tunnel --url ...` 启动正常、也打印了
+  `Your quick Tunnel has been created!`，但任何设备访问该地址都返回
+  **Cloudflare Error 1033**（"Cloudflare is currently unable to resolve it"），
+  本机 curl 隧道地址返回 **HTTP 530**；同时本机直连 `127.0.0.1:18790/health` 200 正常
+  ——应用没问题，是隧道连接没建立。
+- **根因**：cloudflared 默认走 **QUIC（UDP 7844）** 连接 Cloudflare；国内网络环境
+  普遍对 UDP 7844 封禁/限速，cloudflared 又不总会成功回退到 TCP，表现为"隧道建了
+  但 edge 找不到 origin"。
+- **解法**：强制走 HTTP/2 over TCP 443：
+  `cloudflared tunnel --url http://127.0.0.1:18790 --protocol http2`。
+  实测同网络下同命令加 `--protocol http2` 后 15 秒内隧道可正常访问。
+- **涉及文件**：`scripts/tunnel-demo.bat` / `scripts/tunnel-demo.sh`（已内置该参数）
+- **预防**：本项目一切隧道用法默认带 `--protocol http2`；排查"隧道地址打不开"先
+  区分三段：本机 `curl 127.0.0.1:PORT/health`（应用活没活）→ 本机 curl 隧道地址
+  （530 = 隧道没连上；404/301 = 通了，404 仅因根路径 `/` 无路由）→ 外网访问。
+
 ### [2026-10-10] .bat 写入后执行错乱：行首丢字符/长行拦腰截断——LF 行尾、chcp 65001 缓冲区错位、usebackq 静默失效三雷叠加
 - **现象**：`scripts/tunnel-demo.bat` 经 `cmd /c` 执行时：纯 ASCII 行也丢行首字符
   （`echo ASCII-OK` → `'SCII-OK' 不是内部或外部命令`）；rem 行从中间被劈成两条命令；
