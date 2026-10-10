@@ -7,7 +7,7 @@
 > 看 [FEATURES.md](FEATURES.md)；踩过的坑看 [PITFALLS.md](PITFALLS.md)；
 > 数据源接口细节看 [DATA_SOURCES.md](DATA_SOURCES.md)。
 
-最后更新：2026-09-27
+最后更新：2026-10-10
 
 ---
 
@@ -376,16 +376,31 @@ App 形式在安卓手机上运行——手机上随时查行情/自选股/收�
 3. 浏览页与聊天联动：详情页"问机器人这只股票"按钮（跳转 /webchat 预填问题）
 4. 自选股分组 / 成本价录入与持仓盈亏展示
 5. P8：LLM 429 指数退避重试（用户决定暂不修，复发时做）
-6. 聊天页 LLM 回复的 Markdown 标记原样显示（2026-10-10 F7-2 真机验收发现：
-   回复中 `**加粗**` 以原始字符展示。根因是 textContent 防注入红线不解析
-   Markdown。两条修法任选：① SYSTEM_PROMPT 引导 LLM 输出纯文本（零风险、
-   治标）；② 前端写极简 `**加粗**` 解析渲染器（注意仍须防注入，只允许
-   加粗这一种语法，其余字符一律转义）。改动面：agent/loop.ts 或
-   public/webchat/index.html，小活，做之前评估 LLM 服从纯文本的稳定性）
+6. ~~聊天页 LLM 回复的 Markdown 标记原样显示~~ ✅ 2026-10-10 完成（采用方案②：
+   前端极简 `**加粗**` 解析渲染器，REQ-chat-md-bold。防注入红线不破——只允许
+   成对 `**...**` 生成 `<strong>`（内容走 textContent），其余字符一律字面文本
+   节点，不成对 `**` 原样保留，全程无 innerHTML；详见更新日志批次 34）
 
 ---
 
 ## 更新日志
+
+- 2026-10-10（批次 34）：**聊天页 LLM 回复 Markdown 加粗渲染（REQ-chat-md-bold，
+  "其他候选方向"第 6 条方案②）**。真机验收发现的 `**加粗**` 原始字符展示问题：
+  - 前端（public/webchat/index.html）：新增极简解析渲染器 `renderMdBold` +
+    `setMsgText`——只识别成对 `**...**`（内容创建 `<strong>` 且走 textContent，
+    不解析内部任何标记），其余字符一律字面文本节点（createTextNode），不成对
+    `**` 与空加粗段 `****` 按字面保留；addMsg / 回复填充 / 错误填充三处统一改走
+    setMsgText（用户气泡与收件箱推送因复用 addMsg 自然生效）。全程无 innerHTML；
+    只用 Chrome 83 可用 API（安卓壳 WebView 下限）；SYSTEM_PROMPT 与其余 8 页
+    零改动。
+  - 需求文档：[REQ-chat-md-bold](requirements/chat-md-bold-renderer.md)（含
+    明确不做项：不做斜体/链接/标题等其他语法、不引 markdown 库、不改 SYSTEM_PROMPT）。
+  - 测试：新增 tests/webchat-md-bold.test.ts 10 条（模式照 webchat-bridge.test.ts
+    读内联脚本 + 桩 document 行为断言）：成对拆分、多段加粗、不成对字面保留、
+    `****` 字面保留、XSS 尝试（img onerror / strong 段内嵌 script 标签）纯文本化、
+    null/undefined 健壮、渲染器无 innerHTML、addMsg 接线断言；42 文件 331 用例全绿。
+  - PR：#PR-TBD（合并后回填）。
 
 - 2026-10-10（批次 33）：**F7-4 消息中心页完成**（REQ-F7-4，真机验收提出当日实现）。
   收盘日报/异动提醒等推送此前只有聊天页一个出口（drain 即删、无历史、混在

@@ -31,6 +31,8 @@
       box-shadow: var(--shadow-md);
     }
     .bot.error { background: var(--up-soft); color: var(--up); }
+    /* 加粗渲染（REQ-chat-md-bold）：仅对 strong 微调，不动布局 */
+    .msg strong { font-weight: 600; }
 
     /* 欢迎建议 chip */
     .suggestions { display: flex; flex-wrap: wrap; gap: 8px; align-self: flex-start; }
@@ -108,10 +110,45 @@
     const sendBtn = document.getElementById('send');
     const logoutBtn = document.getElementById('logout-btn');
 
+    // >>> md-bold-renderer:start (REQ-chat-md-bold)
+    // 极简 Markdown 加粗渲染：只识别成对的 **...**，bold 段创建 <strong>
+    // （内容走 textContent，不解析内部任何标记）；其余字符一律按字面文本
+    // 节点插入；不成对的 ** 原样保留。全程不使用 innerHTML 拼接不可信文本。
+    // 只用到 Chrome 83 可用的 API（安卓壳 WebView 下限）。
+    function renderMdBold(text) {
+      const frag = document.createDocumentFragment();
+      const s = String(text == null ? '' : text);
+      let i = 0;
+      while (i < s.length) {
+        const open = s.indexOf('**', i);
+        if (open === -1) { frag.appendChild(document.createTextNode(s.slice(i))); break; }
+        const close = s.indexOf('**', open + 2);
+        if (close === -1) { frag.appendChild(document.createTextNode(s.slice(i))); break; }
+        if (open > i) frag.appendChild(document.createTextNode(s.slice(i, open)));
+        const inner = s.slice(open + 2, close);
+        if (inner) {
+          const strong = document.createElement('strong');
+          strong.textContent = inner;
+          frag.appendChild(strong);
+        } else {
+          frag.appendChild(document.createTextNode('****'));
+        }
+        i = close + 2;
+      }
+      return frag;
+    }
+
+    // 替换气泡文本：先清空（等价清除旧内容），再追加渲染结果。
+    function setMsgText(el, text) {
+      el.textContent = '';
+      el.appendChild(renderMdBold(text));
+    }
+    // <<< md-bold-renderer:end
+
     function addMsg(text, cls) {
       const div = document.createElement('div');
       div.className = 'msg ' + cls;
-      div.textContent = text;
+      setMsgText(div, text);
       const sg = document.getElementById('suggestions');
       if (sg && (cls === 'user')) sg.remove();
       chat.appendChild(div);
@@ -139,11 +176,11 @@
         });
         const data = await res.json();
         pending.classList.remove('thinking');
-        pending.textContent = data.reply || data.error || '（无回复）';
+        setMsgText(pending, data.reply || data.error || '（无回复）');
         if (data.error) pending.classList.add('error');
       } catch (e) {
         pending.classList.remove('thinking');
-        pending.textContent = '请求失败：' + e.message;
+        setMsgText(pending, '请求失败：' + e.message);
         pending.classList.add('error');
       } finally {
         sendBtn.disabled = false;
