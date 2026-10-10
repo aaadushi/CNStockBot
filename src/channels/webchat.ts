@@ -417,7 +417,7 @@ export class WebChatChannel implements Channel {
       }
     });
 
-    // 场内 ETF 实时行情榜（按涨跌幅降序）
+    // 场内 ETF 实时行情榜（按涨跌幅降序）；微服务响应 {source, items}（P12 起带降级源标识）
     app.get('/api/funds/etf', async (req, res) => {
       if (!this.data.getEtfRank) {
         noFundService(res);
@@ -426,7 +426,7 @@ export class WebChatChannel implements Channel {
       const parsed = Number.parseInt(String(req.query.limit ?? ''), 10);
       const limit = Number.isNaN(parsed) ? 50 : Math.min(200, Math.max(1, parsed));
       try {
-        res.json({ items: await this.data.getEtfRank(limit) });
+        res.json(await this.data.getEtfRank(limit));
       } catch (err) {
         res.status(500).json({ error: errText(err) });
       }

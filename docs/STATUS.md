@@ -111,9 +111,9 @@
 | 3 | 详情页 /stocks?code=002594 | 七块聚合 | 行情卡（价格/涨跌幅/估值/涨跌停）、公司资料、资金流、走势图、技术指标、形态、验货、AI 分析、新闻/公告/财报均有数据或明确降级提示 | 资金流走新浪两档（口径标注）；AI 分析卡需 LLM_API_KEY |
 | 4 | /market 涨跌榜 | 东财 clist→push2delay | 解封后三 Tab + 家数正确 | **封禁期空白 = 已知 P11**，登记"封禁期未验"即可 |
 | 5 | /news 快讯 | data-service | 列表有数据、60s 自刷 | 东财快讯挂→财联社降级（无 URL） |
-| 6 | /funds 基金 | data-service | 排行/搜索/净值走势/ETF Tab 有数据 | — |
+| 6 | /funds 基金 | data-service | 排行/搜索/净值走势/ETF Tab 有数据 | 东财封禁期 ETF Tab 自动降级新浪（source=sina，2026-10-10 P12 已修）；排行/搜索/净值走天天基金不受影响 |
 | 7 | /overseas 外盘 | 腾讯/新浪 | 三块（指数/中概/商品）有数据 | 失败块带 error 独立降级 |
-| 8 | /sectors 板块 | clist + AKShare | 排行/资金流/详情（成分股+走势）/个股共振有数据 | 板块日 K 限流期 502 只影响走势图 |
+| 8 | /sectors 板块 | clist + AKShare | 排行/资金流/详情（成分股+走势）/个股共振有数据 | 东财封禁期 rank/flow/cons/history 自动降级腾讯（source=tencent，2026-10-10 P12 已修）；of-stock 与 BK 代码降级期 502 是预期 |
 | 9 | /scanner 扫描 | 本地日 K 库 | 状态条显示库覆盖只数与日期；任一策略扫出名单 | 库未回填时 503 是预期 |
 | 10 | /backtest 回测 | 本地日 K 库 | 000001 任一策略出统计+净值曲线+明细 | — |
 
@@ -181,7 +181,7 @@
   或东财全挂期间前端降级提示"数据源维护中"。优先级低（封禁是临时事件），
   确诊与日志辨析细节见 [PITFALLS 2026-09-27 条目](PITFALLS.md)。
 
-### P12 东财封禁期间 /sectors 整页与 /funds ETF Tab 无数据（clist 宿主被封，无降级设计）
+### P12 ~~东财封禁期间 /sectors 整页与 /funds ETF Tab 无数据（clist 宿主被封，无降级设计）~~（已解决，见更新日志 2026-10-10 批次 30）
 - **影响**：东财对本机 IP 封禁期间，/sectors 板块页全部端点（rank/fund-flow/
   cons/of-stock，均直连东财 clist 或 push2）返回 502/500，**整页无数据**；
   /funds 页的排行/搜索/净值走天天基金不受影响，但 **ETF Tab**（AKShare ETF
@@ -193,6 +193,11 @@
 - **建议修法**：与 P11 合并考虑——引入非同 IP 降级源，或封禁期各页统一降级
   提示文案。优先级低（封禁是临时事件，且接口均返回带提示的结构化错误，
   前端有错误态可展示）。2026-09-27 S3-6 巡检登记。
+- **修复（2026-10-10）**：rank/fund-flow/cons/history 降级腾讯板块接口
+  （申万二级，source=tencent），ETF Tab 降级新浪 etf_hq_fund（source=sina），
+  降级源页面有明确提示；of-stock 不做降级（依赖 /profile，封禁期维持 502）。
+  需求文档 [REQ-P12](requirements/P12-sectors-etf-fallback.md)，细节见更新日志
+  批次 30 与 PITFALLS 2026-10-10 条目。
 
 ---
 
@@ -374,6 +379,35 @@ App 形式在安卓手机上运行——手机上随时查行情/自选股/收�
 ---
 
 ## 更新日志
+
+- 2026-10-10（批次 30）：**P12 修复——/sectors 整页与 /funds ETF Tab 引入
+  异源降级（REQ-P12）**。当日东财对本机 IP 封禁仍在持续（push2 rc:102），
+  修复后封禁期 /sectors 页"排行 + 资金流 + 成分股 + 走势图"四块恢复可用、
+  /funds ETF Tab 恢复榜单。改动：
+  - 需求文档 [docs/requirements/P12-sectors-etf-fallback.md](requirements/P12-sectors-etf-fallback.md)
+    先行，明确不做：of-stock 不降级（依赖 /profile，封禁期维持 502）、不做
+    资金流分档/家数跨源对齐、不替换东财主源、降级只在东财失败后触发；
+  - data-service/main.py 新增腾讯板块降级封装（`_tx_*`，与东财不同 IP）：
+    `getRank?board_type=hy2`（申万二级 124 个一次全量，共享 60s 缓存）托底
+    /sectors/rank 与 /sectors/fund-flow（按 zljlr 客户端降序、万元→元）、
+    `getBoardRankList` 翻页托底 /sectors/cons、`newfqkline` 托底 /sectors/history
+    （changePct 收盘环比自算）；实测踩坑记录见 PITFALLS 2026-10-10 条目
+    （hy1 幽灵空列表、pt 代码必须走 newfqkline、万/亿单位换算、
+    与 F5-5 `_TX_KLINE_URL` 重名冲突）；
+  - /funds/etf 降级新浪 etf_hq_fund 排行（翻页 num=100、至多 5 页、
+    volume÷100 份→手），响应结构由裸数组改 `{source, items}`，
+    主服务 provider/pythonService/webchat 与前端 funds 页同步适配；
+  - `SectorSource` 类型扩展 `'tencent'`；前端 /sectors sourceNote 对
+    tencent 显示"（腾讯降级源·申万二级行业，口径与东财行业不同）"，
+    /funds ETF Tab 对 sina 注脚追加"（新浪降级源）"；
+  - 单测：tests/funds.test.ts getEtfRank 新结构断言；`npm run typecheck` +
+    `npm test` 全绿（309 测试）；`py_compile` 通过；
+  - **端到端实测（封禁期真实环境）**：data-service 五个端点全部走降级源返回
+    真实数据（rank 124 板块/flow 电池主力净流入 50.4 亿/cons 14 只成分/
+    history 60 根日 K/ETF 新浪榜单 volume 口径核对一致）；生产双服务已重启
+    生效。
+  - P12 从"已知问题"移除（保留编号与修复记录）；FEATURES 第 25/34 节、
+    data-service/README 端点表同步更新。
 
 - 2026-10-10（批次 29）：**P11 修复——涨跌榜（/market）引入新浪异源第三降级源**。
   东财 IP 封禁期间 push2+push2delay 双宿主全挂时，/market 页从"完全空白"变为

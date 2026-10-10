@@ -53,14 +53,14 @@ curl -H "Authorization: Bearer $TOKEN" http://127.0.0.1:8000/news/600519?limit=3
 | `GET /trade-calendar?year=` | 交易日历（新浪，用于跳过法定节假日） |
 | `GET /funds/rank?type=&limit=` | 开放式基金排行（天天基金，按近1年收益率降序；type 白名单：全部/股票型/混合型/债券型/指数型/QDII/FOF；按类型缓存 10 分钟） |
 | `GET /funds/search?keyword=` | 基金搜索（全量代码表缓存 24h，支持名称/代码/拼音缩写） |
-| `GET /funds/etf?limit=` | 场内 ETF 实时行情榜（东财全量快照，翻页 30s+ 故超时 120s + 缓存 60s） |
+| `GET /funds/etf?limit=` | 场内 ETF 实时行情榜（东财全量快照，翻页 30s+ 故超时 120s + 缓存 60s；响应 `{source, items}`，东财封禁期自动降级新浪 etf_hq_fund，source=`sina`，volume 已归一到"手"，iopv/折价率为 null） |
 | `GET /funds/{code}?days=` | 单只基金详情 + 单位净值走势（按代码缓存 6h；须声明在 rank/search/etf 之后） |
 | `GET /market-news?limit=20` | 全市场财经快讯（东财全球快讯主源、财联社降级，缓存 90s，上限 50 条） |
 | `GET /overseas/summary` | 隔夜外盘参考信息汇总（F6-4）：美股三大指数（腾讯 usDJI/usIXIC/usINX 主源、新浪日 K 降级）、中概股与美股热门篮子（腾讯）、国际金银原油（新浪外盘期货主源、东财全球期货当月连续降级）。每块独立降级（失败块带 error 字段、其余照返），整体缓存 10 分钟；时间字段为数据源原始时间（美股为美东时间） |
-| `GET /sectors/rank?limit=` | 行业板块涨跌排行（东财 clist 直连，push2 限流自动降级 push2delay 延时镜像、响应带 source 标注；涨跌幅降序，含成交额/上涨下跌家数/领涨股，缓存 60s） |
-| `GET /sectors/fund-flow?limit=` | 行业板块资金流排行（今日主力净流入降序，五档净流入+净占比+最大净流入个股，缓存 60s） |
-| `GET /sectors/cons?name=&limit=` | 板块成分股（涨跌幅降序；name 支持板块名称或 BK 代码，未知名称 404；按板块缓存 10min） |
-| `GET /sectors/history?name=&days=` | 板块日 K 走势（AKShare stock_board_industry_hist_em，BK 代码直传；bars 结构与 /history 一致；按 code+days 缓存 10min；push2his 限流时返回结构化 502） |
+| `GET /sectors/rank?limit=` | 行业板块涨跌排行（东财 clist 直连，push2 限流自动降级 push2delay 延时镜像、再降腾讯 getRank 申万二级（source=`tencent`，东财 IP 封禁期托底）；涨跌幅降序，含成交额/上涨家数/领涨股，缓存 60s） |
+| `GET /sectors/fund-flow?limit=` | 行业板块资金流排行（今日主力净流入降序，五档净流入+净占比+最大净流入个股，缓存 60s；降级腾讯时仅主力净流入总额，分档/净占比为 null） |
+| `GET /sectors/cons?name=&limit=` | 板块成分股（涨跌幅降序；name 支持板块名称或 BK 代码，未知名称 404；按板块缓存 10min；降级走腾讯 getBoardRankList，降级期 BK 代码返回 502） |
+| `GET /sectors/history?name=&days=` | 板块日 K 走势（AKShare stock_board_industry_hist_em，BK 代码直传；bars 结构与 /history 一致；按 code+days 缓存 10min；降级走腾讯 newfqkline，降级期 BK 代码返回 502） |
 | `GET /sectors/of-stock/{code}` | 个股→板块共振：所属行业（复用 /profile）在当日板块涨跌/资金流排行中的名次；行业缺失或无同名板块返回 `matched=false` 而非报错 |
 | `POST /market-bars/update?full=` | 触发本地日 K 库更新（F5-5，后台异步）：腾讯 fqkline 主源 + baostock 兜底（双源）前复权日 K 批量落 SQLite `data/market_bars.db`（WAL，约 640-750 交易日窗口，仅沪深约 5200 只）；断点续跑 + 失败票名单 + 断线熔断重连 + 盘后数据未齐 30 分钟重试至 21:00；单飞行（进行中 409）；首次全量回填约 1.5 小时（腾讯源），日常增量约 10 分钟 |
 | `GET /market-bars/status` | 日 K 库状态：running/phase/done/total/failedCount + coverage/lastBarDate/dbSizeMb |

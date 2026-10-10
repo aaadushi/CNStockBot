@@ -65,11 +65,12 @@ describe('PythonServiceProvider 基金方法', () => {
     expect(url).toContain(`/funds/search?keyword=${encodeURIComponent('易方达')}&limit=5`);
   });
 
-  it('getEtfRank：limit 透传，非 200 抛错带状态码', async () => {
-    const fn = mockFetchJson([]);
-    await new PythonServiceProvider().getEtfRank(100);
+  it('getEtfRank：limit 透传，{source, items} 结构透传，非 200 抛错带状态码', async () => {
+    const fn = mockFetchJson({ source: 'eastmoney', items: [] });
+    const out = await new PythonServiceProvider().getEtfRank(100);
     const [url] = fn.mock.calls[0] as unknown as [string];
     expect(url).toContain('/funds/etf?limit=100');
+    expect(out).toEqual({ source: 'eastmoney', items: [] });
 
     mockFetchJson({ detail: 'bad' }, 502);
     await expect(new PythonServiceProvider().getEtfRank()).rejects.toThrow('502');

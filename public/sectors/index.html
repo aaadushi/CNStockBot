@@ -242,6 +242,8 @@
       return String(Math.round(v));
     }
     function sourceNote(source) {
+      // tencent=东财封禁期腾讯降级源（申万二级行业，口径与东财行业板块不同，P12）
+      if (source === 'tencent') return '（腾讯降级源·申万二级行业，口径与东财行业不同）';
       return source === 'eastmoney-delay' ? '（延时约 15 分钟）' : '';
     }
     function goBoard(name) { location.href = '/sectors?name=' + encodeURIComponent(name); }

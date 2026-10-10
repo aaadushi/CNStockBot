@@ -233,6 +233,13 @@ export interface EtfQuote {
   time?: string;               // 更新时间
 }
 
+/** 场内 ETF 行情榜响应（P12 起带 source：eastmoney=东财全量 / sina=新浪降级源，
+ * 降级条目 iopv/discountRate 为 null，volume 已归一到"手"） */
+export interface EtfRank {
+  source: 'eastmoney' | 'sina';
+  items: EtfQuote[];
+}
+
 // ---- 技术指标（F5-1，2026-09-16 新增；仅微服务模式提供） ----
 
 /** MA 均线族（周期不足为 null） */
@@ -337,8 +344,9 @@ export interface OverseasSummary {
 
 // ---- 板块轮动监控（F6-3，2026-09-19 新增；仅微服务模式提供） ----
 
-/** 板块数据源标注：eastmoney=东财 push2 实时；eastmoney-delay=push2delay 延时镜像（约 15 分钟） */
-export type SectorSource = 'eastmoney' | 'eastmoney-delay';
+/** 板块数据源标注：eastmoney=东财 push2 实时；eastmoney-delay=push2delay 延时镜像（约 15 分钟）；
+ * tencent=腾讯降级源（东财 IP 封禁期托底，申万二级行业口径，与东财行业板块不同，REQ-P12） */
+export type SectorSource = 'eastmoney' | 'eastmoney-delay' | 'tencent';
 
 /** 行业板块涨跌排行条目（东财行业板块，按涨跌幅降序；字段缺失为 null 而非 0） */
 export interface SectorRankItem {
@@ -667,7 +675,7 @@ export interface DataProvider {
   /** 基金搜索（名称/代码/拼音缩写）；仅微服务模式提供 */
   searchFunds?(keyword: string, limit?: number): Promise<FundSearchItem[]>;
   /** 场内 ETF 实时行情榜（按涨跌幅降序）；仅微服务模式提供 */
-  getEtfRank?(limit?: number): Promise<EtfQuote[]>;
+  getEtfRank?(limit?: number): Promise<EtfRank>;
   /** 隔夜外盘参考信息汇总（美股指数/中概股/国际商品，F6-4）；仅微服务模式提供 */
   getOverseasSummary?(): Promise<OverseasSummary>;
   /** 行业板块涨跌排行（F6-3）；仅微服务模式提供 */

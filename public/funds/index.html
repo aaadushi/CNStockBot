@@ -319,6 +319,7 @@
         renderFundList(cache[key], activeTab === 'etf');
         $('list-note').textContent = activeTab === 'etf'
           ? '场内 ETF 按今日涨跌幅降序，显示前 ' + cache[key].length + ' 只'
+            + (data.source === 'sina' ? '（新浪降级源）' : '')
           : '按近1年收益率降序，显示前 ' + cache[key].length + ' 只（天天基金数据）';
       } catch (e) {
         $('fund-list').replaceChildren(el('div', 'block-error', '加载失败：' + e.message));
