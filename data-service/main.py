@@ -1229,22 +1229,84 @@ async def fund_search(keyword: str = Query(min_length=1), limit: int = Query(def
 # --- 场内 ETF 实时行情 ---
 # ak.fund_etf_spot_em() 全量翻页约 16 页、耗时 30s+（2026-09-15 实测），
 # 超时放宽到 120s + 结果缓存 60s（与涨跌榜同级，防刷新触发上游限流）。
-_etf_cache: dict = {"ts": 0.0, "items": []}
+# 降级链（P12）：东财 AKShare → 新浪行情中心 etf_hq_fund 排行（东财 IP 封禁期托底，
+# 2026-10-10 实测；单页上限 100 行，num>100 截断，需翻页；volume 单位"份"，÷100 归一到"手"）。
+_etf_cache: dict = {"ts": 0.0, "data": None}
 _ETF_TTL = 60
 _ETF_TIMEOUT = 120
+_SINA_NODE_URL = "http://vip.stock.finance.sina.com.cn/quotes_service/api/json_v2.php/Market_Center.getHQNodeData"
+_SINA_ETF_MAX_PAGES = 5  # 新浪 ETF 翻页保险上限（100/页，5 页=500 只，覆盖常规 limit）
+
+
+def _sina_etf_sync(limit: int) -> list:
+    """新浪场内 ETF 行情（涨跌幅降序），按 limit 翻页拉取。"""
+    items: list = []
+    for page in range(1, _SINA_ETF_MAX_PAGES + 1):
+        r = requests.get(
+            _SINA_NODE_URL,
+            params={
+                "page": page,
+                "num": 100,
+                "sort": "changepercent",
+                "asc": 0,
+                "node": "etf_hq_fund",
+                "symbol": "",
+                "_s_r_a": "page",
+            },
+            timeout=10,
+        )
+        r.raise_for_status()
+        batch = r.json()
+        if not isinstance(batch, list) or not batch:
+            break
+        items.extend(batch)
+        if len(batch) < 100 or len(items) >= limit:
+            break
+    if not items:
+        raise ValueError("新浪 ETF 行情返回空数据")
+    return items[:limit]
+
+
+def _sina_etf_item(row: dict) -> dict:
+    """新浪 ETF 行 -> EtfQuote 结构（与东财条目对齐）。
+    IOPV/折价率新浪无 -> None；volume 单位"份" -> ÷100 归一到"手"（东财口径）。"""
+    vol = _f_opt(row.get("volume"))
+    return {
+        "code": str(row.get("code") or ""),
+        "name": str(row.get("name") or ""),
+        "price": _f_opt(row.get("trade")),
+        "changePct": _f_opt(row.get("changepercent")),
+        "change": _f_opt(row.get("pricechange")),
+        "volume": None if vol is None else vol / 100,
+        "amount": _f_opt(row.get("amount")),  # 成交额（元）
+        "turnover": _f_opt(row.get("turnoverratio")),
+        "iopv": None,
+        "discountRate": None,
+        "time": str(row.get("ticktime") or ""),
+    }
 
 
 @app.get("/funds/etf")
 async def fund_etf(limit: int = Query(default=50, ge=1, le=500)):
-    """场内 ETF 实时行情榜（东财全量快照），按涨跌幅降序，返回 EtfQuote[]。"""
+    """场内 ETF 实时行情榜，按涨跌幅降序。返回 {source, items: EtfQuote[]}。
+    source=eastmoney 东财全量快照 / sina 新浪降级源（东财 IP 封禁期）。"""
     now = time.time()
-    if now - _etf_cache["ts"] > _ETF_TTL:
+    if _etf_cache["data"] is None or now - _etf_cache["ts"] > _ETF_TTL:
         try:
             df = await run_ak(ak.fund_etf_spot_em, timeout=_ETF_TIMEOUT)
         except HTTPException:
             raise
         except Exception as e:
-            raise HTTPException(status_code=502, detail=f"AKShare ETF 行情获取失败: {e}")
+            logger.warning("东财 ETF 行情失败，降级新浪: %s", e)
+            try:
+                rows = await run_ak(_sina_etf_sync, limit)
+            except HTTPException:
+                raise
+            except Exception as e2:
+                raise HTTPException(status_code=502, detail=f"ETF 行情获取失败（东财/新浪均不可用）: {e2}")
+            _etf_cache["data"] = {"source": "sina", "items": [_sina_etf_item(r) for r in rows]}
+            _etf_cache["ts"] = now
+            return _etf_cache["data"]
         items = []
         for _, row in df.iterrows():
             items.append({
@@ -1262,9 +1324,9 @@ async def fund_etf(limit: int = Query(default=50, ge=1, le=500)):
             })
         # 涨跌幅降序，缺失值（None）排最后
         items.sort(key=lambda it: (it["changePct"] is None, -(it["changePct"] or 0)))
+        _etf_cache["data"] = {"source": "eastmoney", "items": items}
         _etf_cache["ts"] = now
-        _etf_cache["items"] = items
-    return _etf_cache["items"][:limit]
+    return _etf_cache["data"]
 
 
 # --- 单只基金详情 + 单位净值走势 ---
@@ -1619,6 +1681,227 @@ def _f_int(v):
     return None if f is None else int(f)
 
 
+# --- 腾讯板块降级源（P12）：东财 clist/push2his 全挂（IP 封禁）时的非同 IP 异源托底 ---
+# 实测（2026-10-10，详见 REQ-P12 / PITFALLS 条目）：
+# - getRank?board_type=hy2 申万二级板块全量（124 个，count=200 一次拉全）；
+#   board_type=hy1 实测首次成功后持续返回空列表（code=0 不报错），hy/hy2 稳定，故选 hy2；
+#   请求必须带 Referer: https://stockapp.finance.qq.com/；
+# - getBoardRankList?board_code=pt… 板块成分股（count=100/页翻页，code 带 sh/sz 前缀）；
+# - newfqkline/get?param=pt…,day,,,N,qfq 板块日 K（[date,open,close,high,low,volume]，volume 单位为手；
+#   旧 fqkline 端点对 pt 板块代码只回 1 根，不可用，见 _TX_BOARD_KLINE_URL 注释）。
+# 单位口径（与东财不同，映射时必须换算）：zljlr/turnover=万元，zsz/ltsz=亿元，
+# zdf/zd/hsl/zf=原生数值；zgb="上涨家数/总家数"（无平盘拆分，downCount 降级置 None）。
+_TX_HEADERS = {
+    "Referer": "https://stockapp.finance.qq.com/",
+    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
+}
+_TX_RANK_URL = "https://proxy.finance.qq.com/cgi/cgi-bin/rank/pt/getRank"
+_TX_CONS_URL = "https://proxy.finance.qq.com/cgi/cgi-bin/rank/hs/getBoardRankList"
+# 板块日 K 必须走 newfqkline 端点：web.ifzq.gtimg.cn 的 fqkline 对 pt 板块代码只回 1 根
+# （2026-10-10 实测），newfqkline 正常返回全量（已测 320 根）。
+# 注意与 F5-5 本地日 K 库的 _TX_KLINE_URL（个股 fqkline 端点）区分，两者端点不同。
+_TX_BOARD_KLINE_URL = "https://proxy.finance.qq.com/ifzqgtimg/appstock/app/newfqkline/get"
+_TX_TIMEOUT = 10
+_TX_CONS_MAX_PAGES = 10  # 成分股翻页保险上限（最大板块 500+ 只，100/页 5 页可覆盖）
+
+_tx_board_cache: dict = {"ts": 0.0, "rows": None}
+_TX_BOARD_TTL = 60
+
+
+def _tx_wan(v):
+    """腾讯万元字段 -> 元（None/'-' -> None）。"""
+    f = _f_opt(v)
+    return None if f is None else f * 1e4
+
+
+def _tx_yi(v):
+    """腾讯亿元字段 -> 元（None/'-' -> None）。"""
+    f = _f_opt(v)
+    return None if f is None else f * 1e8
+
+
+def _tx_stripped(code: str) -> str | None:
+    """腾讯代码剥 sh/sz/bj 前缀；空值返回 None。"""
+    c = re.sub(r"^(sh|sz|bj)", "", str(code or ""))
+    return c or None
+
+
+def _tx_board_rank_sync() -> list:
+    """腾讯申万二级板块排行全量（涨跌幅降序），code 为 pt0180xxxx。空结果视为故障抛错。"""
+    r = requests.get(
+        _TX_RANK_URL,
+        params={
+            "board_type": "hy2",
+            "sort_type": "PriceRatio",
+            "direct": "down",
+            "offset": 0,
+            "count": 200,
+        },
+        headers=_TX_HEADERS,
+        timeout=_TX_TIMEOUT,
+    )
+    r.raise_for_status()
+    j = r.json()
+    if j.get("code") != 0:
+        raise ValueError(f"腾讯板块排行返回错误: {j.get('msg')}")
+    rows = (j.get("data") or {}).get("rank_list") or []
+    if not rows:
+        # 腾讯对未知/被封参数返回 code=0 空列表（hy1 实测如此），空即不可用
+        raise ValueError("腾讯板块排行返回空数据")
+    return rows
+
+
+async def _load_tx_board_rank() -> list:
+    """腾讯板块排行全量，进程内缓存 60s（与东财排行缓存同级，降级模式下供
+    rank / fund-flow / 名称→代码解析共用，保证同源同快照）。"""
+    now = time.time()
+    if _tx_board_cache["rows"] is None or now - _tx_board_cache["ts"] > _TX_BOARD_TTL:
+        _tx_board_cache["rows"] = await run_ak(_tx_board_rank_sync)
+        _tx_board_cache["ts"] = now
+    return _tx_board_cache["rows"]
+
+
+def _tx_rank_item(row: dict, idx: int) -> dict:
+    """腾讯板块行 -> SectorRankItem 结构（与 _sector_rank_item 对齐）。"""
+    up = total = None
+    m = re.match(r"^(\d+)/(\d+)$", str(row.get("zgb") or ""))
+    if m:
+        up, total = int(m.group(1)), int(m.group(2))
+    lead = row.get("lzg") or {}
+    return {
+        "rank": idx + 1,  # 按涨跌幅降序的 1 起始名次
+        "code": str(row.get("code") or ""),
+        "name": str(row.get("name") or ""),
+        "price": _f_opt(row.get("zxj")),
+        "changePct": _f_opt(row.get("zdf")),
+        "change": _f_opt(row.get("zd")),
+        "amount": _tx_wan(row.get("turnover")),       # 成交额：万元 -> 元
+        "turnover": _f_opt(row.get("hsl")),
+        "totalMarketCap": _tx_yi(row.get("zsz")),     # 总市值：亿元 -> 元
+        "upCount": up,                                 # zgb 上涨家数（无平盘拆分）
+        "downCount": None,                             # 腾讯口径无平盘拆分，置 None（REQ-P12 口径差）
+        "leadStock": str(lead.get("name") or "") or None,
+        "leadStockCode": _tx_stripped(lead.get("code")),
+        "leadStockChangePct": _f_opt(lead.get("zdf")),
+    }
+
+
+def _tx_ff_item(row: dict, idx: int) -> dict:
+    """腾讯板块行 -> SectorFundFlowItem 结构（与 _sector_ff_item 对齐）。
+    腾讯只有主力净流入总额：分档字段与净占比置 None（前端已容错）。"""
+    return {
+        "rank": idx + 1,  # 按主力净流入降序的 1 起始名次
+        "code": str(row.get("code") or ""),
+        "name": str(row.get("name") or ""),
+        "price": _f_opt(row.get("zxj")),
+        "changePct": _f_opt(row.get("zdf")),
+        "mainNetInflow": _tx_wan(row.get("zljlr")),   # 主力净流入：万元 -> 元
+        "mainNetInflowPct": None,
+        "superLargeNetInflow": None,
+        "superLargeNetInflowPct": None,
+        "largeNetInflow": None,
+        "largeNetInflowPct": None,
+        "mediumNetInflow": None,
+        "mediumNetInflowPct": None,
+        "smallNetInflow": None,
+        "smallNetInflowPct": None,
+        "topStock": None,  # 腾讯无"主力净流入最大个股"字段
+        "topStockCode": None,
+    }
+
+
+def _tx_board_cons_sync(code: str) -> list:
+    """腾讯板块成分股全量（涨跌幅降序），code 带 sh/sz/bj 前缀。"""
+    items: list = []
+    offset = 0
+    for _ in range(_TX_CONS_MAX_PAGES):
+        r = requests.get(
+            _TX_CONS_URL,
+            params={
+                "board_code": code,
+                "sort_type": "PriceRatio",
+                "direct": "down",
+                "offset": offset,
+                "count": 100,
+            },
+            headers=_TX_HEADERS,
+            timeout=_TX_TIMEOUT,
+        )
+        r.raise_for_status()
+        j = r.json()
+        if j.get("code") != 0:
+            raise ValueError(f"腾讯板块成分股返回错误: {j.get('msg')}")
+        data = j.get("data") or {}
+        batch = data.get("rank_list") or []
+        if not batch:
+            break
+        items.extend(batch)
+        total = int(data.get("total") or 0)
+        if len(items) >= total:
+            break
+        offset += len(batch)
+    if not items:
+        raise ValueError("腾讯板块成分股返回空数据")
+    return items
+
+
+def _tx_cons_item(row: dict) -> dict:
+    """腾讯成分股行 -> SectorConsItem 结构（与 _sector_cons_item 对齐）。
+    volume 单位实测为"手"（与东财 f5 一致）；pb 腾讯无此字段置 None。"""
+    return {
+        "code": _tx_stripped(row.get("code")) or "",
+        "name": str(row.get("name") or ""),
+        "price": _f_opt(row.get("zxj")),
+        "changePct": _f_opt(row.get("zdf")),
+        "change": _f_opt(row.get("zd")),
+        "volume": _f_opt(row.get("volume")),          # 成交量（手）
+        "amount": _tx_wan(row.get("turnover")),       # 成交额：万元 -> 元
+        "amplitude": _f_opt(row.get("zf")),
+        "turnover": _f_opt(row.get("hsl")),
+        "peDynamic": _f_opt(row.get("pe_ttm")),
+        "pb": None,
+    }
+
+
+def _tx_board_hist_sync(code: str, count: int) -> list:
+    """腾讯板块日 K（[date,open,close,high,low,volume] 数组，volume 单位手）。
+    必须用 newfqkline 端点：web.ifzq.gtimg.cn 的 fqkline 对 pt 板块代码只回 1 根
+    （2026-10-10 实测），newfqkline 正常返回全量（已测 320 根）。"""
+    r = requests.get(
+        _TX_BOARD_KLINE_URL,
+        params={"param": f"{code},day,,,{count},qfq"},
+        headers=_TX_HEADERS,
+        timeout=_TX_TIMEOUT,
+    )
+    r.raise_for_status()
+    j = r.json()
+    block = (j.get("data") or {}).get(code) or {}
+    return block.get("day") or block.get("qfqday") or []
+
+
+def _tx_hist_items(raw: list, days: int) -> list:
+    """腾讯板块日 K 原始数组 -> HistoryBar 结构（与 _hist_items 输出对齐）。
+    无涨跌幅/成交额/换手率字段：changePct 收盘环比自算（窗口首条 0.0，同新浪源口径）。"""
+    rows = []
+    for bar in raw[-days:]:
+        if not isinstance(bar, list) or len(bar) < 6:
+            continue
+        rows.append({
+            "date": str(bar[0]),
+            "open": _num(bar[1]),
+            "close": _num(bar[2]),
+            "high": _num(bar[3]),
+            "low": _num(bar[4]),
+            "volume": _num(bar[5]),
+        })
+    prev = None
+    for item in rows:
+        item["changePct"] = 0.0 if not prev else round((item["close"] - prev) / prev * 100, 2)
+        prev = item["close"]
+    return rows
+
+
+
 # --- 行业板块涨跌排行（缓存 60s；/sectors/rank 与名称→代码解析、of-stock 共振共用） ---
 # 参数与 AKShare stock_board_industry_name_em 一致（fs=m:90 t:2 f:!50，按 f3 涨跌幅降序），
 # 字段在 AKShare 基础上多取 f6 成交额 / f140 领涨股代码（AKShare 封装丢弃了这两列）。
@@ -1649,27 +1932,39 @@ def _sector_rank_item(row: dict, idx: int) -> dict:
 
 
 async def _load_sector_rank() -> dict:
-    """行业板块涨跌排行全量表（涨跌幅降序），进程内缓存 60s。返回 {source, items}。"""
+    """行业板块涨跌排行全量表（涨跌幅降序），进程内缓存 60s。返回 {source, items}。
+    降级链：东财 clist → 腾讯 getRank（申万二级，东财 IP 封禁期托底，REQ-P12）。"""
     now = time.time()
     if _sector_rank_cache["data"] is None or now - _sector_rank_cache["ts"] > _SECTOR_RANK_TTL:
-        rows, host = await run_ak(
-            _clist_paginated,
-            {
-                "pz": "100",
-                "po": "1",
-                "np": "1",
-                "fltt": "2",
-                "invt": "2",
-                "fid": "f3",
-                "fs": "m:90 t:2 f:!50",
-                "ut": "bd1d9ddb04089700cf9c27f6f7426281",
-                "fields": _SECTOR_RANK_FIELDS,
-            },
-        )
-        _sector_rank_cache["data"] = {
-            "source": _clist_source(host),
-            "items": [_sector_rank_item(r, i) for i, r in enumerate(rows)],
-        }
+        try:
+            rows, host = await run_ak(
+                _clist_paginated,
+                {
+                    "pz": "100",
+                    "po": "1",
+                    "np": "1",
+                    "fltt": "2",
+                    "invt": "2",
+                    "fid": "f3",
+                    "fs": "m:90 t:2 f:!50",
+                    "ut": "bd1d9ddb04089700cf9c27f6f7426281",
+                    "fields": _SECTOR_RANK_FIELDS,
+                },
+            )
+            data = {
+                "source": _clist_source(host),
+                "items": [_sector_rank_item(r, i) for i, r in enumerate(rows)],
+            }
+        except HTTPException:
+            raise
+        except Exception as e:
+            logger.warning("东财板块排行失败，降级腾讯: %s", e)
+            tx_rows = await _load_tx_board_rank()
+            data = {
+                "source": "tencent",
+                "items": [_tx_rank_item(r, i) for i, r in enumerate(tx_rows)],
+            }
+        _sector_rank_cache["data"] = data
         _sector_rank_cache["ts"] = now
     return _sector_rank_cache["data"]
 
@@ -1720,28 +2015,45 @@ def _sector_ff_item(row: dict, idx: int) -> dict:
 
 
 async def _load_sector_fund_flow() -> dict:
-    """行业板块今日资金流排行（主力净流入降序），进程内缓存 60s。返回 {source, items}。"""
+    """行业板块今日资金流排行（主力净流入降序），进程内缓存 60s。返回 {source, items}。
+    降级链：东财 clist → 腾讯 getRank（按 zljlr 客户端降序，REQ-P12）。"""
     now = time.time()
     if _sector_ff_cache["data"] is None or now - _sector_ff_cache["ts"] > _SECTOR_FF_TTL:
-        rows, host = await run_ak(
-            _clist_paginated,
-            {
-                "pz": "100",
-                "po": "1",
-                "np": "1",
-                "fltt": "2",
-                "invt": "2",
-                "fid0": "f62",
-                "stat": "1",
-                "fs": "m:90 t:2",
-                "ut": "b2884a393a59ad64002292a3e90d46a5",
-                "fields": _SECTOR_FF_FIELDS,
-            },
-        )
-        _sector_ff_cache["data"] = {
-            "source": _clist_source(host),
-            "items": [_sector_ff_item(r, i) for i, r in enumerate(rows)],
-        }
+        try:
+            rows, host = await run_ak(
+                _clist_paginated,
+                {
+                    "pz": "100",
+                    "po": "1",
+                    "np": "1",
+                    "fltt": "2",
+                    "invt": "2",
+                    "fid0": "f62",
+                    "stat": "1",
+                    "fs": "m:90 t:2",
+                    "ut": "b2884a393a59ad64002292a3e90d46a5",
+                    "fields": _SECTOR_FF_FIELDS,
+                },
+            )
+            data = {
+                "source": _clist_source(host),
+                "items": [_sector_ff_item(r, i) for i, r in enumerate(rows)],
+            }
+        except HTTPException:
+            raise
+        except Exception as e:
+            logger.warning("东财板块资金流失败，降级腾讯: %s", e)
+            # 腾讯 getRank 返回序是涨跌幅序，资金流必须按 zljlr 数值重新降序
+            tx_rows = sorted(
+                await _load_tx_board_rank(),
+                key=lambda r: _num(r.get("zljlr")),
+                reverse=True,
+            )
+            data = {
+                "source": "tencent",
+                "items": [_tx_ff_item(r, i) for i, r in enumerate(tx_rows)],
+            }
+        _sector_ff_cache["data"] = data
         _sector_ff_cache["ts"] = now
     return _sector_ff_cache["data"]
 
@@ -1817,7 +2129,9 @@ def _sector_cons_item(row: dict) -> dict:
 @app.get("/sectors/cons")
 async def sector_cons(name: str = Query(min_length=1), limit: int = Query(default=50, ge=1, le=500)):
     """板块成分股（涨跌幅降序）。name 支持板块名称或 BK 代码。
-    返回 {code, name, source, items: SectorConsItem[]}，按板块缓存 10min。"""
+    返回 {code, name, source, items: SectorConsItem[]}，按板块缓存 10min。
+    降级链：东财 clist → 腾讯 getBoardRankList（pt 代码时，REQ-P12）；
+    降级期传 BK 代码（无法映射腾讯板块）返回 502 结构化错误。"""
     code, board_name = await _resolve_board(name)
     hit = _sector_cons_cache.get(code)
     if hit is None or time.time() - hit["ts"] > _SECTOR_CONS_TTL:
@@ -1836,19 +2150,29 @@ async def sector_cons(name: str = Query(min_length=1), limit: int = Query(defaul
                     "fields": _SECTOR_CONS_FIELDS,
                 },
             )
-        except HTTPException:
-            raise
-        except Exception as e:
-            raise HTTPException(status_code=502, detail=f"板块成分股获取失败: {e}")
-        hit = {
-            "ts": time.time(),
-            "data": {
+            data = {
                 "code": code,
                 "name": board_name,
                 "source": _clist_source(host),
                 "items": [_sector_cons_item(r) for r in rows],
-            },
-        }
+            }
+        except HTTPException:
+            raise
+        except Exception as e:
+            if not str(code).startswith("pt"):
+                raise HTTPException(
+                    status_code=502,
+                    detail=f"板块成分股获取失败（东财不可用且 BK 代码无法映射腾讯板块）: {e}",
+                )
+            logger.warning("东财板块成分股失败，降级腾讯: board=%s err=%s", code, e)
+            tx_rows = await run_ak(_tx_board_cons_sync, code)
+            data = {
+                "code": code,
+                "name": board_name,
+                "source": "tencent",
+                "items": [_tx_cons_item(r) for r in tx_rows],
+            }
+        hit = {"ts": time.time(), "data": data}
         _sector_cons_cache[code] = hit
     d = hit["data"]
     return {"code": d["code"], "name": d["name"], "source": d["source"], "items": d["items"][:limit]}
@@ -1863,41 +2187,56 @@ _SECTOR_HIST_TTL = 10 * 60
 async def sector_history(name: str = Query(min_length=1), days: int = Query(default=120, ge=1, le=500)):
     """板块日 K 走势（日期升序，尾部 days 条）。name 支持板块名称或 BK 代码。
     返回 {code, name, source, bars: HistoryBar[]}（bars 结构与 /history 一致）。
-    AKShare stock_board_industry_hist_em 支持直传 BK 代码（跳过其内部名称解析）。"""
+    AKShare stock_board_industry_hist_em 支持直传 BK 代码（跳过其内部名称解析）。
+    降级链：东财 push2his → 腾讯 fqkline（pt 代码时，REQ-P12）；
+    降级期传 BK 代码返回 502 结构化错误。"""
     code, board_name = await _resolve_board(name)
     key = f"{code}:{days}"
     hit = _sector_hist_cache.get(key)
     if hit is None or time.time() - hit["ts"] > _SECTOR_HIST_TTL:
-        end = datetime.now().strftime("%Y%m%d")
-        start = (datetime.now() - timedelta(days=days * 2)).strftime("%Y%m%d")
         try:
-            df = await run_ak(
-                ak.stock_board_industry_hist_em,
-                symbol=code,
-                start_date=start,
-                end_date=end,
-                period="日k",
-                adjust="",
+            end = datetime.now().strftime("%Y%m%d")
+            start = (datetime.now() - timedelta(days=days * 2)).strftime("%Y%m%d")
+            try:
+                df = await run_ak(
+                    ak.stock_board_industry_hist_em,
+                    symbol=code,
+                    start_date=start,
+                    end_date=end,
+                    period="日k",
+                    adjust="",
+                )
+            except HTTPException:
+                raise
+            except Exception as e:
+                raise ValueError(e)
+            # 列名与个股 /history 东财源一致（日期/开盘/收盘/最高/最低/成交量/涨跌幅/成交额/换手率），
+            # 直接复用同一套归一化
+            bars = _hist_items(
+                df,
+                days,
+                {"date": "日期", "open": "开盘", "close": "收盘",
+                 "high": "最高", "low": "最低", "volume": "成交量", "changePct": "涨跌幅",
+                 "amount": "成交额", "turnover": "换手率"},
             )
+            if not bars:
+                raise ValueError(f"板块历史行情为空: {board_name}")
+            data = {"code": code, "name": board_name, "source": "eastmoney", "bars": bars}
         except HTTPException:
             raise
         except Exception as e:
-            raise HTTPException(status_code=502, detail=f"板块历史行情获取失败: {e}")
-        # 列名与个股 /history 东财源一致（日期/开盘/收盘/最高/最低/成交量/涨跌幅/成交额/换手率），
-        # 直接复用同一套归一化
-        bars = _hist_items(
-            df,
-            days,
-            {"date": "日期", "open": "开盘", "close": "收盘",
-             "high": "最高", "low": "最低", "volume": "成交量", "changePct": "涨跌幅",
-             "amount": "成交额", "turnover": "换手率"},
-        )
-        if not bars:
-            raise HTTPException(status_code=502, detail=f"板块历史行情为空: {board_name}")
-        hit = {
-            "ts": time.time(),
-            "data": {"code": code, "name": board_name, "source": "eastmoney", "bars": bars},
-        }
+            if not str(code).startswith("pt"):
+                raise HTTPException(
+                    status_code=502,
+                    detail=f"板块历史行情获取失败（东财不可用且 BK 代码无法映射腾讯板块）: {e}",
+                )
+            logger.warning("东财板块历史失败，降级腾讯: board=%s err=%s", code, e)
+            raw = await run_ak(_tx_board_hist_sync, code, min(days * 2, 800))
+            bars = _tx_hist_items(raw, days)
+            if not bars:
+                raise HTTPException(status_code=502, detail=f"板块历史行情为空: {board_name}")
+            data = {"code": code, "name": board_name, "source": "tencent", "bars": bars}
+        hit = {"ts": time.time(), "data": data}
         _sector_hist_cache[key] = hit
     return hit["data"]
 

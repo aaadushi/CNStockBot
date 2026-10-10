@@ -4,7 +4,7 @@
  */
 import { config } from '../config.js';
 import { EastmoneyProvider } from './eastmoney.js';
-import type { Announcement, BacktestOptions, BacktestResult, CompanyProfile, DataProvider, DividendRecord, EtfQuote, FinancialReport, FlowVerifyReport, FundFlow, FundInfo, FundRankItem, FundSearchItem, HistoryBar, Intraday, MarketBarsStatus, MarketNewsItem, NewsItem, NewsSort, OverseasSummary, PatternReport, Quote, ScanResult, ScanStrategyMeta, SectorCons, SectorFundFlow, SectorHistory, SectorRank, StockSectorInfo, TechnicalIndicators } from './provider.js';
+import type { Announcement, BacktestOptions, BacktestResult, CompanyProfile, DataProvider, DividendRecord, EtfRank, FinancialReport, FlowVerifyReport, FundFlow, FundInfo, FundRankItem, FundSearchItem, HistoryBar, Intraday, MarketBarsStatus, MarketNewsItem, NewsItem, NewsSort, OverseasSummary, PatternReport, Quote, ScanResult, ScanStrategyMeta, SectorCons, SectorFundFlow, SectorHistory, SectorRank, StockSectorInfo, TechnicalIndicators } from './provider.js';
 
 /** 微服务显式超时：AKShare 爬网页较慢，放宽到 60s；防上游挂起拖死调度链（审计 A-301/A-506） */
 const FETCH_TIMEOUT_MS = 60_000;
@@ -133,8 +133,8 @@ export class PythonServiceProvider implements DataProvider {
     );
   }
 
-  async getEtfRank(limit = 50): Promise<EtfQuote[]> {
-    return this.get<EtfQuote[]>(`/funds/etf?limit=${limit}`);
+  async getEtfRank(limit = 50): Promise<EtfRank> {
+    return this.get<EtfRank>(`/funds/etf?limit=${limit}`);
   }
 
   /** 隔夜外盘参考信息汇总（F6-4）；微服务端点整体缓存 10 分钟。

@@ -151,6 +151,38 @@
 - **预防**：给涨跌榜加数据源时，先 curl 实测候选接口再写代码；腾讯系接口变动频繁
   （2026-10-10 实测两个排行接口均废），不要把"腾讯有排行接口"当既定事实写进注释。
 
+### [2026-10-10] 腾讯板块接口做 P12 降级源的三个坑：hy1 空列表不报错、pt 板块代码必须走 newfqkline、字段单位全是万/亿
+- **背景**：P12 修法为 /sectors 整页 + /funds ETF Tab 引入异源降级。板块侧实测
+  腾讯三个接口可用（`proxy.finance.qq.com` 与东财不同 IP）：
+  `cgi/cgi-bin/rank/pt/getRank`（板块排行）、`cgi/cgi-bin/rank/hs/getBoardRankList`
+  （成分股）、`ifzqgtimg/appstock/app/newfqkline/get`（板块日 K）；ETF 侧用新浪
+  `Market_Center.getHQNodeData` node=`etf_hq_fund`（同 P11 新浪行情中心体系）。
+- **关键点 1（hy1 幽灵空列表）**：`getRank?board_type=hy1` 首次请求正常返回数据，
+  之后**持续返回 `code:0` + 空 rank_list**（不报错，与"参数错误"的显式报错不同）；
+  `hy`（31 个申万一级）与 `hy2`（124 个申万二级）稳定。选型 hy2，且**空列表必须当
+  故障处理**（`if not rows: raise`），不能当"今日无数据"透传。请求必须带
+  `Referer: https://stockapp.finance.qq.com/`。
+- **关键点 2（pt 板块代码的 K 线端点陷阱）**：`web.ifzq.gtimg.cn` 的 `fqkline`
+  对 pt 板块代码**只回 1 根 K 线**（传 count=320 也回 1 根，不报错）——个股代码
+  正常（F5-5 本地日 K 库一直在用）。板块日 K 必须走
+  `proxy.finance.qq.com/ifzqgtimg/appstock/app/newfqkline/get`，同一 param 格式
+  正常返回全量。注意这两个端点与 F5-5 个股端点**不是同一个 URL**，常量命名
+  要区分（`_TX_BOARD_KLINE_URL` vs `_TX_KLINE_URL`，重名会被后定义覆盖且
+  静默生效——本次踩了一次，靠"为什么只回 1 根"的实测发现）。
+- **关键点 3（单位全是万/亿，且与东财口径不同）**：腾讯 zljlr（主力净流入）/
+  turnover（成交额）单位是**万元**、zsz/ltsz 是**亿元**、zdf/zd/hsl/zf 原生数值；
+  cons 的 volume 实测为**手**（与东财 f5 一致，无需换算）；zgb 是"上涨家数/总家数"
+  **无平盘拆分**（东财有涨/跌两个数）。新浪 ETF 的 volume 单位是**份**
+  （÷100 归一到东财的"手"，用成交额/（价×换手）交叉验证过）。
+  降级映射不换算 = 数字差 4 个数量级，必须按 REQ-P12 的换算表来。
+- **关键点 4（资金流排序）**：`getRank` 无资金流 sort_type（传了显式报"参数错误"），
+  返回顺序是涨跌幅序——降级 fund-flow 必须客户端按 zljlr 数值重新降序，
+  不得直接用返回顺序。
+- **涉及文件**：`data-service/main.py`（腾讯板块降级节 + `/funds/etf` 新浪降级）
+- **预防**：给 /sectors 相关端点加数据源时，先 curl 实测三个接口的稳定性
+  （各打 3+ 次、间隔 3s，观察是否有"首成后空列表"型幽灵故障）；任何"返回正常
+  结构但数据为空"的响应都要当故障处理，不能透传。
+
 ### [2026-09-27] 东财 IP 封禁升级为连接级（push2+push2delay 同挂）；"降级腾讯行情: fetch failed" 是迷惑性日志
 - **现象**：日志刷屏三种报错——
   `history 东财源失败，降级新浪: ('Connection aborted.', RemoteDisconnected('Remote end closed connection without response'))`、
@@ -173,7 +205,8 @@
   均自行恢复）。~~涨跌榜缺口若要补需引入非同 IP 的第三降级源，已登记 STATUS P11，
   排期靠后。~~ **已于 2026-10-10 修复（P11 收官）**：第三降级源为新浪排行接口
   （见下条 2026-10-10 条目与 `src/data/sinaMovers.ts`）；P12（/sectors、/funds ETF）
-  同根因但不同页面，仍登记未修。
+  同根因但不同页面，~~仍登记未修~~ 已于 2026-10-10 修复（P12 收官）：腾讯板块接口 +
+  新浪 ETF 接口降级（见下下条 2026-10-10 条目与 REQ-P12）。
 - **涉及文件**：`src/data/index.ts:24`、`src/data/eastmoney.ts:277`、`data-service/main.py`
 - **预防**：看到 fetch failed 刷屏时，先 curl 分别实测各源（push2 / push2delay /
   qt.gtimg.cn / sina）再归因；`/market` 页面空白而其他页面正常 = 东财双宿主全挂，

@@ -517,7 +517,12 @@
   支持名称/代码/拼音缩写打分排序，复用股票搜索模式）；
   `/funds/{code}?days=`（`fund_open_fund_info_em` 单位净值走势，日期升序，按代码缓存 6h，
   名称/类型从全量代码表解析）；`/funds/etf?limit=`（`fund_etf_spot_em` 场内 ETF 全量
-  实时快照，全量翻页 30s+ 故 run_ak 超时放宽 120s + 结果缓存 60s）。
+  实时快照，全量翻页 30s+ 故 run_ak 超时放宽 120s + 结果缓存 60s；**响应结构
+  `{source, items}`**，source=eastmoney/sina）。
+  **东财封禁期降级（P12，2026-10-10）**：东财失败自动降级新浪行情中心
+  `etf_hq_fund` 排行（单页上限 100 行需翻页，至多 5 页），source=`sina`，
+  volume÷100（新浪单位"份"→"手"），iopv/折价率置 null，前端标注"新浪降级源"。
+  细节见 [REQ-P12](requirements/P12-sectors-etf-fallback.md)。
   **FastAPI 路由顺序注意**：`/funds/{code}` 必须声明在 rank/search/etf 之后，否则被当 code 匹配。
   主服务侧 `DataProvider` 加 `FundRankItem/FundSearchItem/FundInfo/EtfQuote`（区间收益缺失
   为 null，展示为 —），CompositeProvider 接线（微服务未启动时技能返回带启动提示的文本）。
@@ -824,6 +829,17 @@
     **直连 clist**（`_clist_paginated`：push2 主宿主 → push2delay 延时镜像降级，
     翻页间隔 0.3s 防限流，响应带 `source: eastmoney/eastmoney-delay` 标注）；
     板块日 K 走 AKShare `stock_board_industry_hist_em`（push2his，支持 BK 代码直传）。
+  - **东财封禁期降级（P12，2026-10-10）**：东财双宿主全挂（IP 封禁）时 rank /
+    fund-flow / cons / history 自动降级**腾讯板块接口**（非同 IP，申万二级 124 个
+    一次全量），source=`tencent`，前端标注"腾讯降级源·申万二级行业，口径与东财
+    行业不同"。口径差（不对齐，文档化）：腾讯 zgb 只有"上涨家数/总家数"无平盘
+    拆分（downCount 置 null）；资金流只有主力净流入总额（分档/净占比/最大净流入
+    股置 null）；fund-flow 排序按 zljlr 客户端降序（getRank 返回序是涨跌幅序）；
+    单位换算 zljlr/turnover 万元→元、zsz 亿元→元；cons volume 实测为"手"与东财
+    一致；history 用 newfqkline 端点（旧 fqkline 对 pt 板块代码只回 1 根）,
+    changePct 收盘环比自算。降级期传 BK 代码（无法映射腾讯板块）返回 502；
+    of-stock 不做降级（依赖 /profile，封禁期维持 502）。细节见
+    [REQ-P12](requirements/P12-sectors-etf-fallback.md)。
 - **主服务**：`DataProvider` 新增 `SectorRank/SectorFundFlow/SectorCons/SectorHistory/
   StockSectorInfo` 类型与五个可选方法（[src/data/provider.ts](../src/data/provider.ts)），
   PythonServiceProvider 与 CompositeProvider 接线（微服务未启动时给带启动提示的错误）；
