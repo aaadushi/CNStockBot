@@ -201,4 +201,5 @@ curl -s -X POST https://cnstock.example.com/api/auth/register \
 ---
 
 相关文档：[S4-3 需求文档](../requirements/S4-3-https-deployment.md) ·
-[README](../README.md) · [.env.example](../.env.example)
+[README](../README.md) · [.env.example](../.env.example) ·
+[自测临时公网隧道](local-tunnel.md)（正式发布前的 Quick Tunnel 演示方案）

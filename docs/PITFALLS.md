@@ -31,6 +31,30 @@
 
 ## 1. TypeScript / Node.js / 工具链
 
+### [2026-10-10] .bat 写入后执行错乱：行首丢字符/长行拦腰截断——LF 行尾、chcp 65001 缓冲区错位、usebackq 静默失效三雷叠加
+- **现象**：`scripts/tunnel-demo.bat` 经 `cmd /c` 执行时：纯 ASCII 行也丢行首字符
+  （`echo ASCII-OK` → `'SCII-OK' 不是内部或外部命令`）；rem 行从中间被劈成两条命令；
+  `for /f` 行把**自己命令行的尾巴**当数据解析（输出
+  `RESULT=[" "..\.env" 2>nul]`）；加 `chcp 65001` 后错乱非但不减反而更多。
+- **根因**：三个独立问题叠加——
+  ① Write/编辑器工具写出的 .bat 是 **LF 行尾**，cmd.exe 按 CRLF 解析，行边界错位、
+  行首字节被吃（`file xxx.bat` 一眼可辨）；
+  ② `chcp 65001` 切换代码页后，cmd 按新代码页重新对齐读取缓冲区，多字节字符让
+  **后续行的读取位置错位**（cmd 已知 bug）——所以"chcp 放最前"也不保险，
+  中文注释/中文字符串混在长行里就会随机劈行（start-all.bat 全程纯英文是有原因的）；
+  ③ `for /f "usebackq tokens=2 delims==" %%a in ('findstr ...')` 中 **usebackq 被
+  静默忽略**（delims 值含 `=` 触发解析歧义），单引号内容不被执行、反而被当字面
+  字符串按 delims 切分——表象像"for 语法错了"，实际是选项串解析问题。
+- **解法**：仓库 .bat 一律 **CRLF + 纯 ASCII**（中文提示宁可不用）：
+  `sed -i -e 's/\r$//' -e 's/$/\r/' xxx.bat` 归一化；读 `.env` 用
+  `for /f "tokens=2 delims==" %%a in ('findstr /b /c:"PORT=" "%~dp0..\.env" 2^>nul') do ...`，
+  **不加 usebackq**（默认模式下 `('cmd')` 就是执行命令）；改完必须 `cmd /c xxx.bat`
+  实测，"看起来对"不算数。
+- **涉及文件**：`scripts/tunnel-demo.bat`
+- **预防**：① 新建/改动 .bat 后 `file xxx.bat` 确认 `with CRLF`；② .bat 里避免
+  chcp + 中文混排，提示文案用英文（详细中文说明放配套 .md 文档）；③ for /f 行为
+  异常时抽成最小单行脚本隔离测试，别在几十行的 bat 里排错。
+
 ### [2026-09-27] S4-1 迁移漏加页面元素：整页 JS 启动即 TypeError，页面"永远没数据"且 API 巡检完全发现不了
 - **现象**：6 个页面（funds/news/overseas/scanner/backtest/sectors）打开后导航正常、
   内容区永远空白"加载中"，**Network 里没有任何业务 API 请求**；服务端 curl 同一接口
