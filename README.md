@@ -38,7 +38,7 @@ npm run dev
 
 服务默认监听 `0.0.0.0:18790`（可通过 `.env` 的 `HOST`/`PORT` 调整）。
 打开 http://localhost:18790/webchat ，按提示注册或登录账号后使用。
-其他页面入口：/stocks、/market、/news、/funds、/overseas、/sectors、/scanner、/backtest。
+其他页面入口：/stocks、/market、/news、/funds、/overseas、/sectors、/scanner、/backtest、/inbox（消息中心，F7-4：推送消息聚合视图，可回查已归档的收盘日报/异动提醒）。
 选股扫描与策略回测需 data-service 且已回填日 K 库（见下）。
 
 > **注意（S4-1）**：WebChat 已改为多用户体系，需先注册/登录获取 session token；旧的共享 `ACCESS_TOKEN` 不再作为常规 API 鉴权方式。

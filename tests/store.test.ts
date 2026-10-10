@@ -113,13 +113,13 @@ describe('Store 会话历史', () => {
 });
 
 describe('Store 离线通知收件箱', () => {
-  it('push / drain 往返，读后即删，按写入顺序', () => {
+  it('push / drain 往返，drain 只取未读且取走即已读，按写入顺序', () => {
     const s = makeStore();
     expect(s.drainInbox('u5')).toEqual([]); // 空收件箱
     s.pushInbox('u5', '第一条');
     s.pushInbox('u5', '第二条');
     expect(makeStore().drainInbox('u5')).toEqual(['第一条', '第二条']);
-    expect(s.drainInbox('u5')).toEqual([]); // 已清空
+    expect(s.drainInbox('u5')).toEqual([]); // 已消费（标记已读），不再重复返回
   });
 
   it('按 userId 隔离', () => {
@@ -128,6 +128,47 @@ describe('Store 离线通知收件箱', () => {
     s.pushInbox('bob', '给 bob');
     expect(s.drainInbox('alice')).toEqual(['给 alice']);
     expect(s.drainInbox('bob')).toEqual(['给 bob']);
+  });
+
+  it('F7-4：drain 后归档仍可见且视为已读（消息中心回查，未读自洽）', () => {
+    const s = makeStore();
+    s.pushInbox('u6', '收盘日报');
+    s.pushInbox('u6', '异动提醒');
+    expect(s.drainInbox('u6')).toEqual(['收盘日报', '异动提醒']); // 聊天页消费
+    const { messages, unreadCount } = makeStore().getInboxHistory('u6', 50);
+    expect(messages.map((m) => m.text)).toEqual(['异动提醒', '收盘日报']); // 时间倒序
+    expect(messages.every((m) => m.read)).toBe(true); // drain 取走 = 已读
+    expect(unreadCount).toBe(0); // 不得出现"聊天里看过、消息中心还显示未读"
+  });
+
+  it('F7-4：getInboxHistory 非破坏（多次拉取内容不变），含未读数与倒序', () => {
+    const s = makeStore();
+    s.pushInbox('u7', '老消息');
+    s.pushInbox('u7', '新消息');
+    const first = makeStore().getInboxHistory('u7', 50);
+    expect(first.messages.map((m) => m.text)).toEqual(['新消息', '老消息']);
+    expect(first.messages.every((m) => !m.read)).toBe(true);
+    expect(first.unreadCount).toBe(2);
+    const second = s.getInboxHistory('u7', 50); // 再拉一次：不删除、不置读
+    expect(second.messages.map((m) => m.text)).toEqual(['新消息', '老消息']);
+    expect(second.unreadCount).toBe(2);
+  });
+
+  it('F7-4：markInboxRead 全部标读后未读数归零，重复调用标记 0 条', () => {
+    const s = makeStore();
+    s.pushInbox('u8', 'a');
+    s.pushInbox('u8', 'b');
+    expect(s.markInboxRead('u8')).toBe(2);
+    expect(s.getInboxHistory('u8', 50).unreadCount).toBe(0);
+    expect(s.markInboxRead('u8')).toBe(0); // 幂等
+  });
+
+  it('F7-4：归档增长有界——每用户最多保留 100 条', () => {
+    const s = makeStore();
+    for (let i = 0; i < 105; i++) s.pushInbox('u9', `m${i}`);
+    const { messages } = makeStore().getInboxHistory('u9', 200);
+    expect(messages).toHaveLength(100);
+    expect(messages[0].text).toBe('m104'); // 最新在前
   });
 });
 
