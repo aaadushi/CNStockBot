@@ -386,6 +386,15 @@ App 形式在安卓手机上运行——手机上随时查行情/自选股/收�
 ## 更新日志
 
 
+- 2026-10-10（批次 36）：**F7 验收探针账号清理（运维动作，无代码改动）**——
+  兑现批次 32 待办"删除探针账号"：`acceptance_probe` 经查已不存在于生产库
+  （未留下 users 记录，该项自然消解）；同批清理 2026-09-27 S3-6 巡检遗留的
+  临时账号 `audit_s36`（已无存活会话），从 users/sessions/watchlists/
+  histories/inbox/alert_rules 六表全量清除。清理后生产库用户仅 `adushi`/
+  `lyy`。另：批次 34/35 两项 F7 收尾（聊天页加粗渲染 PR #54、release 签名
+  密钥 PR #55）已于同日合并入 main。
+  - PR：#56（docs/probe-account-cleanup）。
+
 - 2026-10-10（批次 34）：**聊天页 LLM 回复 Markdown 加粗渲染（REQ-chat-md-bold，
   "其他候选方向"第 6 条方案②）**。真机验收发现的 `**加粗**` 原始字符展示问题：
   - 前端（public/webchat/index.html）：新增极简解析渲染器 `renderMdBold` +
