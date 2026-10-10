@@ -116,6 +116,8 @@ export interface MarketMovers {
   flatCount: number;
   time?: string;     // 数据生成时间（北京时间）
   delayed?: boolean; // true = 数据来自延时宿主（push2delay，约延时 15 分钟）
+  /** 降级源标识：东财双宿主（push2/push2delay）全挂走新浪排行接口时 = 'sina'（REQ-P11） */
+  source?: string;
 }
 
 // ---- 资金流向（F3-4，2026-09-15 新增；仅微服务模式提供） ----

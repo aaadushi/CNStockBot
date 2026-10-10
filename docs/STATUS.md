@@ -171,7 +171,7 @@
 
 ### P10 ~~盘前时段（9:30 前）行情卡部分字段显示 — / 0.00~~（登记为设计内行为后关闭，见更新日志 2026-09-19；行为细节与排查纪律见 PITFALLS 腾讯盘前条目）
 
-### P11 东财 IP 封禁期间涨跌榜（/market）完全无数据（降级链已用尽）
+### P11 ~~东财 IP 封禁期间涨跌榜（/market）完全无数据（降级链已用尽）~~（已解决，见更新日志 2026-10-10）
 - **影响**：东财对本机 IP 限流/封禁（周期性外部事件，本项目已发生 3+ 次，持续数小时到一天）
   期间，行情/日K/资金流/新闻等有腾讯、新浪、AKShare 异源托底不受影响，唯独
   **涨跌榜降级链只有 push2 → push2delay 两个同 IP 宿主**，双挂期间该页空白。
@@ -374,6 +374,29 @@ App 形式在安卓手机上运行——手机上随时查行情/自选股/收�
 ---
 
 ## 更新日志
+
+- 2026-10-10（批次 29）：**P11 修复——涨跌榜（/market）引入新浪异源第三降级源**。
+  东财 IP 封禁期间 push2+push2delay 双宿主全挂时，/market 页从"完全空白"变为
+  有数据可看。改动：
+  - 需求文档 [docs/requirements/P11-market-movers-sina-fallback.md](requirements/P11-market-movers-sina-fallback.md)
+    先行（REQ-P11），明确不做：不修 P12（/sectors、/funds ETF 仍登记）、
+    不替换东财主源、不对齐停牌家数口径差；
+  - 新增 [src/data/sinaMovers.ts](../src/data/sinaMovers.ts)：封装新浪行情中心排行
+    接口（`Market_Center.getHQNodeData`，node=hs_a 沪深京含北交所；实测 num>100
+    截断 100 行、trade 为字符串、无涨跌平家数接口——家数按 changepercent 有序性
+    二分边界求得，页末符号二分 + 边界页线性确认，精确无并列歧义）；
+  - `EastmoneyProvider.getMovers` 降级链扩展为 **push2 → push2delay → 新浪**，
+    新浪结果标 `source: 'sina'`，60s 缓存对降级结果同样生效；东财任一宿主可用
+    时绝不请求新浪（不提前不并行，审计要点）；
+  - [public/market/index.html](../public/market/index.html) 数据时间旁对新浪降级源
+    追加"（新浪降级源）"提示；
+  - 候选源实测记录：腾讯两个排行接口（stock.gtimg.cn appn=rank、proxy.finance.qq.com
+    indexRankDetail）均已失效，选新浪——细节见 PITFALLS 2026-10-10 条目；
+  - 新增 [tests/movers-sina.test.ts](../tests/movers-sina.test.ts) 9 条（解析/停牌过滤/
+    家数二分边界/全涨边界/总数异常/三级链/不提前请求/三源全挂抛错/缓存）；
+  - 验证：`npm run typecheck` + `npm test` 全绿（309 测试）；真实新浪接口端到端
+    实测通过（家数 3296+2145+131=5572=总数，北交所在榜，停牌行过滤正常）；
+  - P12 不受影响，仍登记未修（同根因不同页面，排期另议）。
 
 - 2026-09-27（批次 28）：**全站布局改造为 F 型布局（REQ-UI-2，与 UI-1 Soft UI
   视觉共存的混合方案）**。用户拍板冲突仲裁：布局/信息层级按 F 型布局（顶部优先、

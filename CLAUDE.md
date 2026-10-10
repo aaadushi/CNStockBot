@@ -53,6 +53,7 @@ src/
     provider.ts       DataProvider 接口：getQuote / getNews / search
     eastmoney.ts      东财公开接口（行情）；secid 规则：沪市 6/900→"1."，深市 0/3 与北交所 4/8/920→"0."
     tencent.ts        腾讯行情（东财的自动降级备份；GBK 文本协议，价格不放大）
+    sinaMovers.ts     新浪行情中心排行接口（涨跌榜第三降级源，REQ-P11：东财双宿主全挂时托底 /market）
     pythonService.ts  AKShare 微服务客户端 + TradeCalendar（交易日历，按年缓存+格式校验）
     index.ts          createProvider()：默认组合（行情东财+腾讯降级 + 新闻微服务）
   storage/store.ts    SQLite 存储（node:sqlite）：自选股 + 会话历史（含工具上下文）+ 收件箱 + kv + alert_rules 监控规则（F5-4）+ users/sessions 表（S4-1），按 userId 隔离

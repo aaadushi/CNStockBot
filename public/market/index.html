@@ -167,7 +167,8 @@
       $('down-count').textContent = moversData.downCount;
       $('flat-count').textContent = moversData.flatCount;
       $('data-time').textContent = moversData.time
-        ? '数据时间 ' + moversData.time + (moversData.delayed ? '（延时约 15 分钟）' : '')
+        ? '数据时间 ' + moversData.time
+          + (moversData.source === 'sina' ? '（新浪降级源）' : moversData.delayed ? '（延时约 15 分钟）' : '')
         : '';
       $('tab-up-cnt').textContent = moversData.upCount ? ` ${moversData.upCount}` : '';
       $('tab-down-cnt').textContent = moversData.downCount ? ` ${moversData.downCount}` : '';

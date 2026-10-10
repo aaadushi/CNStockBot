@@ -461,17 +461,25 @@
   且停牌股（f3="-"）与平盘混排在零区，实现为二分查找"末条不再为正"的第一页
   （零区起点）再向后最多扫 3 页收集 f3 恰为 0 的（大页长 200 减少请求数）。
   **宿主降级**：push2 被 IP 限流时自动切 push2delay 同构接口（延时约 15 分钟，
-  响应带 `delayed: true`，页面在数据时间后标注）；结果进程内缓存 60s 防刷新刷限流。
-  不依赖 data-service；腾讯无对应榜单接口，故不走腾讯降级。
+  响应带 `delayed: true`，页面在数据时间后标注）；push2+push2delay 双宿主全挂
+  （东财 IP 封禁期）再降**新浪排行接口**（`vip.stock.finance.sina.com.cn` 的
+  `Market_Center.getHQNodeData`，异源 REQ-P11，解决 STATUS P11）：沪深京全市场
+  含北交所，单页上限 100 行；涨跌平家数无现成接口，按 changepercent 有序性
+  二分边界求得（页末符号二分 + 边界页线性确认）；停牌行（trade<=0）不进榜单、
+  但计入 flatCount（口径差见 `src/data/sinaMovers.ts` 头注释）；响应带
+  `source: 'sina'`，页面标注"（新浪降级源）"。结果进程内缓存 60s 防刷新刷限流。
+  不依赖 data-service；腾讯排行接口已下线（PITFALLS 2026-10-10 条目），不走腾讯。
 - **代码位置**：页面 [public/market/index.html](../public/market/index.html)、
   API [src/channels/webchat.ts](../src/channels/webchat.ts)（`/api/market/movers`）、
   数据层 [src/data/eastmoney.ts](../src/data/eastmoney.ts)（`getMovers`/`fetchClistRaw`/
-  `fetchMoverCounts`）、接口 [src/data/provider.ts](../src/data/provider.ts)（`MarketMovers`/`MoverItem`）
+  `fetchMoverCounts`）、新浪降级源 [src/data/sinaMovers.ts](../src/data/sinaMovers.ts)、
+  接口 [src/data/provider.ts](../src/data/provider.ts)（`MarketMovers`/`MoverItem`）
 - **改动入口**：改每榜条数 → 前端 `LIMIT` 与 API limit 上限；改缓存时长 →
   `MOVERS_CACHE_MS`；加榜单（如振幅榜）→ clist 换 fid 排序字段即可
 - **注意事项**：clist 的 f2/f3 在 `fltt=2` 下不缩放，与报价接口 ×100 规则相反，别混用；
   停牌股混排零区是实测行为（PITFALLS 东财条目），改平盘定位逻辑前先读；
-  测试用合成全市场 mock（`tests/movers.test.ts` 的 `clistHandler`），改请求模式要同步改。
+  测试用合成全市场 mock（`tests/movers.test.ts` 的 `clistHandler`、
+  `tests/movers-sina.test.ts` 的 `sinaHandler`），改请求模式要同步改。
 
 ## 24. 财经快讯版块（/news + get_market_news，F4-A，2026-09-15 新增）
 
