@@ -12,7 +12,8 @@ import type { Store } from '../storage/store.js';
 import type { DataProvider, Quote, HistoryBar } from '../data/provider.js';
 import { buildOverseasHints } from '../data/overseasHints.js';
 import { createAuthRouter } from '../auth/routes.js';
-import { requireSession } from '../auth/middleware.js';
+import { requireSession, requireAdmin } from '../auth/middleware.js';
+import { config } from '../config.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 // dist/channels/webchat.js -> 项目根/public/<子目录>（tsx dev 时 __dirname 是 src/channels，同样上溯两级）
@@ -26,10 +27,19 @@ const SECTORS_ROOT = path.resolve(__dirname, '../../public/sectors');
 const SCANNER_ROOT = path.resolve(__dirname, '../../public/scanner');
 const BACKTEST_ROOT = path.resolve(__dirname, '../../public/backtest');
 const INBOX_ROOT = path.resolve(__dirname, '../../public/inbox');
+const ADMIN_ROOT = path.resolve(__dirname, '../../public/admin');
 const SHARED_ROOT = path.resolve(__dirname, '../../public/shared');
 
 /** 消息中心 history 接口的条数上限（F7-4，防一次拉全表） */
 const INBOX_HISTORY_MAX = 100;
+
+/** 管理端反馈列表的条数上限（REQ-Feedback-Admin，防一次拉全表） */
+const FEEDBACK_LIST_MAX = 200;
+
+/** 反馈文本长度上限（REQ-Feedback-Admin FR-2） */
+const FEEDBACK_TEXT_MAX = 2000;
+/** 联系方式长度上限（选填） */
+const FEEDBACK_CONTACT_MAX = 100;
 
 /** 股票代码统一校验：6 位数字 */
 const CODE_RE = /^\d{6}$/;
@@ -98,6 +108,7 @@ export class WebChatChannel implements Channel {
     app.use('/scanner', express.static(SCANNER_ROOT));
     app.use('/backtest', express.static(BACKTEST_ROOT));
     app.use('/inbox', express.static(INBOX_ROOT));
+    app.use('/admin', express.static(ADMIN_ROOT));
     app.use('/shared', express.static(SHARED_ROOT));
 
     // 公开认证路由；之后所有 /api/* 都需要 session token（静态资源不在 /api 下，不鉴权）
@@ -139,6 +150,36 @@ export class WebChatChannel implements Channel {
     app.post('/api/inbox/read', (req, res) => {
       const marked = this.store.markInboxRead(req.user!.userId);
       res.json({ marked, unreadCount: 0 });
+    });
+
+    // ---- 意见反馈（REQ-Feedback-Admin）：登录用户提交，管理员跨用户查看 ----
+
+    /** 提交反馈：text 必填 1~2000 字，contact 选填 ≤100 字；每用户条数由 store 封顶（200） */
+    app.post('/api/feedback', (req, res) => {
+      const body = req.body as { text?: unknown; contact?: unknown };
+      const text = typeof body.text === 'string' ? body.text.trim() : '';
+      const contact = typeof body.contact === 'string' ? body.contact.trim() : '';
+      if (!text) {
+        res.status(400).json({ error: '反馈内容不能为空' });
+        return;
+      }
+      if (text.length > FEEDBACK_TEXT_MAX) {
+        res.status(400).json({ error: `反馈内容不能超过 ${FEEDBACK_TEXT_MAX} 字` });
+        return;
+      }
+      if (contact.length > FEEDBACK_CONTACT_MAX) {
+        res.status(400).json({ error: `联系方式不能超过 ${FEEDBACK_CONTACT_MAX} 字` });
+        return;
+      }
+      const id = this.store.pushFeedback(req.user!.userId, req.user!.username, text, contact);
+      res.json({ ok: true, id });
+    });
+
+    /** 管理员查看反馈列表（跨用户视图，唯一门槛是 requireAdmin；空集合时一律 403） */
+    app.get('/api/admin/feedback', requireAdmin(config.adminUsernames), (req, res) => {
+      const parsed = Number.parseInt(String(req.query.limit ?? ''), 10);
+      const limit = Number.isNaN(parsed) ? 100 : Math.min(FEEDBACK_LIST_MAX, Math.max(1, parsed));
+      res.json({ items: this.store.listFeedback(limit), total: this.store.countFeedback() });
     });
 
     // ---- 股票浏览页 API ----

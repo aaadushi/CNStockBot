@@ -7,7 +7,7 @@
 > 看 [FEATURES.md](FEATURES.md)；踩过的坑看 [PITFALLS.md](PITFALLS.md)；
 > 数据源接口细节看 [DATA_SOURCES.md](DATA_SOURCES.md)。
 
-最后更新：2026-10-10
+最后更新：2026-10-10（批次 41：意见反馈 + 最小管理端）
 
 ---
 
@@ -46,6 +46,7 @@
 | 选股扫描（/scanner + scan_market 技能，F5-5） | `data-service` `/market-bars/*` + `/scan*` + `public/scanner/` + `src/skills/bundled/scanner/` | ✅ 可用 | 本地全市场日 K 库（baostock→SQLite，仅沪深，盘后增量更新）+ 宽表向量化 7 个预设策略扫描（秒级）；网页独立页 + 聊天技能 + 盘后自动更新（默认开）/扫描摘要推送（默认关 `SCANNER_PUSH_ENABLED`）；客观命中名单口径 + 免责声明；2026-09-21 新增 |
 | 策略回测（/backtest，F5-6） | `data-service` `/backtest/{code}` + `public/backtest/` + `GET /api/backtest` | ✅ 可用 | 本地日 K 库单股历史信号回放：7 个预设策略（与扫描同口径同 key）+ 真实 A 股规则（T+1/整手/佣金万2.5/印花税/滑点/止损/持有期）；统计（胜率/盈亏比/最大回撤/累计 vs 买入持有基准）+ 净值曲线 + 逐笔明细；历史业绩不代表未来，页面显著标注；2026-09-22 新增 |
 | 安卓 WebView 壳 App（F7-2）+ 本地通知/启动屏（F7-3） | `android/` 独立 Gradle 工程 | ✅ 工程完成 | F7-2：首屏服务器地址配置（release 仅 HTTPS / debug 放行局域网明文）+ WebView 装载 /webchat；SSL fail-closed、外链交系统浏览器；认证由网页端 CNStockAuth 完成（壳不经手 token）。F7-3（2026-09-27）：收件箱消息经 JS 桥转交原生层弹系统通知（网页端唯一轮询 drain 语义，原生不抢消息、不持 token）、菜单通知开关、品牌启动屏；生物识别/真后台推送按需求文档明确不做。**APK 构建/真机验收待构建者在 Android Studio 执行** |
+| 意见反馈 + 最小管理端（REQ-Feedback-Admin） | `public/webchat/` 页头"反馈"按钮 + `public/admin/` + `POST /api/feedback` + `GET /api/admin/feedback` | ✅ 可用 | 2026-10-10：反馈文本 ≤2000 字 + 联系方式选填 ≤100 字，feedback 表每用户 200 条封顶；管理端 `/admin` **全站与 App 无任何入口链接**（手动输地址），登录 + `ADMIN_USERS` 环境变量（逗号分隔用户名）双重把关，非管理员 403；空配置 fail-closed；详见 FEATURES 第 44 节 |
 
 ## 二、待办优先级总表（下一个 agent 从这里开始）
 
@@ -380,23 +381,55 @@ App 形式在安卓手机上运行——手机上随时查行情/自选股/收�
    前端极简 `**加粗**` 解析渲染器，REQ-chat-md-bold。防注入红线不破——只允许
    成对 `**...**` 生成 `<strong>`（内容走 textContent），其余字符一律字面文本
    节点，不成对 `**` 原样保留，全程无 innerHTML；详见更新日志批次 34）
-7. **意见反馈功能**（用户 2026-10-10 提出）：App/网页内让用户提交使用反馈。
-   **入口位置用户已指定：放在"刷新"那一块**（聊天页 header 刷新按钮区域附近）。
-   实现时需配服务端反馈存储（表/收件箱复用待设计）与管理端查看入口（与第 8 条
-   后台合做）。写需求文档时再细化：反馈字段（文本/联系方式选填/截图？）、
-   是否匿名、提交后确认提示。
+7. ~~**意见反馈功能**~~ ✅ 2026-10-10 完成（REQ-Feedback-Admin，见更新日志
+   批次 41）：聊天页页头"反馈"按钮 + 弹窗提交（文本 ≤2000 字、联系方式选填
+   ≤100 字）+ feedback 表（每用户 200 条封顶）+ 最小管理端 /admin
+   （无入口链接、ADMIN_USERS 环境变量控制管理员、非管理员 403）。
 8. **管理后台**（用户 2026-10-10 提出）：独立管理员界面，集中查看运行数据、
-   用户反馈、用户信息等。**红线：仅管理员可进**（需设计管理员角色——users 表
-   加 role/is_admin 字段或单独 ADMIN 配置；所有后台 API 必须服务端鉴权，
-   不得只做前端隐藏入口）。页面内容范围写需求文档时再定（候选：用户列表/
-   注册时间/活跃度、反馈列表、推送任务运行状态、各页面访问统计——埋点属
-   范围外除非另提）。**注意隐私边界：后台能看到的是用户在本服务的账号数据
-   （用户名/自选股/会话/反馈），收集与展示范围需在需求文档里写清并最小化**。
+   用户反馈、用户信息等。**进度：反馈查看切片已随第 7 条完成（/admin 最小
+   管理端，REQ-Feedback-Admin）**；其余内容（用户列表/注册时间/活跃度、
+   推送任务运行状态等）仍无排期。**红线：仅管理员可进**——本次已落地
+   `requireAdmin` 中间件 + `ADMIN_USERS` 配置的管理员体系（服务端鉴权，
+   非前端隐藏），后续后台功能直接复用；users 表当前未加 role 列（配置式
+   管理员已够用，如需 per-user 角色再迁移）。**注意隐私边界：后台能看到的
+   是用户在本服务的账号数据（用户名/自选股/会话/反馈），收集与展示范围需
+   在需求文档里写清并最小化**。
 
 ---
 
 ## 更新日志
 
+
+- 2026-10-10（批次 41）：**意见反馈 + 最小管理端完成**（REQ-Feedback-Admin，
+  "其他候选方向"第 7 条 + 第 8 条的反馈查看切片）。用户指定形态：管理后台
+  在网页/App 无任何入口链接，只能手动输地址，且需输入账号密码。
+  - 需求文档 [docs/requirements/feedback-admin-lite.md](requirements/feedback-admin-lite.md)
+    先行（背景/范围含明确不做项/FR/NFR/数据模型·API·前端/验收/审计要点）；
+  - 存储：`feedback(id,user_id,username 快照,text,contact,created_at)` 新表 +
+    `idx_feedback_created` 索引；`pushFeedback`（每用户 200 条封顶，模式照抄
+    pushInbox）/`listFeedback`（全用户倒序）/`countFeedback`；
+    隐私最小化：不存 UA/IP；
+  - API：`POST /api/feedback`（text 必填 1~2000 字、contact 选填 ≤100 字，
+    400 带中文错误）；`GET /api/admin/feedback?limit=`（limit 收敛 1..200 缺省
+    100，返回 `{items,total}`）；
+  - 管理员体系（最小）：`ADMIN_USERS` 环境变量 → `config.adminUsernames`；
+    `src/auth/middleware.ts` 新增 `requireAdmin` 工厂（挂 requireSession 之后，
+    非管理员 403，空集合 fail-closed）；users 表不加列（免迁移，改配置即
+    生效，重启读取）；`.env.example` 加注释；
+  - 前端：聊天页页头"反馈"按钮（logout-btn 之前）+ 弹窗（复用
+    .auth-overlay/.auth-card，DOM 全 createElement + 文本节点，无 innerHTML；
+    未登录 apiFetch 自然弹登录浮层）；新增 `public/admin/index.html`
+    （meta noindex、无导航入口、登录后拉列表、403 显示"无权访问"且不渲染
+    数据、60s 轮询 + 手动刷新）；
+  - 测试：config ADMIN_USERS 解析 2 条 + tests/feedback-api.test.ts 6 条 +
+    tests/feedback-admin-unset.test.ts（空配置 fail-closed）1 条；
+    typecheck + 44 文件 341 用例全绿；踩坑回填 PITFALLS（webchat-md-bold 测试
+    的正则守护会误伤 `xxx.textContent = text` 直赋写法）；
+  - 端到端实测（临时实例 18077 + 临时数据目录）：注册 → 未登录 401 →
+    空文本 400 → 正常提交 200 → 非管理员 403 → 管理员列表含反馈全链路通过；
+    /admin 静态页 200。生产服务未重启（静态页读盘即时生效；API 与建表需
+    下次重启后生效——feedback 表 CREATE IF NOT EXISTS 幂等，无迁移风险）。
+  - PR：#63（feat/feedback-admin-lite）。
 
 - 2026-10-10（批次 40）：**登记两个新方向（纯登记，未实现）**——用户提出：
   ① 意见反馈功能，入口指定放"刷新"那一块（聊天页刷新按钮区域）；

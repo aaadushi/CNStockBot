@@ -96,3 +96,25 @@ describe('config 数值解析', () => {
     expect(config.trustProxy).toBe('loopback');
   });
 });
+
+describe('config ADMIN_USERS 解析（REQ-Feedback-Admin）', () => {
+  beforeEach(() => {
+    vi.resetModules();
+  });
+
+  afterEach(() => {
+    vi.unstubAllEnvs();
+  });
+
+  it('未配置时为空集合（fail-closed，管理 API 一律 403）', async () => {
+    vi.stubEnv('ADMIN_USERS', '');
+    const { config } = await loadConfig();
+    expect(config.adminUsernames).toEqual(new Set());
+  });
+
+  it('逗号分隔解析、去除空白、忽略空段', async () => {
+    vi.stubEnv('ADMIN_USERS', ' boss, root ,,admin1 ');
+    const { config } = await loadConfig();
+    expect(config.adminUsernames).toEqual(new Set(['boss', 'root', 'admin1']));
+  });
+});
