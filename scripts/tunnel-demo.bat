@@ -7,6 +7,9 @@ rem Usage: scripts\tunnel-demo.bat [port]   (default: .env PORT, else 18790)
 rem Prerequisites: main service running (scripts\start-all.bat) + cloudflared.
 rem NOTE: the URL dies with the cloudflared process - never hardcode it
 rem into the App default server address.
+rem NOTE: --protocol http2 is forced because the default QUIC (UDP 7844) is
+rem often blocked/throttled on Chinese networks, leaving the tunnel
+rem unreachable with Cloudflare Error 1033 / HTTP 530 (PITFALLS 2026-10-10).
 setlocal
 set "PORT=%~1"
 if not defined PORT (
@@ -29,4 +32,4 @@ if errorlevel 1 (
 
 echo [tunnel] exposing http://127.0.0.1:%PORT% as a temporary https URL
 echo [tunnel] the https://*.trycloudflare.com line in the output below is your demo URL; close this window to stop.
-cloudflared tunnel --url http://127.0.0.1:%PORT%
+cloudflared tunnel --url http://127.0.0.1:%PORT% --protocol http2
