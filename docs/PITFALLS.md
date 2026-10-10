@@ -127,6 +127,30 @@
 
 ## 2. 东方财富接口（行情数据源）
 
+### [2026-10-10] 涨跌榜第三降级源选型实测记录：腾讯两个排行接口已死，新浪单页截断 100 行
+- **背景**：P11 修法要求引入非同 IP 的第三降级源。实测三个候选：
+  1. ~~腾讯 `stock.gtimg.cn/data/index.php?appn=rank`~~——返回 `total:1, data:''`，接口已废；
+  2. ~~腾讯 `proxy.finance.qq.com/.../indexRankDetail`~~——返回
+     `Call to undefined method: If_Controller::indexRankDetailAction()`，已废；
+  3. ✅ 新浪 `vip.stock.finance.sina.com.cn/quotes_service/api/json_v2.php/Market_Center.getHQNodeData`
+     ——正常，沪深京全市场（含北交所 bj 段），`asc=0/1` 控制涨跌幅降/升序。
+- **关键点 1（页长截断）**：新浪 `num` 传 >100 时**静默截断为 100 行**（不报错），
+  二分/翻页必须按 100 行一页算页码，否则边界全错。
+- **关键点 2（字段类型与东财相反）**：`trade` 是**字符串**、"0.000" 表示停牌
+  （`Number('')===0` 陷阱：空串转 0 会被当停牌，必须显式 price<=0 过滤）；
+  `changepercent` 是**不缩放浮点**（与东财报价接口 ×100、clist fltt=2 两套口径都不同，
+  三套规则别混用）。`code` 字段是 6 位纯数字（`symbol` 才带 sh/sz/bj 前缀）。
+- **关键点 3（无涨跌平家数接口）**：`getHQNodeStockCount` 只给全市场总数。
+  家数靠"changepercent 有序"二分边界求得；二分判断必须用**页末**元素符号
+  （页首符号在过渡页内会误判——页首为正但边界就在本页中部），定位边界页后页内
+  线性确认。排序保证 >0/=0/<0 分段，边界计数精确、无并列歧义。
+- **关键点 4（口径差，不修只对齐文档）**：新浪停牌股（trade=0）changepercent=0，
+  混在零区会**计入 flatCount**（东财 ulist 家数不含停牌）；榜单内已过滤停牌行，
+  家数口径差属降级模式可接受误差。
+- **涉及文件**：`src/data/sinaMovers.ts`、`tests/movers-sina.test.ts`
+- **预防**：给涨跌榜加数据源时，先 curl 实测候选接口再写代码；腾讯系接口变动频繁
+  （2026-10-10 实测两个排行接口均废），不要把"腾讯有排行接口"当既定事实写进注释。
+
 ### [2026-09-27] 东财 IP 封禁升级为连接级（push2+push2delay 同挂）；"降级腾讯行情: fetch failed" 是迷惑性日志
 - **现象**：日志刷屏三种报错——
   `history 东财源失败，降级新浪: ('Connection aborted.', RemoteDisconnected('Remote end closed connection without response'))`、
@@ -146,8 +170,10 @@
   行情（腾讯）/日K（新浪）/资金流（新浪）/分时（新浪）/新闻公告基金（AKShare
   异源）均有非同 IP 托底，东财全挂也正常。
 - **解法**：无需修——封禁几小时到一天自行解除（9-15、9-16、9-26 各发生过一次，
-  均自行恢复）。涨跌榜缺口若要补需引入非同 IP 的第三降级源，已登记 STATUS P11，
-  排期靠后。
+  均自行恢复）。~~涨跌榜缺口若要补需引入非同 IP 的第三降级源，已登记 STATUS P11，
+  排期靠后。~~ **已于 2026-10-10 修复（P11 收官）**：第三降级源为新浪排行接口
+  （见下条 2026-10-10 条目与 `src/data/sinaMovers.ts`）；P12（/sectors、/funds ETF）
+  同根因但不同页面，仍登记未修。
 - **涉及文件**：`src/data/index.ts:24`、`src/data/eastmoney.ts:277`、`data-service/main.py`
 - **预防**：看到 fetch failed 刷屏时，先 curl 分别实测各源（push2 / push2delay /
   qt.gtimg.cn / sina）再归因；`/market` 页面空白而其他页面正常 = 东财双宿主全挂，

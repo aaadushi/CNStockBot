@@ -15,6 +15,7 @@
  * 限流期间可用 push2delay.eastmoney.com 同构接口临时验证字段（延时行情，勿作数据源切换）。
  */
 import type { DataProvider, MarketMovers, MoverItem, NewsItem, Quote } from './provider.js';
+import { fetchSinaMovers } from './sinaMovers.js';
 
 const PUSH2 = 'https://push2.eastmoney.com/api/qt/stock/get';
 const FIELDS = 'f43,f44,f45,f46,f47,f48,f50,f51,f52,f57,f58,f60,f170,f86,f116,f117,f162,f163,f164,f167,f168,f174,f175';
@@ -22,7 +23,7 @@ const FIELDS = 'f43,f44,f45,f46,f47,f48,f50,f51,f52,f57,f58,f60,f170,f86,f116,f1
 const FETCH_TIMEOUT_MS = 10_000;
 
 /** 涨跌榜（clist 排行榜）宿主降级链：push2 被 IP 限流时用 push2delay 同构接口托底
- *  （延时约 15 分钟，字段结构一致；腾讯无对应榜单接口，见 PITFALLS 东财条目） */
+ *  （延时约 15 分钟，字段结构一致）；双宿主全挂时再降新浪排行接口（异源，REQ-P11） */
 const PUSH2_HOSTS = ['https://push2.eastmoney.com', 'https://push2delay.eastmoney.com'];
 /** 全市场 A 股范围：深主板/创业板/沪主板/科创板/北交所 */
 const CLIST_FS = 'm:0+t:6,m:0+t:80,m:1+t:2,m:1+t:23,m:0+t:81+s:2048';
@@ -260,7 +261,8 @@ export class EastmoneyProvider implements DataProvider {
     };
   }
 
-  /** 全市场今日涨跌榜。宿主按 push2 → push2delay 降级（延时数据），结果缓存 60s */
+  /** 全市场今日涨跌榜。宿主按 push2 → push2delay 降级（延时数据），双宿主全挂再降新浪
+   *  排行接口（异源托底，解决 STATUS P11），结果缓存 60s */
   async getMovers(limit = 50): Promise<MarketMovers> {
     if (this.moversCache && Date.now() - this.moversCache.at < MOVERS_CACHE_MS) {
       return this.moversCache.value;
@@ -276,6 +278,16 @@ export class EastmoneyProvider implements DataProvider {
         lastErr = err;
         console.warn(`[data] 东财涨跌榜 ${host} 失败，尝试下一宿主:`, err instanceof Error ? err.message : err);
       }
+    }
+    // 东财双宿主全挂（IP 封禁期）：降级新浪排行接口（不同 IP 宿主，非同构字段，见 sinaMovers.ts）
+    try {
+      const value = await fetchSinaMovers(limit);
+      console.warn('[data] 东财涨跌榜双宿主全挂，已降级新浪排行接口（REQ-P11）');
+      this.moversCache = { at: Date.now(), value };
+      return value;
+    } catch (err) {
+      lastErr = err;
+      console.warn('[data] 新浪涨跌榜降级源也失败:', err instanceof Error ? err.message : err);
     }
     throw lastErr instanceof Error ? lastErr : new Error(String(lastErr));
   }
