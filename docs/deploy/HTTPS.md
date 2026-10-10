@@ -180,6 +180,14 @@ curl -s -X POST https://cnstock.example.com/api/auth/register \
 - [ ] data-service 从公网不可达：`curl -m 3 http://<服务器公网IP>:8000/health` 超时/拒绝；
 - [ ] 主服务从公网不可绕过代理直连 18790（同上报错）。
 
+发布侧检查（F7-1 含 App 端，缺一不可）：
+
+- [ ] **分发第一个公开 APK 前**：`android/keystore/` 整个目录（.jks + properties
+      两者）已备份到本机之外至少一处（U盘/网盘/其他机器）。该目录不入库、无副本，
+      丢失 = 已安装用户永远无法覆盖安装，只能换应用 ID 重新发布；
+- [ ] 备份可用性实测：在另一台机器上用备份的 keystore + properties 能成功执行
+      `apksigner verify --print-certs` 且指纹一致（见 android/README"release 签名"节）。
+
 ## 9. 故障排查
 
 | 现象 | 排查 |
