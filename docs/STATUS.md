@@ -380,6 +380,26 @@ App 形式在安卓手机上运行——手机上随时查行情/自选股/收�
 
 ## 更新日志
 
+- 2026-10-10（批次 31）：**F7-2 真机验收第一轮发现并修复 WebView 兼容性
+  缺陷**。验收机 Vivo V1838A（Android 10）出现"聊天页正常、其余 8 个数据页
+  全部无数据"，PC 端带 session token 复测各页 API 全部 200 有数据，定位为
+  前端问题：国产 ROM 无 Google Play，WebView 冻结在 Chrome 83（2020），
+  而数据页首屏渲染均调用 `Element.replaceChildren`（Chrome 86+），脚本
+  首个渲染调用即抛 TypeError（/webchat 未用该 API 故正常——缺陷指纹）。
+  改动：
+  - 新增 [public/shared/compat.js](../public/shared/compat.js)：
+    replaceChildren 规范等价 polyfill，9 个页面统一在 /shared/auth.js
+    之前引入；静态文件按请求读盘，无需重启主服务，刷新即生效；
+  - 坑记录回填 PITFALLS 新增"7. 前端 / 安卓 WebView"节（排查指纹：
+    dumpsys webviewupdate + caniuse 对照；预防：新前端代码禁用
+    Chrome 86+ API，必须用时先扩 compat.js）；
+  - F7-2 验收进度：安装/登录/对话/持久化/返回键/断网恢复全部通过
+    （验收清单第 1-4 项 ✅）；通知项待登录态下推 inbox 消息复验；
+    "Android 13+ 通知权限拒绝"项该机（Android 10）覆盖不了，需另找设备；
+  - `npm test` 全绿（309 测试）。
+  - 待办：验收完成后删除探针账号 acceptance_probe；release 签名密钥
+    生成（公网分发前）。
+
 - 2026-10-10（批次 30）：**P12 修复——/sectors 整页与 /funds ETF Tab 引入
   异源降级（REQ-P12）**。当日东财对本机 IP 封禁仍在持续（push2 rc:102），
   修复后封禁期 /sectors 页"排行 + 资金流 + 成分股 + 走势图"四块恢复可用、
