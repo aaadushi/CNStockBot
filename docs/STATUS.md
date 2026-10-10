@@ -386,6 +386,26 @@ App 形式在安卓手机上运行——手机上随时查行情/自选股/收�
 ## 更新日志
 
 
+- 2026-10-10（批次 38）：**自测临时公网隧道（REQ-Dev-Tunnel，演示工具）**。
+  公网发布前的自测/演示阶段，零成本把本机主服务映射为临时 https 地址：
+  - 新增 `scripts/tunnel-demo.bat`（Windows）/ `tunnel-demo.sh`（Linux/macOS）：
+    端口解析 = 参数 > .env PORT > 18790；前置检查 cloudflared 与主服务
+    /health，缺失分别提示退出；cloudflared 前台输出，关窗即断
+    （与 start-all 同前台语义）；bat 走纯 ASCII + CRLF（cmd 对 LF 行尾与
+    chcp+中文混排有解析错乱 bug，提示文案英文，中文说明在配套文档）；
+  - 新增 [docs/deploy/local-tunnel.md](deploy/local-tunnel.md)：Quick Tunnel
+    原理、**URL 生命周期**（进程活着不变；关窗/重启/睡眠/久断网即可能失效，
+    严禁写死进 App 配置）、Windows 睡眠坑、开隧道期间的安全自查
+    （S4-1 密码/限速是唯一屏障）、与正式部署路线的三阶段成本表
+    （0 元自测 → ~15 元/年域名+命名隧道试用 → 云主机正式发布）；
+  - README 新增"临时公网演示"节；HTTPS.md 相关文档加链接；
+  - 踩坑回填 PITFALLS（bat 三雷：LF 行尾 / chcp 65001 缓冲区错位 /
+    `for /f usebackq+delims==` 静默失效）；
+  - 验证：`cmd /c` 实测三条路径（缺 cloudflared / 正常映射 / 端口参数+health
+    拦截）全符合预期；`bash -n` 校验 sh 语法；npm run typecheck / npm test
+    全绿（无回归）；需求文档 [REQ-Dev-Tunnel](requirements/dev-tunnel-demo.md)。
+  - PR：#59（feat/tunnel-demo-script）。
+
 - 2026-10-10（批次 37）：**release 签名配置构建验证通过（批次 35 未验证项清零）**。
   构建者在 Android Studio 打开 `android/` 工程 Sync 成功（KTS 编译无误），
   Build Variants 切 release 后 Build APK(s) 成功产出

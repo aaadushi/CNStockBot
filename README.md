@@ -81,6 +81,19 @@ npm run start:all        # 启动；npm run stop:all 停止；npm run status:all
 报错提示。查看运行状态与版本信息：`curl http://localhost:18790/health`（暴露
 version/gitSha/启动时间/data-service 连通性）。
 
+## 临时公网演示（自测阶段，零成本）
+
+外出用手机 App 实测或给少数人演示时，可用 Cloudflare Quick Tunnel 把本机服务
+映射为临时 https 地址（无需域名/公网 IP/开端口）：
+
+```bat
+scripts\tunnel-demo.bat    :: 前置：已安装 cloudflared、主服务在跑
+```
+
+临时 URL 随 cloudflared 进程退出而失效，仅用于演示，**不要写死进 App 配置**。
+URL 生命周期、Windows 睡眠注意事项、安全自查与后续域名/云主机路线见
+[docs/deploy/local-tunnel.md](docs/deploy/local-tunnel.md)。
+
 ## 公网部署（S4-3）
 
 发布给他人使用前必须走 HTTPS 反向代理：TLS 由 Caddy/nginx 终止，主服务与
