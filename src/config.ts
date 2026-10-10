@@ -61,6 +61,18 @@ export const config = {
     loginRateLimitWindowMs: numEnv('LOGIN_RATE_LIMIT_WINDOW_MS', 60_000, 1_000),
   },
 
+  /**
+   * 管理员用户名集合（REQ-Feedback-Admin）：ADMIN_USERS 逗号分隔，如 "boss,root"。
+   * 空集合 = 无人是管理员（fail-closed，/api/admin/* 一律 403）。
+   * 刻意存在配置而非 users 表加列：免迁移，改配置即生效。
+   */
+  adminUsernames: new Set(
+    (process.env.ADMIN_USERS ?? '')
+      .split(',')
+      .map((s) => s.trim())
+      .filter(Boolean),
+  ),
+
   /** WebChat API 鉴权口令（请求头 Authorization: Bearer <token>），静态页面不鉴权 */
   accessToken: resolveAccessToken(),
 

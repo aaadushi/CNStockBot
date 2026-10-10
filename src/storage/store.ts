@@ -13,6 +13,8 @@
  *   kv(key, value)                            渠道杂项状态（如飞书 openId→chatId 映射）
  *   alert_rules(id, user_id, code, combinator, conditions, enabled, created_at)
  *                                             多条件监控规则（F5-4），conditions 为 JSON 数组
+ *   feedback(id, user_id, username, text, contact, created_at)
+ *                                             意见反馈（REQ-Feedback-Admin），每用户保留最近 200 条
  */
 import { mkdirSync, existsSync, readFileSync, renameSync } from 'node:fs';
 import path from 'node:path';
@@ -58,6 +60,16 @@ export interface InboxEntry {
   read: boolean;
 }
 
+/** 意见反馈条目（REQ-Feedback-Admin，管理端 /api/admin/feedback 用） */
+export interface FeedbackEntry {
+  id: number;
+  userId: string;
+  username: string;
+  text: string;
+  contact: string;
+  createdAt: number;
+}
+
 export class Store {
   private db: DatabaseSync;
   readonly auth: AuthService;
@@ -96,6 +108,15 @@ export class Store {
         enabled INTEGER NOT NULL DEFAULT 1,
         created_at INTEGER NOT NULL
       );
+      CREATE TABLE IF NOT EXISTS feedback (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        user_id TEXT NOT NULL,
+        username TEXT NOT NULL,
+        text TEXT NOT NULL,
+        contact TEXT NOT NULL DEFAULT '',
+        created_at INTEGER NOT NULL
+      );
+      CREATE INDEX IF NOT EXISTS idx_feedback_created ON feedback(created_at);
     `);
     this.auth.initTables();
     this.migrateInboxReadColumn();
@@ -249,6 +270,61 @@ export class Store {
       .prepare('UPDATE inbox SET read = 1 WHERE user_id = ? AND read = 0')
       .run(userId);
     return Number(res.changes);
+  }
+
+  // ---- 意见反馈（REQ-Feedback-Admin） ----
+
+  /**
+   * 写入一条意见反馈。username 为提交时快照（当前无改名功能，快照只是双保险）。
+   * 每用户只保留最近 200 条，防单用户无限累积（模式同 pushInbox 的 100 条封顶）。
+   * 返回自增 id。
+   */
+  pushFeedback(userId: string, username: string, text: string, contact: string): number {
+    const res = this.db
+      .prepare(
+        'INSERT INTO feedback (user_id, username, text, contact, created_at) VALUES (?, ?, ?, ?, ?)',
+      )
+      .run(userId, username, text, contact, Date.now());
+    this.db
+      .prepare(
+        `DELETE FROM feedback WHERE user_id = ? AND id NOT IN
+         (SELECT id FROM feedback WHERE user_id = ? ORDER BY id DESC LIMIT 200)`,
+      )
+      .run(userId, userId);
+    return Number(res.lastInsertRowid);
+  }
+
+  /** 反馈总量（管理端 total 用） */
+  countFeedback(): number {
+    const row = this.db.prepare('SELECT COUNT(*) AS n FROM feedback').get() as { n: number };
+    return Number(row.n);
+  }
+
+  /**
+   * 管理员查看全部用户反馈（跨用户视图，唯一门槛是 API 层的 requireAdmin），
+   * 按时间倒序返回最近 limit 条。limit 由调用方（API 层）收敛，不做全表扫描。
+   */
+  listFeedback(limit: number): FeedbackEntry[] {
+    const rows = this.db
+      .prepare(
+        'SELECT id, user_id, username, text, contact, created_at FROM feedback ORDER BY id DESC LIMIT ?',
+      )
+      .all(limit) as {
+      id: number;
+      user_id: string;
+      username: string;
+      text: string;
+      contact: string;
+      created_at: number;
+    }[];
+    return rows.map((r) => ({
+      id: r.id,
+      userId: r.user_id,
+      username: r.username,
+      text: r.text,
+      contact: r.contact,
+      createdAt: r.created_at,
+    }));
   }
 
   // ---- 多条件监控规则（F5-4） ----

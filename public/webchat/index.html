@@ -65,6 +65,20 @@
     #input { border: none; box-shadow: none !important; background: transparent; }
     #input:focus { box-shadow: none !important; }
     #send { border-radius: 14px; }
+
+    /* 反馈弹窗（REQ-Feedback-Admin）：复用 auth-overlay/auth-card 样式，DOM 全 JS 构建 */
+    #feedback-modal .auth-card { max-width: 420px; }
+    #feedback-text {
+      min-height: 120px; resize: vertical; line-height: 1.6;
+      font-family: var(--font);
+    }
+    #feedback-success { text-align: center; padding: 8px 0; }
+    #feedback-success .ok-icon {
+      display: inline-flex; align-items: center; justify-content: center;
+      width: 44px; height: 44px; border-radius: 999px;
+      background: var(--accent-soft); color: var(--accent); font-size: 22px;
+      margin-bottom: 12px;
+    }
   </style>
 </head>
 <body>
@@ -83,6 +97,7 @@
       <a class="nav" href="/backtest">回测</a>
       <a class="nav" href="/inbox">消息</a>
       <a class="nav active" href="/webchat">聊天</a>
+      <button class="nav btn-ghost" id="feedback-btn">反馈</button>
       <button class="nav btn-ghost" id="logout-btn" style="display:none">退出</button>
     </div>
   </header>
@@ -202,6 +217,121 @@
       updateLogout();
       addMsg('已退出登录', 'bot');
     };
+
+    // >>> feedback-modal:start (REQ-Feedback-Admin)
+    // 意见反馈弹窗：复用 auth-overlay/auth-card 样式；DOM 全 createElement 构建、
+    // 用户可见文本一律 textContent（不拼 innerHTML，红线同全站）；只用 Chrome 83 API。
+    const feedbackBtn = document.getElementById('feedback-btn');
+    let feedbackOverlay = null;
+    let feedbackFormBox = null;
+    let feedbackSuccessBox = null;
+    let feedbackTextEl = null;
+    let feedbackContactEl = null;
+    let feedbackErrEl = null;
+    let feedbackSubmitBtn = null;
+
+    function fbEl(tag, cls, txt) {
+      const e = document.createElement(tag);
+      if (cls) e.className = cls;
+      // 与 setMsgText 同红线：用户可见文本一律文本节点，不走 textContent 直赋
+      if (txt !== undefined) e.appendChild(document.createTextNode(String(txt)));
+      return e;
+    }
+
+    function buildFeedbackModal() {
+      if (feedbackOverlay) return;
+      const overlay = fbEl('div', 'auth-overlay');
+      overlay.id = 'feedback-modal';
+      overlay.hidden = true;
+      const card = fbEl('div', 'auth-card');
+
+      feedbackFormBox = fbEl('div');
+      feedbackFormBox.style.display = 'flex';
+      feedbackFormBox.style.flexDirection = 'column';
+      feedbackFormBox.style.gap = '16px';
+      feedbackFormBox.appendChild(fbEl('h2', null, '意见反馈'));
+      feedbackFormBox.appendChild(fbEl('p', null, '说说你遇到的问题或建议；联系方式选填，方便我们回访。'));
+      feedbackTextEl = fbEl('textarea', 'input');
+      feedbackTextEl.id = 'feedback-text';
+      feedbackTextEl.placeholder = '反馈内容（必填，2000 字以内）';
+      feedbackContactEl = fbEl('input', 'input');
+      feedbackContactEl.id = 'feedback-contact';
+      feedbackContactEl.placeholder = '联系方式（选填，微信 / QQ / 邮箱等）';
+      feedbackErrEl = fbEl('div', 'error');
+      feedbackSubmitBtn = fbEl('button', 'btn btn-primary', '提交');
+      const cancelBtn = fbEl('button', 'btn btn-ghost', '取消');
+      feedbackFormBox.appendChild(feedbackTextEl);
+      feedbackFormBox.appendChild(feedbackContactEl);
+      feedbackFormBox.appendChild(feedbackErrEl);
+      feedbackFormBox.appendChild(feedbackSubmitBtn);
+      feedbackFormBox.appendChild(cancelBtn);
+      card.appendChild(feedbackFormBox);
+
+      feedbackSuccessBox = fbEl('div', null);
+      feedbackSuccessBox.id = 'feedback-success';
+      feedbackSuccessBox.hidden = true;
+      feedbackSuccessBox.appendChild(fbEl('div', 'ok-icon', '✓'));
+      feedbackSuccessBox.appendChild(fbEl('p', null, '感谢反馈，我们已收到你的意见。'));
+      const closeBtn = fbEl('button', 'btn btn-primary', '关闭');
+      feedbackSuccessBox.appendChild(closeBtn);
+      card.appendChild(feedbackSuccessBox);
+
+      overlay.appendChild(card);
+      document.body.appendChild(overlay);
+      feedbackOverlay = overlay;
+
+      const close = () => {
+        overlay.hidden = true;
+        feedbackFormBox.hidden = false;
+        feedbackSuccessBox.hidden = true;
+        feedbackTextEl.value = '';
+        feedbackContactEl.value = '';
+        feedbackErrEl.textContent = '';
+        feedbackSubmitBtn.disabled = false;
+      };
+      cancelBtn.onclick = close;
+      closeBtn.onclick = close;
+
+      feedbackSubmitBtn.onclick = async () => {
+        const text = feedbackTextEl.value.trim();
+        if (!text) {
+          feedbackErrEl.textContent = '请填写反馈内容';
+          return;
+        }
+        if (text.length > 2000) {
+          feedbackErrEl.textContent = '反馈内容不能超过 2000 字';
+          return;
+        }
+        feedbackSubmitBtn.disabled = true;
+        feedbackErrEl.textContent = '';
+        try {
+          // 未登录时 apiFetch 会先弹登录浮层，登录成功后续跑本请求
+          const res = await CNStockAuth.apiFetch('/api/feedback', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ text, contact: feedbackContactEl.value.trim() }),
+          });
+          const data = await res.json();
+          if (!res.ok) {
+            feedbackErrEl.textContent = data.error || ('提交失败（HTTP ' + res.status + '）');
+            feedbackSubmitBtn.disabled = false;
+            return;
+          }
+          feedbackFormBox.hidden = true;
+          feedbackSuccessBox.hidden = false;
+        } catch (e) {
+          feedbackErrEl.textContent = '网络错误：' + e.message;
+          feedbackSubmitBtn.disabled = false;
+        }
+      };
+    }
+
+    feedbackBtn.onclick = () => {
+      buildFeedbackModal();
+      feedbackOverlay.hidden = false;
+      feedbackTextEl.focus();
+    };
+    // <<< feedback-modal:end
 
     window.addEventListener('cnstock:login', () => updateLogout());
     window.addEventListener('cnstock:logout', () => updateLogout());

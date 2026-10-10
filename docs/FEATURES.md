@@ -1273,3 +1273,42 @@
   自洽、标读归零、用户隔离、limit 收敛）；隔离端口 18799 端到端：pushInbox →
   history 未读 1 → 再拉不变 → drain 取走 → history 已读未读 0 → /inbox 页面
   200。聊天页 drain 与 App 桥接契约用例（webchat-bridge.test.ts）原样通过。
+
+## 44. 意见反馈 + 最小管理端（REQ-Feedback-Admin，2026-10-10 新增）
+
+- **定位**：STATUS「其他候选方向」第 7 条（意见反馈）与第 8 条（管理后台）的
+  最小合做切片：只做"反馈提交 + 管理员查看反馈列表"。完整管理后台（用户列表/
+  运行数据等）仍是独立候选方向。需求文档
+  [docs/requirements/feedback-admin-lite.md](requirements/feedback-admin-lite.md)。
+- **存储层**（[src/storage/store.ts](../src/storage/store.ts)）：
+  - 新表 `feedback(id, user_id, username, text, contact, created_at)` +
+    `idx_feedback_created` 索引。username 为提交时快照（反范化，免 JOIN）。
+  - `pushFeedback`：每用户保留最近 200 条（封顶 DELETE 模式照抄 pushInbox），
+    返回自增 id；`listFeedback(limit)`：全用户 id 倒序；`countFeedback()`：总量。
+  - 隐私最小化：只存用户名快照 + 用户自填内容，不存 UA/IP。
+- **API**（[src/channels/webchat.ts](../src/channels/webchat.ts)，挂 requireSession 后）：
+  - `POST /api/feedback`：text 必填 trim 后 1..2000 字、contact 选填 ≤100 字，
+    校验失败 400；成功 `{ ok: true, id }`。
+  - `GET /api/admin/feedback?limit=`：`requireAdmin(config.adminUsernames)`，
+    limit 收敛 1..200（FEEDBACK_LIST_MAX）、缺省 100；返回 `{ items, total }`。
+- **管理员体系（最小实现）**：`ADMIN_USERS` 环境变量（逗号分隔用户名）→
+  `config.adminUsernames`（Set，模块加载时解析一次）；users 表不加列（免迁移，
+  改配置即生效）；[src/auth/middleware.ts](../src/auth/middleware.ts) 新增
+  `requireAdmin` 工厂（requireSession 之后逐路由挂）。**空集合 = fail-closed，
+  管理 API 一律 403**。用户名为注册时的精确匹配（大小写敏感）。
+- **前端**：
+  - [public/webchat/index.html](../public/webchat/index.html)：页头"反馈"按钮
+    （logout-btn 之前，`button.nav` 同款）→ 弹窗复用 .auth-overlay/.auth-card，
+    DOM 全 createElement + 文本节点（不拼 innerHTML，与 md-bold 渲染器同红线）；
+    未登录时 apiFetch 自然弹登录浮层。
+  - [public/admin/index.html](../public/admin/index.html)：**全站与 App 无任何
+    入口链接**，只能手动输地址；meta noindex；登录（复用 CNStockAuth 浮层）→
+    403 显示"无权访问"且不渲染任何数据；列表 60s 轮询 + 手动刷新。
+- **静态页不鉴权的安全口径**（与全站一致）：/admin 的 HTML/JS 可被任何人下载，
+  但页面零硬编码数据，全部数据走 requireSession + requireAdmin 双重把守的 API；
+  任何敏感信息不得进静态资源。
+- **验证**：typecheck + 44 文件 341 用例全绿（config ADMIN_USERS 解析 2 条 +
+  tests/feedback-api.test.ts 6 条：401、校验 400、store 往返/200 封顶、管理员
+  跨用户列表与字段白名单、非管理员 403 不泄露、limit 收敛 +
+  tests/feedback-admin-unset.test.ts 空配置 fail-closed）；临时实例端到端：
+  401/400/200/403/管理员列表全链路实测通过。

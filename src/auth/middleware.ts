@@ -37,3 +37,23 @@ export function requireSession(authService: AuthService) {
     next();
   };
 }
+
+/**
+ * 管理员鉴权（REQ-Feedback-Admin）：必须挂在 requireSession 之后使用，
+ * 按登录用户名实时判定是否在 ADMIN_USERS 配置集合内。
+ * 集合为空（未配置 ADMIN_USERS）时 fail-closed——无人可访问管理 API。
+ */
+export function requireAdmin(adminUsernames: ReadonlySet<string>) {
+  return (req: Request, res: Response, next: NextFunction): void => {
+    const user = req.user;
+    if (!user) {
+      res.status(401).json({ error: '未授权：请先登录' });
+      return;
+    }
+    if (!adminUsernames.has(user.username)) {
+      res.status(403).json({ error: '无权访问：需要管理员账号' });
+      return;
+    }
+    next();
+  };
+}

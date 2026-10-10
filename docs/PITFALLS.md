@@ -700,6 +700,23 @@
   replaceAll(85)、Array.prototype.at(92)、structuredClone(98) 等）；
   必须用时先扩 compat.js 并在注释里标注需要的内核版本。
 
+### [2026-10-10] webchat 页新增 helper 被 md-bold 测试的正则守护误伤：`xxx.textContent = text` 形态全匹配
+
+- **症状**：在 `public/webchat/index.html` 给新功能（如反馈弹窗）写
+  `el.textContent = text` 的 helper 后，`npm test` 里
+  tests/webchat-md-bold.test.ts 的"addMsg 与回复填充均走 setMsgText"用例失败，
+  报错 `expected ... not to match /textContent\s*=\s*(text|data\.reply)/`——
+  新 helper 明明与渲染器无关，却被"防回归守护正则"当旧 bug 复现打回。
+- **根因**：REQ-chat-md-bold 的守护用例用负向正则禁止聊天脚本里出现
+  `textContent = text` / `textContent = data.reply` 直赋（那是修复前的 bug
+  形态），正则按赋值右侧的变量名匹配，新代码的 helper 参数恰好叫 `text`
+  即命中。
+- **修法**：webchat 页新代码给元素填文本时，统一用
+  `e.appendChild(document.createTextNode(String(txt)))`（与 setMsgText 同红线，
+  参数名避开 `text`/`data.reply` 亦可）；不要图省事写 `e.textContent = text`。
+- **预防**：改动 webchat 内联脚本后若 md-bold 用例莫名失败，先 grep 自己新增
+  代码里是否有 `textContent =` 直赋形态，再怀疑渲染器本身。
+
 ---
 
 ## 排查速查

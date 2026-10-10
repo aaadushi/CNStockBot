@@ -1,0 +1,133 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <meta name="robots" content="noindex,nofollow" />
+  <title>股助手 - 管理后台</title>
+  <link rel="stylesheet" href="/shared/theme.css" />
+  <style>
+    /* ---- 反馈条目（结构与消息中心 .msg-item 同风格） ---- */
+    .fb-list { display: flex; flex-direction: column; gap: 12px; }
+    .fb-item {
+      background: var(--card); border: 0; border-radius: var(--radius-lg);
+      box-shadow: var(--shadow-lg); padding: 16px 20px;
+    }
+    .fb-item .head { display: flex; align-items: center; gap: 8px; margin-bottom: 8px; flex-wrap: wrap; }
+    .fb-item .who { font-size: 13px; font-weight: 600; color: var(--text); }
+    .fb-item .time { font-size: 12px; color: var(--text-3); font-variant-numeric: tabular-nums; }
+    .fb-item .contact { font-size: 12px; color: var(--text-2); }
+    .fb-item .text {
+      font-size: 14px; line-height: 1.7; color: var(--text);
+      white-space: pre-wrap; word-break: break-word;
+    }
+    .list-note { font-size: 12px; color: var(--text-3); margin-top: 12px; text-align: center; }
+    .block-error { color: var(--text-3); font-size: 13px; padding: 16px 4px; }
+  </style>
+</head>
+<body>
+  <header class="page-header">
+    <div class="inner">
+      <span class="brand">📊 股助手</span>
+      <span class="sub">管理后台</span>
+      <span class="spacer"></span>
+      <button class="nav btn-ghost" id="logout-btn" style="display:none">退出</button>
+    </div>
+  </header>
+
+  <main class="page page-wide">
+    <h1 class="page-title">意见反馈</h1>
+    <div class="card" style="margin-bottom: 16px;">
+      <div style="display:flex; align-items:center; gap:12px; flex-wrap:wrap;">
+        <span>共 <b id="fb-total" class="text-up">0</b> 条</span>
+        <span style="flex:1"></span>
+        <button class="btn btn-ghost btn-sm" id="refresh-btn">刷新</button>
+      </div>
+    </div>
+
+    <div class="card">
+      <div id="fb-list" class="fb-list"></div>
+      <div class="list-note" id="list-note"></div>
+    </div>
+  </main>
+
+  <script src="/shared/compat.js"></script>
+  <script src="/shared/auth.js"></script>
+  <script>
+    'use strict';
+    const $ = (id) => document.getElementById(id);
+
+    const logoutBtn = $('logout-btn');
+    logoutBtn.onclick = () => { CNStockAuth.logout(); location.reload(); };
+    window.addEventListener('cnstock:login', () => { logoutBtn.style.display = 'inline-block'; });
+    window.addEventListener('cnstock:logout', () => { logoutBtn.style.display = 'none'; });
+    if (CNStockAuth.isLoggedIn()) logoutBtn.style.display = 'inline-block';
+
+    /* ================= 工具 ================= */
+    function el(tag, cls, text) {
+      const e = document.createElement(tag);
+      if (cls) e.className = cls;
+      if (text !== undefined) e.textContent = text; // 一律 textContent，防 XSS
+      return e;
+    }
+    function pad2(n) { return n < 10 ? '0' + n : '' + n; }
+    function fmtTime(ts) {
+      const d = new Date(ts);
+      return d.getFullYear() + '-' + pad2(d.getMonth() + 1) + '-' + pad2(d.getDate())
+        + ' ' + pad2(d.getHours()) + ':' + pad2(d.getMinutes());
+    }
+
+    /* ================= 意见反馈列表（REQ-Feedback-Admin） =================
+     * 未登录：apiFetch 自动弹登录浮层，登录成功后续跑本请求；
+     * 非管理员：403 → 显示"无权访问"，绝不渲染任何反馈数据；
+     * 已读状态/删除/回复均不存在（需求文档"不做"清单）。 */
+    function renderList(items, total) {
+      $('fb-total').textContent = total;
+      const box = $('fb-list');
+      box.textContent = '';
+      if (!items || items.length === 0) {
+        box.appendChild(el('div', 'block-error', '暂无反馈。'));
+        $('list-note').textContent = '';
+        return;
+      }
+      for (const f of items) {
+        const item = el('div', 'fb-item');
+        const head = el('div', 'head');
+        head.appendChild(el('span', 'who', f.username));
+        head.appendChild(el('span', 'time', fmtTime(f.createdAt)));
+        head.appendChild(el('span', 'contact', f.contact ? '联系方式：' + f.contact : '未留联系方式'));
+        item.appendChild(head);
+        item.appendChild(el('div', 'text', f.text));
+        box.appendChild(item);
+      }
+      $('list-note').textContent = '按提交时间倒序，仅显示最近 200 条（总量见上方计数）';
+    }
+
+    async function load() {
+      $('fb-list').textContent = '';
+      $('fb-list').appendChild(el('div', 'block-error', '加载中…'));
+      try {
+        const res = await CNStockAuth.apiFetch('/api/admin/feedback?limit=200');
+        if (res.status === 403) {
+          // 已登录但非管理员（或未配置 ADMIN_USERS）：不渲染任何数据
+          $('fb-list').textContent = '';
+          $('fb-list').appendChild(el('div', 'block-error', '无权访问：当前账号不是管理员'));
+          $('list-note').textContent = '';
+          return;
+        }
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.error || ('HTTP ' + res.status));
+        renderList(data.items, data.total);
+      } catch (e) {
+        $('fb-list').textContent = '';
+        $('fb-list').appendChild(el('div', 'block-error', '加载失败：' + e.message));
+        $('list-note').textContent = '';
+      }
+    }
+
+    $('refresh-btn').onclick = load;
+    load();
+    setInterval(load, 60000);
+  </script>
+</body>
+</html>
