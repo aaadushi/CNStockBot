@@ -386,6 +386,16 @@ App 形式在安卓手机上运行——手机上随时查行情/自选股/收�
 ## 更新日志
 
 
+- 2026-10-10（批次 37）：**release 签名配置构建验证通过（批次 35 未验证项清零）**。
+  构建者在 Android Studio 打开 `android/` 工程 Sync 成功（KTS 编译无误），
+  Build Variants 切 release 后 Build APK(s) 成功产出
+  `app/build/outputs/apk/release/app-release.apk`（628 KB）；apksigner
+  verify --print-certs 核验签名证书 SHA-256 与密钥库指纹
+  （3D:CA:1B:17:…:EF）完全一致——release 签名全链路（keystore.properties
+  加载 → signingConfigs.release → APK 签名）确认可用，公网分发 APK 的
+  签名基础就绪。
+  - PR：#57（docs/release-signing-verified）。
+
 - 2026-10-10（批次 36）：**F7 验收探针账号清理（运维动作，无代码改动）**——
   兑现批次 32 待办"删除探针账号"：`acceptance_probe` 经查已不存在于生产库
   （未留下 users 记录，该项自然消解）；同批清理 2026-09-27 S3-6 巡检遗留的
@@ -428,6 +438,7 @@ App 形式在安卓手机上运行——手机上随时查行情/自选股/收�
     保持未签名且不 fail；debug 变体零改动；
   - **未验证项**（本机无 Android SDK）：Gradle KTS 语法未经构建验证，
     需构建者在 Android Studio Sync / `gradlew assembleRelease` 确认；
+    **已于当日验证通过**（见批次 37）；
   - PR：#55（feat/android-release-signing）。
   - 文档同步：android/README.md 新增"release 签名"节（含备份警告——
     密钥丢失=无法覆盖安装）；需求文档
