@@ -68,6 +68,10 @@ app.get('/health', async (_req, res) => {
 
 for (const ch of channels) ch.mount(app, agent);
 
+// 根路径直达聊天页（REQ-Root-Redirect）：直接访问域名/裸 IP 的浏览器访客
+// 自动跳到 /webchat，避免 Express 默认 "Cannot GET /" 劝退试用者
+app.get('/', (_req, res) => res.redirect('/webchat'));
+
 // 兜底错误中间件（须注册在所有路由之后）：不向客户端泄露堆栈
 app.use(((err: unknown, _req: express.Request, res: express.Response, _next: express.NextFunction) => {
   console.error('[http] 请求处理异常:', err);

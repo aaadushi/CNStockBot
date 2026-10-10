@@ -386,6 +386,16 @@ App 形式在安卓手机上运行——手机上随时查行情/自选股/收�
 ## 更新日志
 
 
+- 2026-10-10（批次 39）：**根路径 `/` 重定向到 `/webchat`（REQ-Root-Redirect）**。
+  朋友试用直接访问根地址报 "Cannot GET /"（浏览器白屏）的反馈驱动：
+  - `src/index.ts`：渠道挂载后新增 `app.get('/')` → 302 `/webchat`
+    （临时跳转非 301，保留更换落地页空间）；
+  - 需求文档 [REQ-Root-Redirect](requirements/root-redirect.md)；
+  - local-tunnel.md 故障排查表相应更新（旧版才需手动加 /webchat）；
+  - 验证：临时端口 18099 端到端实测 `GET /` → 302 Location: /webchat，
+    /health 200；npm run typecheck + 42 文件 331 用例全绿。
+  - PR：#61（feat/root-redirect）。
+
 - 2026-10-10（批次 38）：**自测临时公网隧道（REQ-Dev-Tunnel，演示工具）**。
   公网发布前的自测/演示阶段，零成本把本机主服务映射为临时 https 地址：
   - 新增 `scripts/tunnel-demo.bat`（Windows）/ `tunnel-demo.sh`（Linux/macOS）：
