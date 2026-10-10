@@ -18,3 +18,6 @@ android/.gradle/
 android/**/build/
 android/local.properties
 android/.idea/
+
+# Android release 签名密钥与密码（F7 公网分发前置，绝不可入库）
+android/keystore/
