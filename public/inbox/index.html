@@ -1,0 +1,162 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>股助手 - 消息中心</title>
+  <link rel="stylesheet" href="/shared/theme.css" />
+  <style>
+    /* ---- 消息条目 ---- */
+    .msg-list { display: flex; flex-direction: column; gap: 12px; }
+    .msg-item {
+      background: var(--card); border: 0; border-radius: var(--radius-lg);
+      box-shadow: var(--shadow-lg); padding: 16px 20px;
+    }
+    .msg-item .head { display: flex; align-items: center; gap: 8px; margin-bottom: 8px; }
+    .msg-item .dot {
+      width: 8px; height: 8px; border-radius: 50%; background: var(--accent); flex: none;
+    }
+    .msg-item.read .dot { background: var(--border); }
+    .msg-item .time { font-size: 12px; color: var(--text-3); font-variant-numeric: tabular-nums; }
+    .msg-item .text {
+      font-size: 14px; line-height: 1.7; color: var(--text);
+      white-space: pre-wrap; word-break: break-word;
+    }
+    .msg-item.read .text { color: var(--text-2); }
+    .list-note { font-size: 12px; color: var(--text-3); margin-top: 12px; text-align: center; }
+    .block-error { color: var(--text-3); font-size: 13px; padding: 16px 4px; }
+  </style>
+</head>
+<body>
+  <header class="page-header">
+    <div class="inner">
+      <span class="brand">📈 股助手</span>
+      <span class="sub">消息中心</span>
+      <span class="spacer"></span>
+      <a class="nav" href="/stocks">自选股</a>
+      <a class="nav" href="/market">涨跌榜</a>
+      <a class="nav" href="/funds">基金</a>
+      <a class="nav" href="/news">快讯</a>
+      <a class="nav" href="/sectors">板块</a>
+      <a class="nav" href="/overseas">外盘</a>
+      <a class="nav" href="/scanner">扫描</a>
+      <a class="nav" href="/backtest">回测</a>
+      <a class="nav active" href="/inbox">消息</a>
+      <a class="nav" href="/webchat">聊天</a>
+      <button class="nav btn-ghost" id="logout-btn" style="display:none">退出</button>
+    </div>
+  </header>
+
+  <main class="page page-wide">
+    <h1 class="page-title">消息中心</h1>
+    <div class="card" style="margin-bottom: 16px;">
+      <div style="display:flex; align-items:center; gap:12px; flex-wrap:wrap;">
+        <span>未读 <b id="unread-count" class="text-up">0</b> 条</span>
+        <span style="flex:1"></span>
+        <button class="btn btn-ghost btn-sm" id="read-all-btn">全部标为已读</button>
+        <button class="btn btn-ghost btn-sm" id="refresh-btn">刷新</button>
+      </div>
+    </div>
+
+    <div class="card">
+      <div id="msg-list" class="msg-list"></div>
+      <div class="list-note" id="list-note"></div>
+    </div>
+
+    <div class="disclaimer">数据仅供参考，不构成投资建议</div>
+  </main>
+
+  <script src="/shared/compat.js"></script>
+  <script src="/shared/auth.js"></script>
+  <script>
+    'use strict';
+    const $ = (id) => document.getElementById(id);
+
+    const logoutBtn = $('logout-btn');
+    logoutBtn.onclick = () => { CNStockAuth.logout(); location.reload(); };
+    window.addEventListener('cnstock:login', () => { logoutBtn.style.display = 'inline-block'; });
+    window.addEventListener('cnstock:logout', () => { logoutBtn.style.display = 'none'; });
+    if (CNStockAuth.isLoggedIn()) logoutBtn.style.display = 'inline-block';
+
+    /* ================= 工具 ================= */
+    function el(tag, cls, text) {
+      const e = document.createElement(tag);
+      if (cls) e.className = cls;
+      if (text !== undefined) e.textContent = text; // 一律 textContent，防 XSS
+      return e;
+    }
+    function pad2(n) { return n < 10 ? '0' + n : '' + n; }
+    function fmtTime(ts) {
+      const d = new Date(ts);
+      return d.getFullYear() + '-' + pad2(d.getMonth() + 1) + '-' + pad2(d.getDate())
+        + ' ' + pad2(d.getHours()) + ':' + pad2(d.getMinutes());
+    }
+
+    /* ================= 消息中心（F7-4，REQ-F7-4） =================
+     * 非破坏拉取 /api/inbox/history：不删除、不置读，与聊天页的 drain 轮询
+     * 互不干扰（绝不调用 /api/inbox，防两页互抢消息）。
+     * 30s 轮询与 drain 同节奏（REQ-F7-4 非功能需求）。 */
+    let unreadCount = 0;
+
+    function renderBadge() {
+      $('unread-count').textContent = unreadCount;
+    }
+
+    function renderList(messages) {
+      const box = $('msg-list');
+      box.replaceChildren();
+      if (!messages || messages.length === 0) {
+        box.appendChild(el('div', 'block-error', '暂无消息。收盘日报、异动提醒等推送会出现在这里。'));
+        $('list-note').textContent = '';
+        return;
+      }
+      for (const m of messages) {
+        const item = el('div', 'msg-item' + (m.read ? ' read' : ''));
+        const head = el('div', 'head');
+        head.appendChild(el('span', 'dot'));
+        head.appendChild(el('span', 'time', fmtTime(m.createdAt)));
+        item.appendChild(head);
+        item.appendChild(el('div', 'text', m.text));
+        box.appendChild(item);
+      }
+      $('list-note').textContent = '仅保留最近 100 条（与聊天页共享同一收件箱）';
+    }
+
+    async function loadHistory() {
+      $('msg-list').replaceChildren(el('div', 'block-error', '加载中…'));
+      try {
+        const res = await CNStockAuth.apiFetch('/api/inbox/history?limit=100');
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.error || ('HTTP ' + res.status));
+        unreadCount = data.unreadCount || 0;
+        renderBadge();
+        renderList(data.messages);
+      } catch (e) {
+        $('msg-list').replaceChildren(el('div', 'block-error', '消息加载失败：' + e.message));
+        $('list-note').textContent = '';
+      }
+    }
+
+    $('refresh-btn').onclick = loadHistory;
+    $('read-all-btn').onclick = async () => {
+      const btn = $('read-all-btn');
+      btn.disabled = true;
+      try {
+        const res = await CNStockAuth.apiFetch('/api/inbox/read', { method: 'POST' });
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.error || ('HTTP ' + res.status));
+        unreadCount = 0;
+        renderBadge();
+        await loadHistory(); // 重新拉取，未读高亮撤掉
+      } catch (e) {
+        alert('标记已读失败：' + e.message);
+      } finally {
+        btn.disabled = false;
+      }
+    };
+
+    loadHistory();
+    setInterval(loadHistory, 30000);
+  </script>
+</body>
+</html>

@@ -1234,3 +1234,42 @@
   全绿（300 测试，新增桥接契约 5 条）；**APK 构建与真机验收（通知弹出/权限弹窗/
   启动屏/开关保持）由构建者在 Android Studio 执行**（REQ-F7-3 验收标准 1~7），
   本机无 Android SDK。
+
+## 43. 消息中心页（/inbox，F7-4，2026-10-10 新增）
+
+- **定位**：F7 阶段 3+。推送型消息（收盘日报/异动提醒）此前只有聊天页一个出口：
+  drain 即删、无历史可回查、混在对话流里。消息中心提供聚合视图，浏览器与
+  App 内都可用（纯网页端实现，App 壳零改动）。需求文档
+  [docs/requirements/F7-4-inbox-page.md](requirements/F7-4-inbox-page.md)。
+- **存储层**（[src/storage/store.ts](../src/storage/store.ts)）：
+  - inbox 表加 `read` 列（INTEGER 0/1）。存量库用 `PRAGMA table_info` 检测 +
+    `ALTER TABLE ... DEFAULT 1` 补列——默认已读，因为老留存消息都已被旧 drain
+    消费过，避免全亮未读（REQ 迁移要求）。
+  - **`drainInbox` 语义改造（改动前必读）**：从"SELECT 全部 + DELETE"改为
+    "SELECT 未读 + UPDATE read=1"。对聊天页调用方完全无感（仍只取到未读、
+    每条只消费一次），但消息本体归档保留。**drain=取走即已读**是未读自洽的
+    关键（REQ-F7-4 FR-2）：不会出现"聊天里看过、消息中心还显示未读"。
+  - 每用户 100 条上限保留在 `pushInbox`（审计 A-408 思路），drain 不再删除后
+    归档增长仍由此兜底，有界。
+  - `getInboxHistory(userId, limit)`：非破坏（不删不置读），id 倒序 + unreadCount；
+    `markInboxRead(userId)`：全部未读标读，返回标记条数。
+- **API**（[src/channels/webchat.ts](../src/channels/webchat.ts)，挂 requireSession 后）：
+  - `GET /api/inbox/history?limit=N`：缺省 50，收敛 1..100（INBOX_HISTORY_MAX）；
+    返回 `{ messages: [{id,text,createdAt,read}], unreadCount }`。
+  - `POST /api/inbox/read`：`{ marked, unreadCount: 0 }`。
+  - 现有 `GET /api/inbox`（drain）**原样保留**，消息中心前端绝不调用它——
+    drain 只有聊天页一个轮询者，防多页互抢是硬红线（REQ 审计要点）。
+- **前端**（[public/inbox/index.html](../public/inbox/index.html)）：
+  - 时间倒序列表、未读圆点高亮（read 项灰化）、未读数徽标、"全部标为已读"、
+    手动刷新、30s 轮询（与 drain 同节奏）；消息文本一律 textContent 渲染（防注入
+    红线）；复用 theme.css/auth.js/compat.js（Chrome 83 WebView 兼容，无 86+ API）。
+  - 9 个现有页页头统一加"消息"入口（`/inbox`）。
+- **已读状态取舍（REQ 要求二选一并文档化）**：采用**每条消息 read 标记**而非
+  用户级 read_cursor——按条精确、无需游标推进，"全部标读"同样一条 SQL。
+  边界语义：在消息中心先标读后，聊天页 drain 不会再取该条（用户已确认）；
+  先聊天后看中心则显示已读。两个方向均自洽。
+- **验证**：typecheck + 41 文件 321 用例全绿（store 收件箱 5 条重写/新增 +
+  tests/inbox-api.test.ts 集成 6 条：401、非破坏两轮拉取、drain/history 并存
+  自洽、标读归零、用户隔离、limit 收敛）；隔离端口 18799 端到端：pushInbox →
+  history 未读 1 → 再拉不变 → drain 取走 → history 已读未读 0 → /inbox 页面
+  200。聊天页 drain 与 App 桥接契约用例（webchat-bridge.test.ts）原样通过。

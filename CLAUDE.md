@@ -82,7 +82,8 @@ public/overseas/      外盘联动页（F6-4：美股指数/中概股/国际金�
 public/sectors/       板块轮动页（F6-3：涨跌/资金流排行 + 板块详情（成分股+走势图）+ 个股→板块共振，数据经 data-service）
 public/scanner/       选股扫描页（F5-5：本地日 K 库 + 7 预设策略全市场扫描 + 库状态/手动更新，数据经 data-service）
 public/backtest/      策略回测页（F5-6：单股历史信号回放，T+1/费用/滑点/止损，净值曲线 vs 基准 + 逐笔明细，数据经 data-service）
-public/shared/        前端共享设计系统 theme.css + auth.js（S4-1：CNStockAuth 登录/注册/登出/apiFetch）
+public/inbox/         消息中心页（F7-4：收件箱归档聚合视图，非破坏 history API + 已读标记，drain 语义不变）
+public/shared/        前端共享设计系统 theme.css + auth.js（S4-1：CNStockAuth 登录/注册/登出/apiFetch）+ compat.js（F7-2：WebView 兼容层）
 tests/                vitest 单测（npm test）；fixtures/eastmoney/ 为真实接口响应回放
 docs/                 文档库：STATUS（功能与问题）/ FEATURES（实现手册）/ PITFALLS（踩坑病例）/ AUDIT（代码审计）/ 架构与数据源
 ```

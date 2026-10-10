@@ -25,7 +25,11 @@ const OVERSEAS_ROOT = path.resolve(__dirname, '../../public/overseas');
 const SECTORS_ROOT = path.resolve(__dirname, '../../public/sectors');
 const SCANNER_ROOT = path.resolve(__dirname, '../../public/scanner');
 const BACKTEST_ROOT = path.resolve(__dirname, '../../public/backtest');
+const INBOX_ROOT = path.resolve(__dirname, '../../public/inbox');
 const SHARED_ROOT = path.resolve(__dirname, '../../public/shared');
+
+/** 消息中心 history 接口的条数上限（F7-4，防一次拉全表） */
+const INBOX_HISTORY_MAX = 100;
 
 /** 股票代码统一校验：6 位数字 */
 const CODE_RE = /^\d{6}$/;
@@ -93,6 +97,7 @@ export class WebChatChannel implements Channel {
     app.use('/sectors', express.static(SECTORS_ROOT));
     app.use('/scanner', express.static(SCANNER_ROOT));
     app.use('/backtest', express.static(BACKTEST_ROOT));
+    app.use('/inbox', express.static(INBOX_ROOT));
     app.use('/shared', express.static(SHARED_ROOT));
 
     // 公开认证路由；之后所有 /api/* 都需要 session token（静态资源不在 /api 下，不鉴权）
@@ -113,8 +118,27 @@ export class WebChatChannel implements Channel {
       }
     });
 
+    /**
+     * 收件箱 drain（读后即消费，聊天页 + App 壳桥接的唯一轮询者，F7-4 起语义为
+     * "取走未读并标记已读"，消息本体归档保留供消息中心回查，本接口行为对调用方无感）。
+     */
     app.get('/api/inbox', (req, res) => {
       res.json({ messages: this.store.drainInbox(req.user!.userId) });
+    });
+
+    // ---- 消息中心（F7-4，REQ-F7-4）：非破坏拉取，绝不调用 drain，防与聊天页互抢 ----
+
+    /** 最近 N 条归档（时间倒序）+ 未读数；不删除、不置读 */
+    app.get('/api/inbox/history', (req, res) => {
+      const raw = Number((req.query as { limit?: string }).limit ?? 50);
+      const limit = Number.isInteger(raw) && raw > 0 ? Math.min(raw, INBOX_HISTORY_MAX) : 50;
+      res.json(this.store.getInboxHistory(req.user!.userId, limit));
+    });
+
+    /** 全部标为已读 */
+    app.post('/api/inbox/read', (req, res) => {
+      const marked = this.store.markInboxRead(req.user!.userId);
+      res.json({ marked, unreadCount: 0 });
     });
 
     // ---- 股票浏览页 API ----
