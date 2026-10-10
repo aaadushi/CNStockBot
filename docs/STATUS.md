@@ -385,6 +385,7 @@ App 形式在安卓手机上运行——手机上随时查行情/自选股/收�
 
 ## 更新日志
 
+
 - 2026-10-10（批次 34）：**聊天页 LLM 回复 Markdown 加粗渲染（REQ-chat-md-bold，
   "其他候选方向"第 6 条方案②）**。真机验收发现的 `**加粗**` 原始字符展示问题：
   - 前端（public/webchat/index.html）：新增极简解析渲染器 `renderMdBold` +
@@ -401,6 +402,27 @@ App 形式在安卓手机上运行——手机上随时查行情/自选股/收�
     `****` 字面保留、XSS 尝试（img onerror / strong 段内嵌 script 标签）纯文本化、
     null/undefined 健壮、渲染器无 innerHTML、addMsg 接线断言；42 文件 331 用例全绿。
   - PR：#54（fix/webchat-md-bold-renderer）。
+
+- 2026-10-10（批次 35）：**release 签名密钥生成与工程接入完成**
+  （REQ-Android-Release-Signing，兑现批次 31/32 待办"release 签名密钥生成
+  （公网分发前）"）。这是 F7 公网分发 APK 的签名基础：
+  - keytool 生成密钥库 `android/keystore/cnstockbot-release.jks`
+    （alias `cnstockbot_release`，RSA 3072，有效期 10000 天，SHA-256
+    指纹见 PR/汇报）；密码仅写入本机 `android/keystore/keystore.properties`
+    （storeFile/storePassword/keyAlias/keyPassword 四键，storepass=keypass
+    为 Android 常规做法）；
+  - **审计红线核验**：根 `.gitignore` 新增 `android/keystore/` 整目录排除，
+    `git status --ignored` 确认密钥库与 properties 均为 ignored、
+    `git ls-files` 为零跟踪——私钥与密码绝不入库；
+  - Gradle 接入（`android/app/build.gradle.kts`）：仅当 properties 存在时
+    创建 `signingConfigs["release"]` 绑定 release 变体；文件缺失时 release
+    保持未签名且不 fail；debug 变体零改动；
+  - **未验证项**（本机无 Android SDK）：Gradle KTS 语法未经构建验证，
+    需构建者在 Android Studio Sync / `gradlew assembleRelease` 确认；
+  - PR：#55（feat/android-release-signing）。
+  - 文档同步：android/README.md 新增"release 签名"节（含备份警告——
+    密钥丢失=无法覆盖安装）；需求文档
+    [REQ-Android-Release-Signing](requirements/android-release-signing.md)。
 
 - 2026-10-10（批次 33）：**F7-4 消息中心页完成**（REQ-F7-4，真机验收提出当日实现）。
   收盘日报/异动提醒等推送此前只有聊天页一个出口（drain 即删、无历史、混在
@@ -442,8 +464,9 @@ App 形式在安卓手机上运行——手机上随时查行情/自选股/收�
     [REQ-F7-4](requirements/F7-4-inbox-page.md)（非破坏 history API + 已读
     状态 + /inbox 聚合页；drain 语义不可破坏、App 壳零改动），登记 F7 路线
     图"阶段 3+"，留待下一个 agent 实现；
-  - 待办：验收完成后删除探针账号 acceptance_probe；release 签名密钥生成
-    （公网分发前）；"Android 13+ 通知权限拒绝"项需另找 13+ 设备补验。
+  - 待办：验收完成后删除探针账号 acceptance_probe；~~release 签名密钥生成
+    （公网分发前）~~ ✅ 批次 34 完成；"Android 13+ 通知权限拒绝"项需另找
+    13+ 设备补验。
 
 - 2026-10-10（批次 31）：**F7-2 真机验收第一轮发现并修复 WebView 兼容性
   缺陷**。验收机 Vivo V1838A（Android 10）出现"聊天页正常、其余 8 个数据页
@@ -462,8 +485,8 @@ App 形式在安卓手机上运行——手机上随时查行情/自选股/收�
     （验收清单第 1-4 项 ✅）；通知项待登录态下推 inbox 消息复验；
     "Android 13+ 通知权限拒绝"项该机（Android 10）覆盖不了，需另找设备；
   - `npm test` 全绿（309 测试）。
-  - 待办：验收完成后删除探针账号 acceptance_probe；release 签名密钥
-    生成（公网分发前）。
+  - 待办：验收完成后删除探针账号 acceptance_probe；~~release 签名密钥
+    生成（公网分发前）~~ ✅ 批次 34 完成。
 
 - 2026-10-10（批次 30）：**P12 修复——/sectors 整页与 /funds ETF Tab 引入
   异源降级（REQ-P12）**。当日东财对本机 IP 封禁仍在持续（push2 rc:102），

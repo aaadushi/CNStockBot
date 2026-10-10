@@ -15,7 +15,8 @@
 1. 用 Android Studio（建议 Hedgehog 及以上，自带 JDK 17）打开本 `android/` 目录；
 2. 等待 Gradle Sync 完成（会自动下载 AGP 8.5.2 + Kotlin 1.9.24）；
 3. `Build → Build Bundle(s) / APK(s) → Build APK(s)`：
-   - 选 `debug` 构建变体 → 输出 `app-debug.apk`（允许明文 HTTP，供局域网调试）；
+   - 选 `debug` 构建变体 → 输出 `app-debug.apk`（允许明文 HTTP，供局域网调试，
+     使用 Android 默认 debug 签名）；
    - 选 `release` 构建变体 → 输出 `app-release.apk`（仅 HTTPS，正式分发用）。
 
 命令行方式（需本机装有 Android SDK 与 Gradle 8.7+）：
@@ -24,6 +25,25 @@
 cd android
 gradle assembleDebug      # 或 assembleRelease
 ```
+
+## release 签名（公网分发前置）
+
+release 构建的签名密钥**不入库**（根 `.gitignore` 已排除整个
+`android/keystore/` 目录），通过本机属性文件按需接入：
+
+- 密钥库：`android/keystore/cnstockbot-release.jks`
+  （alias `cnstockbot_release`，RSA 3072，有效期 10000 天）；
+- 属性文件：`android/keystore/keystore.properties`，含
+  `storeFile` / `storePassword` / `keyAlias` / `keyPassword` 四键；
+- 构建逻辑：`app/build.gradle.kts` 仅当该 properties 文件存在时创建
+  `signingConfigs["release"]` 并绑定到 release 变体——**文件缺失时
+  release 保持未签名构建、不会报错**（新克隆的机器仍可正常 Sync/构建 debug）。
+
+> ⚠️ **备份警告**：`android/keystore/` 整个目录（.jks + properties）是发布者
+> 唯一签名资产。**换机器、重装系统、清理工作区前必须整体备份**到安全介质——
+> Android 签名密钥丢失意味着永远无法对同一应用 ID
+> （`com.cnstockbot.app`）再签名，已安装用户无法覆盖安装，只能换应用 ID
+> 当作全新应用重新发布。密码只在 properties 文件里，恢复时需要两者都在。
 
 ## 安装与使用
 
