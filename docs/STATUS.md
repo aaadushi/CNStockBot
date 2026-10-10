@@ -400,7 +400,7 @@ App 形式在安卓手机上运行——手机上随时查行情/自选股/收�
     读内联脚本 + 桩 document 行为断言）：成对拆分、多段加粗、不成对字面保留、
     `****` 字面保留、XSS 尝试（img onerror / strong 段内嵌 script 标签）纯文本化、
     null/undefined 健壮、渲染器无 innerHTML、addMsg 接线断言；42 文件 331 用例全绿。
-  - PR：#PR-TBD（合并后回填）。
+  - PR：#54（fix/webchat-md-bold-renderer）。
 
 - 2026-10-10（批次 33）：**F7-4 消息中心页完成**（REQ-F7-4，真机验收提出当日实现）。
   收盘日报/异动提醒等推送此前只有聊天页一个出口（drain 即删、无历史、混在
