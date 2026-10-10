@@ -14,8 +14,8 @@
     .status-bar .side { margin-left: auto; display: flex; align-items: center; gap: 10px; }
     .status-bar .note { font-size: 12px; color: var(--text-3); }
     .badge-stale {
-      display: inline-block; font-size: 12px; padding: 2px 8px; border-radius: 999px;
-      background: #fef3c7; color: #92400e; border: 1px solid #fcd34d;
+      display: inline-block; font-size: 12px; padding: 3px 12px; border-radius: 999px;
+      background: #fef3c7; color: #92400e;
     }
     .progress { font-size: 12px; color: var(--accent); }
 
@@ -34,11 +34,15 @@
     .result-list { display: flex; flex-direction: column; gap: 10px; }
     .result-card {
       display: flex; align-items: center; gap: 12px;
-      background: var(--card); border: 1px solid var(--border); border-radius: var(--radius);
-      box-shadow: var(--shadow-sm); padding: 12px 18px; cursor: pointer;
-      transition: box-shadow 150ms ease, transform 150ms ease;
+      background: var(--card); border: 0; border-radius: var(--radius-lg);
+      box-shadow: var(--shadow-lg); padding: 14px 20px; cursor: pointer;
+      transition: all 200ms ease-in-out;
     }
-    .result-card:hover { box-shadow: var(--shadow-md); transform: translateY(-1px); }
+    .result-card:hover {
+      box-shadow: 0 12px 28px rgba(100, 116, 139, .16), 0 8px 20px rgba(99, 102, 241, .12);
+      transform: translateY(-2px);
+    }
+    .result-card:active { transform: scale(.99); }
     .result-card .meta { flex: 0 0 auto; min-width: 130px; }
     .result-card .name { font-size: 15px; font-weight: 600; }
     .result-card .code { font-size: 12px; color: var(--text-2); font-variant-numeric: tabular-nums; }
@@ -56,19 +60,21 @@
       <span class="brand">📈 股助手</span>
       <span class="sub">选股扫描</span>
       <span class="spacer"></span>
-      <a class="nav" href="/stocks">⭐ 自选股</a>
-      <a class="nav" href="/market">📊 涨跌榜</a>
-      <a class="nav" href="/funds">💰 基金</a>
-      <a class="nav" href="/news">📰 快讯</a>
-      <a class="nav" href="/sectors">🏭 板块</a>
-      <a class="nav" href="/overseas">🌐 外盘</a>
-      <a class="nav" href="/backtest">🧪 回测</a>
-      <a class="nav" href="/webchat">💬 聊天</a>
+      <a class="nav" href="/stocks">自选股</a>
+      <a class="nav" href="/market">涨跌榜</a>
+      <a class="nav" href="/funds">基金</a>
+      <a class="nav" href="/news">快讯</a>
+      <a class="nav" href="/sectors">板块</a>
+      <a class="nav" href="/overseas">外盘</a>
+      <a class="nav active" href="/scanner">扫描</a>
+      <a class="nav" href="/backtest">回测</a>
+      <a class="nav" href="/webchat">聊天</a>
       <button class="nav btn-ghost" id="logout-btn" style="display:none">退出</button>
     </div>
   </header>
 
-  <main class="page">
+  <main class="page page-wide">
+    <h1 class="page-title">选股扫描</h1>
     <!-- 本地日 K 库状态条 -->
     <div class="card" style="margin-bottom: 16px;">
       <div class="status-bar">

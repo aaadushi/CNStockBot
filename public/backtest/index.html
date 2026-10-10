@@ -14,7 +14,7 @@
 
     /* ---- 统计格 ---- */
     .stats-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(130px, 1fr)); gap: 10px; }
-    .stat-cell { background: var(--bg); border: 1px solid var(--border); border-radius: var(--radius); padding: 10px 12px; }
+    .stat-cell { background: #f1f5f9; border: 0; border-radius: 16px; padding: 12px 14px; }
     .stat-cell .k { font-size: 12px; color: var(--text-3); margin-bottom: 4px; }
     .stat-cell .v { font-size: 16px; font-weight: 700; font-variant-numeric: tabular-nums; }
 
@@ -23,8 +23,8 @@
     .chart-box svg { width: 100%; height: 260px; display: block; }
     .chart-tip {
       position: absolute; pointer-events: none; display: none; z-index: 5;
-      background: var(--card); border: 1px solid var(--border); border-radius: 8px;
-      box-shadow: var(--shadow-md); padding: 8px 10px; font-size: 12px; line-height: 1.7;
+      background: var(--card); border: 0; border-radius: 14px;
+      box-shadow: var(--shadow-lg); padding: 10px 14px; font-size: 12px; line-height: 1.7;
       font-variant-numeric: tabular-nums; white-space: nowrap;
     }
     .chart-legend { display: flex; gap: 16px; font-size: 12px; color: var(--text-2); margin-bottom: 6px; }
@@ -39,8 +39,9 @@
     .rules-note { font-size: 12px; color: var(--text-3); line-height: 1.8; margin-top: 10px; }
     .block-error { color: var(--text-3); font-size: 13px; padding: 16px 4px; }
     .disclaimer-strong {
-      margin-top: 16px; padding: 10px 14px; border-radius: var(--radius); font-size: 13px;
-      background: #fef3c7; color: #92400e; border: 1px solid #fcd34d;
+      margin-top: 16px; padding: 12px 16px; border-radius: var(--radius); font-size: 13px;
+      background: #fef3c7; color: #92400e;
+      box-shadow: 0 4px 12px rgba(245, 158, 11, .18);
     }
   </style>
 </head>
@@ -50,19 +51,21 @@
       <span class="brand">📈 股助手</span>
       <span class="sub">策略回测</span>
       <span class="spacer"></span>
-      <a class="nav" href="/stocks">⭐ 自选股</a>
-      <a class="nav" href="/market">📊 涨跌榜</a>
-      <a class="nav" href="/funds">💰 基金</a>
-      <a class="nav" href="/news">📰 快讯</a>
-      <a class="nav" href="/sectors">🏭 板块</a>
-      <a class="nav" href="/overseas">🌐 外盘</a>
-      <a class="nav" href="/scanner">🔍 扫描</a>
-      <a class="nav" href="/webchat">💬 聊天</a>
+      <a class="nav" href="/stocks">自选股</a>
+      <a class="nav" href="/market">涨跌榜</a>
+      <a class="nav" href="/funds">基金</a>
+      <a class="nav" href="/news">快讯</a>
+      <a class="nav" href="/sectors">板块</a>
+      <a class="nav" href="/overseas">外盘</a>
+      <a class="nav" href="/scanner">扫描</a>
+      <a class="nav active" href="/backtest">回测</a>
+      <a class="nav" href="/webchat">聊天</a>
       <button class="nav btn-ghost" id="logout-btn" style="display:none">退出</button>
     </div>
   </header>
 
-  <main class="page">
+  <main class="page page-wide">
+    <h1 class="page-title">策略回测</h1>
     <!-- 回测条件 -->
     <div class="card" style="margin-bottom: 16px;">
       <div class="bt-form">

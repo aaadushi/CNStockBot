@@ -10,11 +10,15 @@
     .stock-list { display: flex; flex-direction: column; gap: 12px; }
     .stock-card {
       display: flex; align-items: center; gap: 12px;
-      background: var(--card); border: 1px solid var(--border); border-radius: var(--radius);
-      box-shadow: var(--shadow-sm); padding: 16px 20px; cursor: pointer;
-      transition: box-shadow 150ms ease, transform 150ms ease;
+      background: var(--card); border: 0; border-radius: var(--radius-lg);
+      box-shadow: var(--shadow-lg); padding: 18px 22px; cursor: pointer;
+      transition: all 200ms ease-in-out;
     }
-    .stock-card:hover { box-shadow: var(--shadow-md); transform: translateY(-1px); }
+    .stock-card:hover {
+      box-shadow: 0 12px 28px rgba(100, 116, 139, .16), 0 8px 20px rgba(99, 102, 241, .12);
+      transform: translateY(-2px);
+    }
+    .stock-card:active { transform: scale(.99); }
     .stock-card .meta { flex: 1; min-width: 0; }
     .stock-card .name { font-size: 16px; font-weight: 600; }
     .stock-card .code { font-size: 13px; color: var(--text-2); font-variant-numeric: tabular-nums; }
@@ -50,19 +54,21 @@
       <span class="brand">📈 股助手</span>
       <span class="sub">今日涨跌榜</span>
       <span class="spacer"></span>
-      <a class="nav" href="/stocks">⭐ 自选股</a>
-      <a class="nav" href="/funds">💰 基金</a>
-      <a class="nav" href="/news">📰 快讯</a>
-      <a class="nav" href="/sectors">🏭 板块</a>
-      <a class="nav" href="/overseas">🌐 外盘</a>
-      <a class="nav" href="/scanner">🔍 扫描</a>
-      <a class="nav" href="/backtest">🧪 回测</a>
-      <a class="nav" href="/webchat">💬 聊天</a>
+      <a class="nav" href="/stocks">自选股</a>
+      <a class="nav active" href="/market">涨跌榜</a>
+      <a class="nav" href="/funds">基金</a>
+      <a class="nav" href="/news">快讯</a>
+      <a class="nav" href="/sectors">板块</a>
+      <a class="nav" href="/overseas">外盘</a>
+      <a class="nav" href="/scanner">扫描</a>
+      <a class="nav" href="/backtest">回测</a>
+      <a class="nav" href="/webchat">聊天</a>
       <button class="nav btn-ghost" id="logout-btn" style="display:none">退出</button>
     </div>
   </header>
 
-  <main class="page">
+  <main class="page page-wide">
+    <h1 class="page-title">今日涨跌榜</h1>
     <div class="card" style="margin-bottom: 16px;">
       <div class="overview">
         <div class="stat"><span class="num text-up" id="up-count">—</span><span class="unit">家上涨</span></div>

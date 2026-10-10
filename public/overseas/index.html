@@ -11,9 +11,11 @@
     .card .block-note { font-size: 12px; color: var(--text-3); margin-top: 12px; }
     .quote-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 10px; }
     .quote-tile {
-      border: 1px solid var(--border); border-radius: 10px; padding: 10px 12px;
+      background: #f8fafc; border: 0; border-radius: 16px; padding: 12px 14px;
       display: flex; flex-direction: column; gap: 2px;
+      transition: all 200ms ease-in-out;
     }
+    .quote-tile:hover { background: var(--accent-soft); transform: translateY(-1px); }
     .quote-tile .name { font-size: 12px; color: var(--text-2); }
     .quote-tile .price { font-size: 16px; font-weight: 600; font-variant-numeric: tabular-nums; }
     .quote-tile .time { font-size: 11px; color: var(--text-3); }
@@ -32,19 +34,21 @@
       <span class="brand">📈 股助手</span>
       <span class="sub">外盘联动</span>
       <span class="spacer"></span>
-      <a class="nav" href="/stocks">⭐ 自选股</a>
-      <a class="nav" href="/market">📊 涨跌榜</a>
-      <a class="nav" href="/funds">💰 基金</a>
-      <a class="nav" href="/news">📰 快讯</a>
-      <a class="nav" href="/sectors">🏭 板块</a>
-      <a class="nav" href="/scanner">🔍 扫描</a>
-      <a class="nav" href="/backtest">🧪 回测</a>
-      <a class="nav" href="/webchat">💬 聊天</a>
+      <a class="nav" href="/stocks">自选股</a>
+      <a class="nav" href="/market">涨跌榜</a>
+      <a class="nav" href="/funds">基金</a>
+      <a class="nav" href="/news">快讯</a>
+      <a class="nav" href="/sectors">板块</a>
+      <a class="nav active" href="/overseas">外盘</a>
+      <a class="nav" href="/scanner">扫描</a>
+      <a class="nav" href="/backtest">回测</a>
+      <a class="nav" href="/webchat">聊天</a>
       <button class="nav btn-ghost" id="logout-btn" style="display:none">退出</button>
     </div>
   </header>
 
-  <main class="page">
+  <main class="page page-wide">
+    <h1 class="page-title">外盘联动</h1>
     <div class="card">
       <div class="toolbar">
         <span class="time" id="data-time"></span>

@@ -16,7 +16,7 @@
     .search-box .input { padding-left: 38px; border-radius: var(--radius); }
     .search-results {
       position: absolute; top: calc(100% + 8px); left: 0; right: 0; z-index: 20;
-      background: var(--card); border: 1px solid var(--border); border-radius: var(--radius);
+      background: var(--card); border: 0; border-radius: 18px;
       box-shadow: var(--shadow-md); padding: 8px; display: none;
       max-height: 380px; overflow-y: auto;
     }
@@ -26,11 +26,15 @@
     .fund-list { display: flex; flex-direction: column; gap: 12px; }
     .fund-card {
       display: flex; align-items: center; gap: 12px;
-      background: var(--card); border: 1px solid var(--border); border-radius: var(--radius);
-      box-shadow: var(--shadow-sm); padding: 16px 20px; cursor: pointer;
-      transition: box-shadow 150ms ease, transform 150ms ease;
+      background: var(--card); border: 0; border-radius: var(--radius-lg);
+      box-shadow: var(--shadow-lg); padding: 18px 22px; cursor: pointer;
+      transition: all 200ms ease-in-out;
     }
-    .fund-card:hover { box-shadow: var(--shadow-md); transform: translateY(-1px); }
+    .fund-card:hover {
+      box-shadow: 0 12px 28px rgba(100, 116, 139, .16), 0 8px 20px rgba(99, 102, 241, .12);
+      transform: translateY(-2px);
+    }
+    .fund-card:active { transform: scale(.99); }
     .fund-card .meta { flex: 1; min-width: 0; }
     .fund-card .name { font-size: 16px; font-weight: 600; }
     .fund-card .code { font-size: 13px; color: var(--text-2); font-variant-numeric: tabular-nums; }
@@ -60,7 +64,7 @@
     .detail-top { display: flex; align-items: center; gap: 12px; }
     .back-link {
       font-size: 13px; color: var(--text-2); text-decoration: none;
-      padding: 6px 10px; border-radius: 8px; transition: background 150ms ease, color 150ms ease;
+      padding: 6px 12px; border-radius: 999px; transition: all 200ms ease-in-out;
     }
     .back-link:hover { background: var(--border); color: var(--text); }
     .detail-top .title { flex: 1; min-width: 0; }
@@ -84,7 +88,7 @@
     .chart-box svg { display: block; width: 100%; height: auto; }
     .chart-tip {
       position: absolute; pointer-events: none; display: none; z-index: 5;
-      background: var(--text); color: #fff; font-size: 12px; border-radius: 8px;
+      background: var(--text); color: #fff; font-size: 12px; border-radius: 10px;
       padding: 6px 10px; line-height: 1.5; white-space: nowrap;
       transform: translate(-50%, -100%); font-variant-numeric: tabular-nums;
     }
@@ -100,21 +104,23 @@
       <span class="brand">📈 股助手</span>
       <span class="sub" id="header-sub">基金</span>
       <span class="spacer"></span>
-      <a class="nav" href="/stocks">⭐ 自选股</a>
-      <a class="nav" href="/market">📊 涨跌榜</a>
-      <a class="nav" href="/news">📰 快讯</a>
-      <a class="nav" href="/sectors">🏭 板块</a>
-      <a class="nav" href="/overseas">🌐 外盘</a>
-      <a class="nav" href="/scanner">🔍 扫描</a>
-      <a class="nav" href="/backtest">🧪 回测</a>
-      <a class="nav" href="/webchat">💬 聊天</a>
+      <a class="nav" href="/stocks">自选股</a>
+      <a class="nav" href="/market">涨跌榜</a>
+      <a class="nav active" href="/funds">基金</a>
+      <a class="nav" href="/news">快讯</a>
+      <a class="nav" href="/sectors">板块</a>
+      <a class="nav" href="/overseas">外盘</a>
+      <a class="nav" href="/scanner">扫描</a>
+      <a class="nav" href="/backtest">回测</a>
+      <a class="nav" href="/webchat">聊天</a>
       <button class="nav btn-ghost" id="logout-btn" style="display:none">退出</button>
     </div>
   </header>
 
-  <main class="page">
+  <main class="page page-wide">
     <!-- ========== 列表视图 ========== -->
     <section id="view-list">
+      <h1 class="page-title">基金</h1>
       <div class="search-wrap">
         <div class="search-box">
           <span class="icon">🔍</span>
@@ -144,35 +150,47 @@
 
     <!-- ========== 详情视图（?code=） ========== -->
     <section id="view-detail" hidden>
-      <div class="card" style="margin-bottom: 16px;">
-        <div class="detail-top" style="margin-bottom: 16px;">
-          <a class="back-link" href="/funds">← 返回基金列表</a>
-          <div class="title">
-            <span class="name" id="d-name"></span>
-            <span class="code" id="d-code"></span>
-            <span class="badge" id="d-type" style="margin-left: 8px;"></span>
-          </div>
+      <div class="detail-top" style="margin-bottom: 16px;">
+        <a class="back-link" href="/funds">← 返回基金列表</a>
+        <div class="title">
+          <h1 class="page-title name" style="display:inline;" id="d-name"></h1>
+          <span class="code" id="d-code"></span>
+          <span class="badge" id="d-type" style="margin-left: 8px;"></span>
         </div>
-        <div class="nav-main">
-          <span class="nav-value" id="d-nav">—</span>
-          <span id="d-daypct"></span>
-          <span class="time" id="d-date"></span>
-        </div>
-        <div class="stat-grid" id="d-stats"></div>
       </div>
 
-      <div class="card">
-        <div class="chart-head">
-          <h3>单位净值走势</h3>
-          <div class="type-pills" id="range-pills" style="margin-bottom: 0;">
-            <button data-n="22">近1月</button>
-            <button data-n="63">近3月</button>
-            <button data-n="126">近6月</button>
-            <button data-n="252" class="active">近1年</button>
+      <!-- F 型两栏（REQ-UI-2）：净值走势居左主栏，统计格居右侧栏，≤900px 堆叠 -->
+      <div class="layout-2col">
+        <div class="layout-main">
+          <div class="card">
+            <div class="nav-main">
+              <span class="nav-value" id="d-nav">—</span>
+              <span id="d-daypct"></span>
+              <span class="time" id="d-date"></span>
+            </div>
+          </div>
+
+          <div class="card">
+            <div class="chart-head">
+              <h3>单位净值走势</h3>
+              <div class="type-pills" id="range-pills" style="margin-bottom: 0;">
+                <button data-n="22">近1月</button>
+                <button data-n="63">近3月</button>
+                <button data-n="126">近6月</button>
+                <button data-n="252" class="active">近1年</button>
+              </div>
+            </div>
+            <div class="chart-box" id="chart-box">
+              <div class="chart-tip" id="chart-tip"></div>
+            </div>
           </div>
         </div>
-        <div class="chart-box" id="chart-box">
-          <div class="chart-tip" id="chart-tip"></div>
+
+        <div class="layout-aside">
+          <div class="card">
+            <h3 style="margin-top: 0;">基金概况</h3>
+            <div class="stat-grid" id="d-stats"></div>
+          </div>
         </div>
       </div>
     </section>

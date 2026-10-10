@@ -14,7 +14,7 @@
     }
     .news-item:last-child { border-bottom: none; }
     .news-item .title { font-size: 15px; font-weight: 600; line-height: 1.5; }
-    .news-item .summary { font-size: 13px; color: var(--text-2); line-height: 1.6; margin-top: 4px; }
+    .news-item .summary { font-size: 13px; color: var(--text-2); line-height: 1.6; margin-top: 4px; max-width: 42em; }
     .news-item .meta { display: flex; align-items: center; gap: 10px; margin-top: 6px; }
     .news-item .time { font-size: 12px; color: var(--text-3); font-variant-numeric: tabular-nums; }
     .news-item .source { font-size: 12px; color: var(--text-3); }
@@ -32,18 +32,21 @@
       <span class="brand">📈 股助手</span>
       <span class="sub">财经快讯</span>
       <span class="spacer"></span>
-      <a class="nav" href="/stocks">⭐ 自选股</a>
-      <a class="nav" href="/market">📊 涨跌榜</a>
-      <a class="nav" href="/sectors">🏭 板块</a>
-      <a class="nav" href="/overseas">🌐 外盘</a>
-      <a class="nav" href="/scanner">🔍 扫描</a>
-      <a class="nav" href="/backtest">🧪 回测</a>
-      <a class="nav" href="/webchat">💬 聊天</a>
+      <a class="nav" href="/stocks">自选股</a>
+      <a class="nav" href="/market">涨跌榜</a>
+      <a class="nav" href="/funds">基金</a>
+      <a class="nav active" href="/news">快讯</a>
+      <a class="nav" href="/sectors">板块</a>
+      <a class="nav" href="/overseas">外盘</a>
+      <a class="nav" href="/scanner">扫描</a>
+      <a class="nav" href="/backtest">回测</a>
+      <a class="nav" href="/webchat">聊天</a>
       <button class="nav btn-ghost" id="logout-btn" style="display:none">退出</button>
     </div>
   </header>
 
-  <main class="page">
+  <main class="page page-wide">
+    <h1 class="page-title">财经快讯</h1>
     <div class="card">
       <div class="toolbar">
         <span class="time" id="data-time"></span>
