@@ -721,6 +721,36 @@
 
 ## 8. 进程管理 / 部署运维
 
+### [2026-10-11] winget 装好 cloudflared 后"老会话"里 `where cloudflared` 找不到：机器 PATH 更新不回流已运行进程（stale 环境变量）
+- **现象**：winget 安装 cloudflared（写入**机器级** PATH）后，已开机的
+  Git Bash / cmd / 守护进程里 `where cloudflared` 仍报"找不到文件"；
+  新装的软件"明明装了却找不到"。
+- **根因**：Windows 环境变量按"会话"快照继承——安装程序更新注册表里的
+  机器 PATH 后，**已存在的进程（及其子进程）不会刷新**，只有新登录的会话
+  才拿得到；`reg query "HKLM\SYSTEM\CurrentControlSet\Control\Session Manager\Environment"` 能看到新值，但当前进程 PATH 里没有。
+- **解法**：① 脚本里对关键可执行做**已知安装路径兜底**（如
+  `%ProgramFiles(x86)%\cloudflared\cloudflared.exe`），不能只看 PATH；
+  ② 必须从"老会话"拉起新进程且依赖新 PATH 时，先刷新：
+  PowerShell 里 `$env:PATH = [Environment]::GetEnvironmentVariable('PATH','Machine') + ';' + [Environment]::GetEnvironmentVariable('PATH','User')` 再 Start-Process。
+- **涉及文件**：`scripts/tunnel.mjs`（whichCloudflared 带路径兜底）、
+  `scripts/tunnel-supervise.bat`
+- **预防**：排查"装了却找不到"先区分注册表值 vs 当前进程 PATH；
+  长期驻留的守护进程绝不假设自己 PATH 是最新的。
+
+### [2026-10-11] Node 脚本 `process.exit()` 与未清完的 fetch/AbortSignal 句柄竞争：Windows 下 libuv 断言崩溃（async.c:76），退出码 127
+- **现象**：`node scripts/tunnel.mjs status` 输出全部正常，进程退出时打印
+  `Assertion failed: !(handle->flags & UV_HANDLE_CLOSING), file src\win\async.c, line 76`，
+  退出码 127（输出正确但调用方拿到错误码）。
+- **根因**：Windows 下 `process.exit()` 立即终止事件循环，仍开着/正在关闭的
+  异步句柄（`AbortSignal.timeout` 定时器、fetch 底层 socket）触发 libuv 断言；
+  输出已 flush 但退出路径崩了。
+- **解法**：异步命令的"正常结束"改用 **`process.exitCode = code` 自然退出**
+  （给 Node 清理句柄的时间）；日志流先 `stream.end(callback)` 再在回调里置
+  exitCode。只有 `fatal`（错误路径、句柄少）保留 `process.exit(1)`。
+- **涉及文件**：`scripts/tunnel.mjs`（cmdStatus / cmdStart 收尾）
+- **预防**：Windows 上给 CLI 脚本收尾时，"输出完就 exit"前先想想有没有
+  pending 的 fetch/定时器；退出码异常（127）但输出正常就是这种断言崩。
+
 ### [2026-10-11] cloudflared 进程活着、本地端口在听，但隧道从未注册成功——"假活"隧道
 - **现象**：异地朋友打不开 App/网页；本机 `tasklist` 能看到 cloudflared.exe
   活着，还有一个 `127.0.0.1:xxxxx LISTENING` 本地端口，看起来像正常运行。

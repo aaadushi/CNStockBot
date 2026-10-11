@@ -7,7 +7,7 @@
 > 看 [FEATURES.md](FEATURES.md)；踩过的坑看 [PITFALLS.md](PITFALLS.md)；
 > 数据源接口细节看 [DATA_SOURCES.md](DATA_SOURCES.md)。
 
-最后更新：2026-10-11（批次 42：进程守护 supervise 模式——崩溃自动拉起，S3-5）
+最后更新：2026-10-11（批次 44：Quick Tunnel 隧道守护——崩溃自动拉起 + 假活检测，S3-8）
 
 ---
 
@@ -92,6 +92,7 @@
 | S3-5 | ~~进程守护层：开机自启 + 崩溃自动拉起~~（用户 2026-10-11 主动提出启动并裁剪范围） | ✅ **崩溃自动拉起部分 2026-10-11 完成**（批次 42）：`service.mjs supervise` 守护模式（崩溃自动重启，3s 起指数退避封顶 60s、连续失败 20 次放弃；stop 先写哨兵再杀守护进程杜绝重拉起竞态；supervisor 日志落 `logs/supervisor.log`）；`start` 前台模式对外行为零变化；薄包装 `scripts/supervise-all.bat` + `npm run supervise:all`；生产双服务已迁移到 supervise 模式。需求文档 [REQ-S3-5](requirements/S3-5-supervise-crash-restart.md)，FEATURES 第 45 节。**开机自启仍明确不做**（任务计划程序/systemd/pm2 均不在范围，用户另行提出时再做） |
 | S3-6 | ~~全页面数据链路巡检~~（2026-09-27 用户登记）：逐页验证 WebChat + 8 个网页/App 页是否有数据，输出巡检报告并把发现的问题登记为 P 编号 / 回填 PITFALLS。**清单见下方"S3-6 巡检清单"** | ✅ 2026-09-27 完成（见更新日志批次 24）：10 页全过一遍，7 页 ✅、2 页封禁期预期降级（P11 + 新增 P12）、1 页部分降级；报告写入更新日志，新发现登记为 P12 |
 | S3-7 | ~~PID 文件按端口命名空间化~~（2026-10-11 登记，根治 PITFALLS 同日条目：并行 `--env-file` 实例覆盖生产 PID 文件） | ✅ 代码 2026-10-11 完成（批次 43）：`logs/main-<port>.pid` / `data-service-<port>.pid` / `supervisor-<mainPort>.pid|.stop|.log`；`stop`/`status` 先新后旧回退读取 legacy 文件（可管理 S3-4/S3-5 旧代码拉起的存量实例），旧文件指向存活进程时保留不误删；守护进程归属门防"停验证实例误杀生产 supervise"。需求文档 [REQ-S3-7](requirements/S3-7-pid-file-namespacing.md)，FEATURES 第 45 节。**生产迁移同日完成**（新 supervise 实例跑命名空间文件，gitSha 18320ba） |
+| S3-8 | ~~Quick Tunnel 隧道无守护~~（2026-10-11 登记，根治 PITFALLS 同日"cloudflared 假活隧道"条目：进程活着但注册失败计数 146、无任何表面征兆） | ✅ 2026-10-11 完成（批次 44）：`scripts/tunnel.mjs` 隧道守护进程——崩溃自动拉起（退避 3s 起封顶 60s、连续失败 20 次放弃，与 service.mjs supervise 同规格）+ **假活检测**（每 15s 读 `--metrics` 端口，宽限 90s 后 `tunnel_register_success==0 && register_fail>0` 即强制重启）；trycloudflare URL 捕获落 `logs/tunnel-url-<port>.txt`（重启自动更新）；控制文件按端口命名空间（S3-7 同款）；子命令 `start/stop/status/url`，薄包装 `scripts/tunnel-supervise.bat`（CRLF+纯 ASCII）。`tunnel-demo.bat` 前台演示脚本保留不动。需求文档 [REQ-S3-8](requirements/S3-8-tunnel-supervision.md)，用法见 [local-tunnel.md](deploy/local-tunnel.md) |
 
 #### S3-6 巡检清单（下一个 agent 照此执行）
 
@@ -400,6 +401,26 @@ App 形式在安卓手机上运行——手机上随时查行情/自选股/收�
 
 ## 更新日志
 
+
+- 2026-10-11（批次 44）：**S3-8 Quick Tunnel 隧道守护完成**——根治 PITFALLS 同日
+  "cloudflared 假活隧道"（进程活着、本地端口在听、注册失败计数 146、无任何表面
+  征兆）暴露的"隧道完全无守护"问题。
+  - 需求文档 [REQ-S3-8](requirements/S3-8-tunnel-supervision.md) 先行；
+  - `scripts/tunnel.mjs`：守护进程（零依赖，风格对齐 service.mjs supervise）——
+    每代 `cloudflared tunnel --url … --protocol http2 --metrics 127.0.0.1:<p>`
+    （http2 强制，PITFALLS 2026-10-10 红线）；崩溃自动拉起（3s 起指数退避封顶
+    60s、连续失败 20 次放弃、本代 ≥60s 稳定清零）；**假活检测**：每 15s 拉
+    metrics，宽限 90s 后 `tunnel_register_success==0 && register_fail>0` 判假活
+    并重启（metrics 拉取失败不算假活）；trycloudflare URL 从输出捕获写
+    `logs/tunnel-url-<port>.txt`（重启换新地址自动更新）；控制文件按端口命名
+    空间（`tunnel-<port>.pid|-child-<port>.pid|-<port>.stop|-<port>.log|
+    -<port>.meta.json`，S3-7 同款）；`stop` 走"哨兵 + taskkill /T"（Git Bash
+    手敲用 `//`，脚本内 spawn 无此问题）；`status` 显示守护进程/URL/register
+    计数（带假活特征 ⚠ 提示）/目标 /health；
+  - `scripts/tunnel-supervise.bat`：纯 ASCII + CRLF 薄包装（`file` 命令验证），
+    供双击 / Start-Process 拉起；`tunnel-demo.bat` 前台演示脚本保留不动；
+  - 验收：typecheck + 全部用例不回归；CRLF/ASCII 验证；真机端到端（见下）；
+  - PR：#67（feat/s3-8-tunnel-supervision）。
 
 - 2026-10-11（批次 43）：**S3-7 PID 文件按端口命名空间化完成**——根治批次 42
   登记的 PITFALLS"并行 `--env-file` 实例覆盖生产 PID 文件"。

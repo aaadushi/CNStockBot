@@ -25,19 +25,40 @@
 winget install cloudflare.cloudflared
 ```
 
-启动隧道（Windows 双击或命令行；Linux/macOS 用 `scripts/tunnel-demo.sh`）：
+### 2.1 守护模式（推荐，S3-8）：崩溃自动拉起 + 假活检测
+
+临时 URL 动辄要挂几小时到几天给外出设备用，纯前台窗口"关窗即断"且假活无征兆，
+推荐用守护进程（REQ-S3-8）：
 
 ```bat
-scripts\tunnel-demo.bat        :: 端口默认读 .env 的 PORT，再退 18790
-scripts\tunnel-demo.bat 8125   :: 也可显式指定
+scripts\tunnel-supervise.bat        :: 端口默认读 .env 的 PORT，再退 18790
 ```
 
-脚本会做两个前置检查：cloudflared 是否在 PATH、主服务 `/health` 是否可通，
-不过就直接报错提示。通过后 cloudflared 前台运行，输出中形如
-`https://some-words.trycloudflare.com` 的一行就是演示 URL，把它填进 App 首屏
-服务器地址即可（release 版 App 仅接受 https，隧道地址天然满足）。
+等价命令：`node scripts\tunnel.mjs start [--port N]`。管理能力：
 
-关闭窗口 / Ctrl+C 即断开隧道。
+```bash
+node scripts/tunnel.mjs status   # 守护进程/当前 URL/register 成功失败计数/主服务健康
+node scripts/tunnel.mjs url      # 只打印当前隧道地址（= logs\tunnel-url-<port>.txt）
+node scripts/tunnel.mjs stop     # 哨兵 + 杀守护进程（cloudflared 随进程树清理）
+```
+
+- 每代 cloudflared 带 `--protocol http2`（PITFALLS 2026-10-10 红线）与
+  `--metrics 127.0.0.1:<port>`；地址从输出捕获写入
+  `logs\tunnel-url-<port>.txt`，**重启换新地址后自动更新**。
+- 崩溃/假活自动拉起：退避 3s 起封顶 60s，连续失败 20 次放弃。
+- **假活检测**：每 15s 读 metrics，宽限 90s 后若 `tunnel_register_success==0`
+  且 `tunnel_register_fail>0`，判定"进程活着但隧道从未注册成功"并强制重启
+  （PITFALLS 2026-10-11 假活隧道事故的自动化解法；人工核验仍可用
+  `curl http://127.0.0.1:<metrics端口>/metrics | grep tunnel_register`）。
+- 无人值守拉起（关窗也能活）：用 PowerShell
+  `Start-Process -FilePath scripts\tunnel-supervise.bat -WindowStyle Hidden`。
+- 停止务必走 `tunnel.mjs stop`（只关窗口在守护模式下不生效）。
+
+### 2.2 前台演示模式（tunnel-demo.bat，保留）
+
+前台运行 cloudflared，输出中形如 `https://some-words.trycloudflare.com` 的一行
+就是演示 URL，把它填进 App 首屏服务器地址即可（release 版 App 仅接受 https，
+隧道地址天然满足）。关闭窗口 / Ctrl+C 即断开隧道。
 
 ## 3. URL 生命周期（重要，别误解）
 
@@ -78,4 +99,5 @@ scripts\tunnel-demo.bat 8125   :: 也可显式指定
 |---|---|
 | 访问隧道地址报 **Cloudflare Error 1033** 或 HTTP 530 | 隧道没连上：国内网络常封 UDP 7844（QUIC）。脚本已内置 `--protocol http2` 规避；手动执行时也加上该参数 |
 | 隧道地址返回 **404 / Cannot GET /** | 新版已修：根路径自动 302 到 /webchat（REQ-Root-Redirect）；旧版服务才需要手动加 `/webchat` || 启动后一直没有 trycloudflare URL | 等 10-30 秒；仍无则看窗口报错，多为出站被拦 |
-| 之前能用，突然全断 | 看隧道窗口是否还开着、电脑是否睡眠/断网；重启隧道后**地址会变**，记得发新地址 |
+| 之前能用，突然全断 | 看隧道窗口是否还开着、电脑是否睡眠/断网；守护模式下 `node scripts\tunnel.mjs status` 看 register 计数与 URL；重启隧道后**地址会变**，记得发新地址 |
+| 怀疑假活（进程在但谁都打不开） | `node scripts\tunnel.mjs status`：register 计数 success=0 / fail 增长即实锤；守护模式会自动重启，手动模式 taskkill 后重开 |
