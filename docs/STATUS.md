@@ -426,7 +426,12 @@ App 形式在安卓手机上运行——手机上随时查行情/自选股/收�
     临时实例（18321）端到端实测：401/403/200、聚合数字正确、/admin 200；
   - 生产服务未重启（API 需下次重启生效；静态页读盘即时生效，重启前页面
     会显示"加载失败"——预期行为）。
-  - PR：#68（feat/admin-v2-users-runtime-overview）。
+  - PR：#68（feat/admin-v2-users-runtime-overview）。**已合并（squash，main
+    04216b9），生产双服务已同日重启生效**：stop（守护 21288 进程树整体退出）
+    → PowerShell Start-Process 拉起 supervise-all.bat 脱离会话（守护 37324 +
+    data-service 18444 + 主服务 18892）；/health gitSha=04216b9、
+    dataService.ok=true（22ms）；/webchat、/admin 200；
+    /api/admin/overview|users 未登录 401（路由生效）。
 
 - 2026-10-11（批次 44）：**S3-8 Quick Tunnel 隧道守护完成**——根治 PITFALLS 同日
   "cloudflared 假活隧道"（进程活着、本地端口在听、注册失败计数 146、无任何表面
