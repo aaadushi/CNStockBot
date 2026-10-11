@@ -70,6 +70,24 @@ export interface FeedbackEntry {
   createdAt: number;
 }
 
+/**
+ * 管理端用户总览条目（REQ-Admin-V2）：聚合统计，隐私最小化——
+ * 不含 userId（UUID）/会话/token/消息内容/密码相关字段。
+ * lastActiveAt 口径 = 该用户 sessions.created_at 最大值（最近一次登录），
+ * 不含 histories.updated_at（避免"只读了历史"被计为活跃）。
+ */
+export interface UserStatEntry {
+  username: string;
+  createdAt: number;
+  lastActiveAt: number | null;
+  watchlistCount: number;
+  ruleCount: number;
+  feedbackCount: number;
+}
+
+/** 用户总览列表的条数上限（REQ-Admin-V2，防超大表拖垮管理页） */
+const USER_STATS_MAX = 500;
+
 export class Store {
   private db: DatabaseSync;
   readonly auth: AuthService;
@@ -324,6 +342,49 @@ export class Store {
       text: r.text,
       contact: r.contact,
       createdAt: r.created_at,
+    }));
+  }
+
+  // ---- 管理端用户总览（REQ-Admin-V2，只读聚合，无写操作） ----
+
+  /** 用户总数（管理端 total 用） */
+  countUsers(): number {
+    const row = this.db.prepare('SELECT COUNT(*) AS n FROM users').get() as { n: number };
+    return Number(row.n);
+  }
+
+  /**
+   * 管理端用户总览：每用户聚合（注册时间/最近登录/自选只数/规则数/反馈数），
+   * 单条 SQL 关联 users 表完成，按注册时间倒序，LIMIT 封顶防超大表。
+   * 只读、不含任何消息内容或凭据（字段白名单见 UserStatEntry）。
+   */
+  listUserStats(): UserStatEntry[] {
+    const rows = this.db
+      .prepare(
+        `SELECT u.username, u.created_at,
+           (SELECT COUNT(*) FROM watchlists w WHERE w.user_id = u.id) AS watchlist_count,
+           (SELECT COUNT(*) FROM alert_rules r WHERE r.user_id = u.id) AS rule_count,
+           (SELECT COUNT(*) FROM feedback f WHERE f.user_id = u.id) AS feedback_count,
+           (SELECT MAX(s.created_at) FROM sessions s WHERE s.user_id = u.id) AS last_login_at
+         FROM users u
+         ORDER BY u.created_at DESC
+         LIMIT ?`,
+      )
+      .all(USER_STATS_MAX) as {
+      username: string;
+      created_at: number;
+      watchlist_count: number;
+      rule_count: number;
+      feedback_count: number;
+      last_login_at: number | null;
+    }[];
+    return rows.map((r) => ({
+      username: r.username,
+      createdAt: r.created_at,
+      lastActiveAt: r.last_login_at === null ? null : Number(r.last_login_at),
+      watchlistCount: Number(r.watchlist_count),
+      ruleCount: Number(r.rule_count),
+      feedbackCount: Number(r.feedback_count),
     }));
   }
 

@@ -51,6 +51,14 @@ describe('ADMIN_USERS 未配置（fail-closed，REQ-Feedback-Admin FR-7）', () 
     const list = await request(app).get('/api/admin/feedback').set('Authorization', `Bearer ${token}`);
     expect(list.status).toBe(403);
 
+    // REQ-Admin-V2：同门槛适用新管理端端点
+    const ov = await request(app).get('/api/admin/overview').set('Authorization', `Bearer ${token}`);
+    expect(ov.status).toBe(403);
+    expect(ov.body.scheduler).toBeUndefined();
+    const us = await request(app).get('/api/admin/users').set('Authorization', `Bearer ${token}`);
+    expect(us.status).toBe(403);
+    expect(us.body.items).toBeUndefined();
+
     const post = await request(app).post('/api/feedback').set('Authorization', `Bearer ${token}`).send({ text: '未配置管理员时也能交反馈' });
     expect(post.status).toBe(200);
   });

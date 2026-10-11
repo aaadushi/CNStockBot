@@ -13,6 +13,9 @@ import type { DataProvider, Quote, HistoryBar } from '../data/provider.js';
 import { buildOverseasHints } from '../data/overseasHints.js';
 import { createAuthRouter } from '../auth/routes.js';
 import { requireSession, requireAdmin } from '../auth/middleware.js';
+import { getDataServiceStatus, gitSha, startedAt, version } from '../health.js';
+import { getHealthProbeStatus } from '../alerts/healthProbe.js';
+import { msUntilNextRun } from '../alerts/scheduler.js';
 import { config } from '../config.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -180,6 +183,52 @@ export class WebChatChannel implements Channel {
       const parsed = Number.parseInt(String(req.query.limit ?? ''), 10);
       const limit = Number.isNaN(parsed) ? 100 : Math.min(FEEDBACK_LIST_MAX, Math.max(1, parsed));
       res.json({ items: this.store.listFeedback(limit), total: this.store.countFeedback() });
+    });
+
+    /**
+     * 运行概览（REQ-Admin-V2）：构建信息 + 数据链路状态 + 调度任务开关与预计下次运行。
+     * dataService 复用 health.ts 的 30s 缓存探测器（不新增微服务压力）；
+     * nextRunInMs 是 msUntilNextRun 的工作日估算（法定节假日触发时调度器自动跳过）。
+     */
+    app.get('/api/admin/overview', requireAdmin(config.adminUsernames), async (_req, res) => {
+      const dataService = await getDataServiceStatus();
+      res.json({
+        version,
+        gitSha,
+        startedAt,
+        dataService,
+        quoteProbe: getHealthProbeStatus(),
+        scheduler: {
+          dailyReport: {
+            enabled: true,
+            signals: config.dailyReport.signals,
+            nextRunInMs: msUntilNextRun(15, 30),
+          },
+          priceAlerts: {
+            enabled: config.alerts.enabled,
+            intervalMinutes: config.alerts.intervalMinutes,
+            thresholdPct: config.alerts.thresholdPct,
+            nextRunInMs: null, // 轮询循环无固定时刻
+          },
+          overseasPush: {
+            enabled: config.overseasPush.enabled,
+            nextRunInMs: config.overseasPush.enabled ? msUntilNextRun(9, 10) : null,
+          },
+          scannerUpdate: {
+            enabled: config.scanner.autoUpdate,
+            push: config.scanner.pushEnabled,
+            nextRunInMs: config.scanner.autoUpdate ? msUntilNextRun(15, 40) : null,
+          },
+        },
+      });
+    });
+
+    /**
+     * 用户总览（REQ-Admin-V2）：每用户聚合统计（字段白名单见 UserStatEntry，
+     * 不含 userId/消息内容/凭据），按注册时间倒序。
+     */
+    app.get('/api/admin/users', requireAdmin(config.adminUsernames), (_req, res) => {
+      res.json({ items: this.store.listUserStats(), total: this.store.countUsers() });
     });
 
     // ---- 股票浏览页 API ----

@@ -7,7 +7,7 @@
 > 看 [FEATURES.md](FEATURES.md)；踩过的坑看 [PITFALLS.md](PITFALLS.md)；
 > 数据源接口细节看 [DATA_SOURCES.md](DATA_SOURCES.md)。
 
-最后更新：2026-10-11（批次 44：Quick Tunnel 隧道守护——崩溃自动拉起 + 假活检测，S3-8）
+最后更新：2026-10-11（批次 45：管理后台 v2——用户总览 + 运行概览，REQ-Admin-V2）
 
 ---
 
@@ -389,18 +389,44 @@ App 形式在安卓手机上运行——手机上随时查行情/自选股/收�
    （无入口链接、ADMIN_USERS 环境变量控制管理员、非管理员 403）。
 8. **管理后台**（用户 2026-10-10 提出）：独立管理员界面，集中查看运行数据、
    用户反馈、用户信息等。**进度：反馈查看切片已随第 7 条完成（/admin 最小
-   管理端，REQ-Feedback-Admin）**；其余内容（用户列表/注册时间/活跃度、
-   推送任务运行状态等）仍无排期。**红线：仅管理员可进**——本次已落地
-   `requireAdmin` 中间件 + `ADMIN_USERS` 配置的管理员体系（服务端鉴权，
-   非前端隐藏），后续后台功能直接复用；users 表当前未加 role 列（配置式
-   管理员已够用，如需 per-user 角色再迁移）。**注意隐私边界：后台能看到的
-   是用户在本服务的账号数据（用户名/自选股/会话/反馈），收集与展示范围需
-   在需求文档里写清并最小化**。
+   管理端，REQ-Feedback-Admin）；用户总览 + 运行概览切片 2026-10-11 完成
+   （REQ-Admin-V2：/admin 三区块——运行概览/用户总览/意见反馈；用户列表含
+   注册时间/最近登录/自选只数/规则数/反馈数，运行概览含构建信息/dataService/
+   行情探针/调度任务开关与预计下次运行）**。剩余切片：推送任务运行状态/历史
+   （需调度器运行时埋点，独立批次）。**红线：仅管理员可进**——`requireAdmin`
+   中间件 + `ADMIN_USERS` 配置的管理员体系（服务端鉴权，非前端隐藏），后续
+   后台功能直接复用；users 表当前未加 role 列（配置式管理员已够用，如需
+   per-user 角色再迁移）。**注意隐私边界：后台能看到的仅是用户在本服务的
+   账号数据（用户名/聚合数字/反馈），用户总览不含 userId/消息内容/凭据
+   （字段白名单见 REQ-Admin-V2），收集与展示范围按需求文档最小化**。
 
 ---
 
 ## 更新日志
 
+
+- 2026-10-11（批次 45）：**管理后台 v2——用户总览 + 运行概览完成**
+  （REQ-Admin-V2，STATUS「其他候选方向」第 8 条的第二个切片）。
+  - 需求文档 [REQ-Admin-V2](requirements/admin-v2-overview.md) 先行（含明确
+    不做：写操作/消息内容展示/推送任务运行状态埋点/管理端进 LLM 技能）；
+  - store 层（无新表）：`listUserStats()` 单条 SQL 聚合每用户 自选只数/规则数/
+    反馈数/最近登录（sessions.created_at 最大值，口径不含 histories，避免
+    "只读历史"被计活跃），按注册时间倒序 LIMIT 500 封顶；`countUsers()`；
+    `UserStatEntry` 字段白名单不含 userId/凭据/消息内容（隐私最小化）；
+  - API：`GET /api/admin/overview`（构建信息 + dataService 复用 30s 缓存探测器
+    + quoteProbe + scheduler 四任务开关与 nextRunInMs 工作日估算，未启用任务
+    null）与 `GET /api/admin/users`（`{ items, total }`），均 requireAdmin
+    同门槛（未登录 401/非管理员 403/空配置 fail-closed）；
+  - 前端 /admin 重构为三区块（运行概览键值行+任务徽章 / 用户总览表格 /
+    意见反馈原样保留），共用 load() 60s 轮询，逐区块独立 403/错误态，
+    全 textContent 无 innerHTML；
+  - 验收：typecheck + 45 文件 346 用例全绿（新增 tests/admin-v2-overview.test.ts
+    5 条 + unset 文件补 2 断言；踩坑：本机 8000 跑着生产微服务，dataService
+    断言须双向容忍；周末跑测试 nextRunInMs 上界须放宽到 <7 天）；
+    临时实例（18321）端到端实测：401/403/200、聚合数字正确、/admin 200；
+  - 生产服务未重启（API 需下次重启生效；静态页读盘即时生效，重启前页面
+    会显示"加载失败"——预期行为）。
+  - PR：#68（feat/admin-v2-users-runtime-overview）。
 
 - 2026-10-11（批次 44）：**S3-8 Quick Tunnel 隧道守护完成**——根治 PITFALLS 同日
   "cloudflared 假活隧道"（进程活着、本地端口在听、注册失败计数 146、无任何表面
