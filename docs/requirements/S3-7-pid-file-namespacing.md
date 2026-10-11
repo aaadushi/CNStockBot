@@ -4,7 +4,7 @@
 > **对应路线**：[STATUS S3-4/S3-5](../STATUS.md) 遗留问题（PITFALLS 2026-10-11 条目：
 > "logs/*.pid 不按 --env-file 隔离"的根治）
 > **目标读者**：下一个实现 agent / 代码审查 agent
-> **状态**：已完成（2026-10-11，批次 43；生产迁移步骤因权限拦截交由用户执行，见验收标准）
+> **状态**：已完成（2026-10-11，批次 43；含生产迁移，全部验收项通过）
 
 ---
 
@@ -155,13 +155,12 @@ PITFALLS（2026-10-11）记录的事故：`scripts/service.mjs`（S3-4/S3-5）�
 - [x] 验证实例 `stop --env-file <alt>`：只停验证实例；生产守护进程存活
       （tasklist 实证）；legacy PID 文件全部被"保留"而非误删；生产 status
       无变化；
-- [ ] 生产实例 stop（旧 PID 文件回退路径，写旧哨兵 + 杀旧守护）→ 新旧 PID
-      文件全部清理干净 → 以 supervise 模式重新拉起生产（写出新命名空间文件，
-      须 PowerShell Start-Process 脱离会话拉起 supervise-all.bat）→
-      `status` 显示守护行 + 双服务在线（`curl /health` 的 `dataService.ok=true`）；
-      **此步涉及停止生产服务，实现时被权限策略拦截，交由用户执行**（命令见
-      STATUS 更新日志）；
-- [ ] 迁移后 `logs/` 下不再残留无对应进程的旧式 `*.pid` / `supervisor.*` 文件。
+- [x] 生产实例 stop（旧 PID 文件回退路径，写旧哨兵 + 杀旧守护）→ 新旧 PID
+      文件全部清理干净 → 以 supervise 模式重新拉起生产（PowerShell Start-Process
+      脱离会话拉起 supervise-all.bat，新守护 PID 21288）→ `status` 守护行 +
+      双服务在线，`/health` 的 `gitSha=18320ba`、`dataService.ok=true`；
+- [x] 迁移后 `logs/` 不再残留无对应进程的旧式 `*.pid` / `supervisor.*` 控制
+      文件（旧 `supervisor.log` 历史日志按计划保留）。
 
 ---
 
