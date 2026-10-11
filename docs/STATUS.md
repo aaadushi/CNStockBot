@@ -7,7 +7,7 @@
 > 看 [FEATURES.md](FEATURES.md)；踩过的坑看 [PITFALLS.md](PITFALLS.md)；
 > 数据源接口细节看 [DATA_SOURCES.md](DATA_SOURCES.md)。
 
-最后更新：2026-10-10（批次 41：意见反馈 + 最小管理端）
+最后更新：2026-10-11（批次 42：进程守护 supervise 模式——崩溃自动拉起，S3-5）
 
 ---
 
@@ -89,7 +89,7 @@
 | S3-2 | ~~飞书 chat_id 映射持久化~~ | ✅ 已完成（kv 表；只学单聊映射，防持仓日报进群） |
 | S3-3 | ~~WebChat 共享口令 → 多用户体系~~ | ✅ 已上升为 S4-1 并于 2026-09-26 完成 | 审计 A-601：同口令持有者之间无身份隔离（userId 客户端自报），公网发布前必须完成 |
 | S3-4 | ~~进程管理加固（P9 善后）：一键启动脚本（双服务同起）+ /health 暴露 data-service 连通性与进程启动时间/git sha；（可选）data-service 健康探针~~ | ✅ 2026-09-26 完成：`scripts/service.mjs`（start/stop/status/restart + --env-file，端口预检拒双开、日志落盘 logs/、PID 文件、进程树清理）+ .bat/.sh 包装 + npm script；/health 新增 version/gitSha/startedAt/dataService（30s 缓存轻量探测）；定时推送型微服务探针不做（/health 连通性已覆盖观测面，与告警默认关的口径一致）。需求文档 [REQ-S3-4](requirements/S3-4-process-management.md)，FEATURES 第 41 节 |
-| S3-5 | 进程守护层：开机自启 + 崩溃自动拉起（Windows 任务计划程序 / pm2-windows-service；Linux 公网部署建议直接 systemd unit） | ⏸️ **挂起（2026-09-26 用户登记）：用户不主动提出前不做，任何 agent 不得自行启动本项**。背景：S3-4 一键脚本（PR #44）是前台监督模式——关窗即停、崩溃整体退出不拉起、注销会话杀进程；用户确认"不关机+不关窗"的当前形态可接受，守护层优先级延后。用户主动提及时，按规范先写需求文档再实现 |
+| S3-5 | ~~进程守护层：开机自启 + 崩溃自动拉起~~（用户 2026-10-11 主动提出启动并裁剪范围） | ✅ **崩溃自动拉起部分 2026-10-11 完成**（批次 42）：`service.mjs supervise` 守护模式（崩溃自动重启，3s 起指数退避封顶 60s、连续失败 20 次放弃；stop 先写哨兵再杀守护进程杜绝重拉起竞态；supervisor 日志落 `logs/supervisor.log`）；`start` 前台模式对外行为零变化；薄包装 `scripts/supervise-all.bat` + `npm run supervise:all`；生产双服务已迁移到 supervise 模式。需求文档 [REQ-S3-5](requirements/S3-5-supervise-crash-restart.md)，FEATURES 第 45 节。**开机自启仍明确不做**（任务计划程序/systemd/pm2 均不在范围，用户另行提出时再做） |
 | S3-6 | ~~全页面数据链路巡检~~（2026-09-27 用户登记）：逐页验证 WebChat + 8 个网页/App 页是否有数据，输出巡检报告并把发现的问题登记为 P 编号 / 回填 PITFALLS。**清单见下方"S3-6 巡检清单"** | ✅ 2026-09-27 完成（见更新日志批次 24）：10 页全过一遍，7 页 ✅、2 页封禁期预期降级（P11 + 新增 P12）、1 页部分降级；报告写入更新日志，新发现登记为 P12 |
 
 #### S3-6 巡检清单（下一个 agent 照此执行）
@@ -399,6 +399,35 @@ App 形式在安卓手机上运行——手机上随时查行情/自选股/收�
 
 ## 更新日志
 
+
+- 2026-10-11（批次 42）：**S3-5 进程守护 supervise 模式完成**（用户主动提出，
+  范围裁剪：**只做崩溃自动拉起，开机自启不做**）。用户确认"start-all 前台模式
+  崩溃后整体停摆须人工重拉"不可接受，启动服务仍由人手动执行。
+  - 需求文档 [REQ-S3-5](requirements/S3-5-supervise-crash-restart.md) 先行
+    （含明确不做项：任务计划程序/systemd/pm2）；
+  - `scripts/service.mjs` 重构：抽出 `runOneGeneration`（端口预检→拉起双服务→
+    写 PID→镜像日志，resolve child-exit/signal），`start` 变薄壳、对外行为
+    零变化；新增 `supervise` 子命令——崩溃自动拉起，本代 ≥60s 视为稳定
+    （失败计数清零），退避 3s 起翻倍封顶 60s，连续失败 20 次放弃（退出码 1
+    提示人工介入，防崩溃风暴）；退避期间 500ms 轮询停止哨兵，stop 即时打断；
+    supervisor 自身日志落 `logs/supervisor.log`（时间/肇事服务/退出码/重试序号），
+    肇事归因取"先退出者"（避免把被清理的同伴误记为崩溃源）；
+  - `stop` 升级：先写 `logs/supervisor.stop` 哨兵 → taskkill 杀守护进程 →
+    按 PID 文件停双服务 → 清理 pid/哨兵；守护未运行时与 S3-4 行为一致（幂等）；
+  - `status` 增加守护进程行（不影响退出码）；薄包装
+    `scripts/supervise-all.bat`（ASCII 注释，PITFALLS bat 三雷口径）+
+    `npm run supervise:all`；
+  - 端到端实测（替代端口 28790/28000 + 独立 DATA_DIR，不碰生产）：拉起 →
+    taskkill 杀主服务子进程 → 3s 退避后自动拉起、归因正确 → 连杀两次退避
+    递增 3s→6s → stop 后守护退出、32s 无重拉起、文件清理干净、status 两态
+    正确；start 前台模式回归通过；typecheck + 44 文件 341 用例全绿；
+  - **生产双服务已迁移到 supervise 模式**（stop 旧前台实例 → PowerShell
+    Start-Process 拉起 supervise-all.bat 脱离会话 → status + /health 双在线）；
+  - 踩坑回填 PITFALLS：① Git Bash 下 taskkill 的 `/pid` 被 MSYS 路径转换
+    吞掉须用 `//pid`；② S3-4 遗留——`logs/*.pid` 不按 `--env-file` 隔离，
+    并行起替代端口实例会覆盖生产 PID 文件（端口本身不受影响，stop/status
+    会短暂指错实例）；
+  - PR：#64（feat/s3-5-supervise-crash-restart）。
 
 - 2026-10-10（批次 41）：**意见反馈 + 最小管理端完成**（REQ-Feedback-Admin，
   "其他候选方向"第 7 条 + 第 8 条的反馈查看切片）。用户指定形态：管理后台

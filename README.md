@@ -77,9 +77,27 @@ npm run start:all        # 启动；npm run stop:all 停止；npm run status:all
 ```
 
 停止用 `scripts\stop-all.bat`（或 `stop-all.sh` / `npm run stop:all`），按 PID 文件清理，
-可重复执行。启动前自动做端口占用预检（拒绝双开）；`DATA_SERVICE_TOKEN` 未配置会直接
-报错提示。查看运行状态与版本信息：`curl http://localhost:18790/health`（暴露
-version/gitSha/启动时间/data-service 连通性）。
+可重复执行（S3-5 起 stop 会先终止守护循环再停服务，两种模式通用）。启动前自动做端口
+占用预检（拒绝双开）；`DATA_SERVICE_TOKEN` 未配置会直接报错提示。查看运行状态与版本
+信息：`curl http://localhost:18790/health`（暴露 version/gitSha/启动时间/data-service
+连通性）。
+
+## 守护模式：崩溃自动拉起（S3-5）
+
+长期运行（如生产/公网部署）建议用守护模式替代上面的前台模式：任一服务崩溃后自动
+重启（3s 起指数退避封顶 60s，连续失败 20 次放弃并提示人工介入），重启事件记录在
+`logs/supervisor.log`：
+
+```bash
+# Windows
+scripts\supervise-all.bat
+
+# 或 npm script
+npm run supervise:all
+```
+
+`stop` 命令语义不变：先写停止哨兵再终止守护循环，杜绝"stop 完又被拉起"。开机自启
+（任务计划程序/systemd）不在本模式范围内，启动仍由人手动执行。
 
 ## 临时公网演示（自测阶段，零成本）
 
