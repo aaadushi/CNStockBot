@@ -721,6 +721,22 @@
 
 ## 8. 进程管理 / 部署运维
 
+### [2026-10-11] cloudflared 进程活着、本地端口在听，但隧道从未注册成功——"假活"隧道
+- **现象**：异地朋友打不开 App/网页；本机 `tasklist` 能看到 cloudflared.exe
+  活着，还有一个 `127.0.0.1:xxxxx LISTENING` 本地端口，看起来像正常运行。
+- **根因**：Quick Tunnel 注册被 Cloudflare 边缘拒绝
+  （`tunnel_register_fail{error="server_error"} 146`，成功计数为 0）；
+  进程不退出、metrics 监听端口照开，但没有任何出站连接——隧道名存实亡。
+  本机 curl 127.0.0.1:18790 完全正常，更助长"服务没坏"的误判。
+- **解法**：查进程假活不能只看 tasklist/netstat——
+  `curl -s http://127.0.0.1:<metrics端口>/metrics | grep tunnel_register`，
+  成功为 0 / fail 持续增长即实锤；重启 cloudflared（Quick Tunnel 重启必换
+  新 `*.trycloudflare.com` 地址，须同步给测试者）。排查日（2026-10-11）新起的
+  隧道端到端验证命令：`curl https://<新地址>/health` 应返回 `ok:true`。
+- **涉及文件**：`scripts/tunnel-demo.bat`（运维踩坑，脚本本身无问题）
+- **预防**：给异地朋友发地址前，先通过公网 URL 而非 127.0.0.1 验证一次
+  /health；隧道窗口别关（Quick Tunnel 地址随进程死亡）。
+
 ### [2026-10-11] Git Bash 里 taskkill 的 `/pid`、`/T`、`/F` 被 MSYS 路径转换吞掉：报"无效参数"，须写 `//pid`
 - **现象**：Git Bash 执行 `taskkill /pid 41452 /T /F`，报
   `错误: 无效参数/选项 - 'D:/Program Files/Git/pid'`（把 `/pid` 当成了
