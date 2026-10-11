@@ -91,6 +91,7 @@
 | S3-4 | ~~进程管理加固（P9 善后）：一键启动脚本（双服务同起）+ /health 暴露 data-service 连通性与进程启动时间/git sha；（可选）data-service 健康探针~~ | ✅ 2026-09-26 完成：`scripts/service.mjs`（start/stop/status/restart + --env-file，端口预检拒双开、日志落盘 logs/、PID 文件、进程树清理）+ .bat/.sh 包装 + npm script；/health 新增 version/gitSha/startedAt/dataService（30s 缓存轻量探测）；定时推送型微服务探针不做（/health 连通性已覆盖观测面，与告警默认关的口径一致）。需求文档 [REQ-S3-4](requirements/S3-4-process-management.md)，FEATURES 第 41 节 |
 | S3-5 | ~~进程守护层：开机自启 + 崩溃自动拉起~~（用户 2026-10-11 主动提出启动并裁剪范围） | ✅ **崩溃自动拉起部分 2026-10-11 完成**（批次 42）：`service.mjs supervise` 守护模式（崩溃自动重启，3s 起指数退避封顶 60s、连续失败 20 次放弃；stop 先写哨兵再杀守护进程杜绝重拉起竞态；supervisor 日志落 `logs/supervisor.log`）；`start` 前台模式对外行为零变化；薄包装 `scripts/supervise-all.bat` + `npm run supervise:all`；生产双服务已迁移到 supervise 模式。需求文档 [REQ-S3-5](requirements/S3-5-supervise-crash-restart.md)，FEATURES 第 45 节。**开机自启仍明确不做**（任务计划程序/systemd/pm2 均不在范围，用户另行提出时再做） |
 | S3-6 | ~~全页面数据链路巡检~~（2026-09-27 用户登记）：逐页验证 WebChat + 8 个网页/App 页是否有数据，输出巡检报告并把发现的问题登记为 P 编号 / 回填 PITFALLS。**清单见下方"S3-6 巡检清单"** | ✅ 2026-09-27 完成（见更新日志批次 24）：10 页全过一遍，7 页 ✅、2 页封禁期预期降级（P11 + 新增 P12）、1 页部分降级；报告写入更新日志，新发现登记为 P12 |
+| S3-7 | ~~PID 文件按端口命名空间化~~（2026-10-11 登记，根治 PITFALLS 同日条目：并行 `--env-file` 实例覆盖生产 PID 文件） | ✅ 代码 2026-10-11 完成（批次 43）：`logs/main-<port>.pid` / `data-service-<port>.pid` / `supervisor-<mainPort>.pid|.stop|.log`；`stop`/`status` 先新后旧回退读取 legacy 文件（可管理 S3-4/S3-5 旧代码拉起的存量实例），旧文件指向存活进程时保留不误删；守护进程归属门防"停验证实例误杀生产 supervise"。需求文档 [REQ-S3-7](requirements/S3-7-pid-file-namespacing.md)，FEATURES 第 45 节。**剩余：生产迁移一步**（停旧实例 → supervise 重拉）因权限策略拦截交由用户执行，命令见更新日志批次 43 |
 
 #### S3-6 巡检清单（下一个 agent 照此执行）
 
@@ -399,6 +400,38 @@ App 形式在安卓手机上运行——手机上随时查行情/自选股/收�
 
 ## 更新日志
 
+
+- 2026-10-11（批次 43）：**S3-7 PID 文件按端口命名空间化完成**——根治批次 42
+  登记的 PITFALLS"并行 `--env-file` 实例覆盖生产 PID 文件"。
+  - 需求文档 [REQ-S3-7](requirements/S3-7-pid-file-namespacing.md) 先行；
+  - `scripts/service.mjs`：全部控制文件按端口命名空间——
+    `logs/main-<port>.pid`、`logs/data-service-<port>.pid`、
+    `logs/supervisor-<mainPort>.pid|.stop|.log`；`start`/`supervise` 只写新路径；
+    `stop`/`status` 先新后旧回退读取（legacy：`logs/main.pid` 等），旧代码拉起
+    的存量实例仍可管理，**升级脚本不需要重启生产**；
+  - 归属安全三件套：① `rmLegacyUnlessOwnedByOther`——旧 PID 文件指向存活
+    进程时保留不误删（否则退回"有进程无 PID 文件"老坑）；② 守护进程归属门
+    （`legacySupervisorBelongsElsewhere`）——"子服务走新版文件 + 守护命中旧版
+    文件"判定为另一实例，stop 跳过（不写哨兵不杀）、status 显示"未代管"，
+    杜绝停验证实例误杀生产 supervise；③ 归属门通过（生产迁移场景）时哨兵
+    写旧路径，旧 supervise 进程（S3-5 代码轮询旧哨兵路径）能正常收停止信号；
+  - 端到端实测（替代端口 28000/28790，不碰生产）：并行实例双 status 各自正确；
+    验证实例 stop **只停自己**——生产守护 PID 28120 经 tasklist 实证存活、
+    legacy PID 文件全部"保留"提示、生产 status 无变化；typecheck + 44 文件
+    341 用例全绿；
+  - **生产迁移（一步，因涉及停生产服务被权限策略拦截，交由用户执行）**：
+    ```bat
+    node scripts\service.mjs stop
+    :: 然后 PowerShell 脱离会话拉起守护（勿在 agent 会话内直接跑，防连带杀）：
+    Start-Process -FilePath "D:\Users\Desktop\program\CNStockBot\scripts\supervise-all.bat" -WorkingDirectory "D:\Users\Desktop\program\CNStockBot"
+    :: 验证：
+    node scripts\service.mjs status
+    curl http://localhost:18790/health
+    ```
+    迁移后 `logs/` 应只剩 `main-18790.pid` / `data-service-8000.pid` /
+    `supervisor-18790.pid` 等命名空间文件，legacy 文件全部消失；
+  - PITFALLS 原条目标记"✅ 已根治"；FEATURES 第 41/45 节路径与已知边界同步；
+  - PR：#65（feat/s3-7-pid-file-namespacing）。
 
 - 2026-10-11（批次 42）：**S3-5 进程守护 supervise 模式完成**（用户主动提出，
   范围裁剪：**只做崩溃自动拉起，开机自启不做**）。用户确认"start-all 前台模式

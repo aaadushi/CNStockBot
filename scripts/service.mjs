@@ -12,12 +12,15 @@
  *
  * 约定：
  * - --env-file 默认 <repo>/.env，**文件值优先于进程环境变量**，便于用替代端口并行验证；
- * - 子进程日志镜像到控制台与 logs/<服务>.log；PID 写 logs/<服务>.pid；
+ * - 子进程日志镜像到控制台与 logs/<服务>.log；PID 写 logs/<服务>-<port>.pid（S3-7
+ *   按端口命名空间化，并行 --env-file 实例互不覆盖；stop/status 先新后旧回退读取，
+ *   可管理 S3-4/S3-5 旧代码拉起的存量实例）；
  * - 端口占用预检拒绝双开（PITFALLS"旧进程占端口"事故防线）；
  * - supervise 模式（REQ-S3-5）：子进程崩溃自动拉起，3s 起指数退避封顶 60s，
- *   连续失败 20 次放弃；守护进程自身 PID 写 logs/supervisor.pid，
- *   自身日志写 logs/supervisor.log；stop 先写 logs/supervisor.stop 哨兵再杀守护进程，
- *   杜绝"stop 后又被拉起"；
+ *   连续失败 20 次放弃；守护进程自身 PID 写 logs/supervisor-<mainPort>.pid，
+ *   自身日志写 logs/supervisor-<mainPort>.log；stop 先写
+ *   logs/supervisor-<mainPort>.stop 哨兵再杀守护进程，杜绝"stop 后又被拉起"；
+ *   守护文件与 PID 文件同口径命名空间化（REQ-S3-7），stop 旧守护时写旧哨兵路径；
  * - 开机自启（任务计划程序/systemd/pm2）不在本脚本范围（REQ-S3-5 明确不做）。
  */
 import { spawn } from 'node:child_process';
@@ -29,8 +32,25 @@ import { config as loadEnv } from 'dotenv';
 
 const repoRoot = fileURLToPath(new URL('..', import.meta.url));
 const logsDir = path.join(repoRoot, 'logs');
-const supervisorPidFile = path.join(logsDir, 'supervisor.pid');
-const supervisorStopFile = path.join(logsDir, 'supervisor.stop');
+
+/**
+ * S3-7：控制文件（PID/哨兵）按实例端口命名空间化，并行 --env-file 实例互不覆盖。
+ * legacy 路径为 S3-4/S3-5 旧版文件名，stop/status 先新后旧回退读取以管理存量实例。
+ */
+function controlFiles(endpoints) {
+  const { mainPort, dsPort } = endpoints;
+  return {
+    mainPid: path.join(logsDir, `main-${mainPort}.pid`),
+    mainPidLegacy: path.join(logsDir, 'main.pid'),
+    dsPid: path.join(logsDir, `data-service-${dsPort}.pid`),
+    dsPidLegacy: path.join(logsDir, 'data-service.pid'),
+    supPid: path.join(logsDir, `supervisor-${mainPort}.pid`),
+    supPidLegacy: path.join(logsDir, 'supervisor.pid'),
+    supStop: path.join(logsDir, `supervisor-${mainPort}.stop`),
+    supStopLegacy: path.join(logsDir, 'supervisor.stop'),
+    supLog: path.join(logsDir, `supervisor-${mainPort}.log`),
+  };
+}
 
 // ---------- 参数与 env ----------
 
@@ -122,6 +142,27 @@ function readPid(pidFile) {
   return Number.isInteger(pid) && pid > 0 ? pid : null;
 }
 
+/** S3-7：先新后旧回退选 PID 文件（新版命名空间文件优先，旧版文件兜底存量实例）。 */
+function resolvePidFile(primary, legacy) {
+  if (existsSync(primary)) return primary;
+  if (legacy && existsSync(legacy)) return legacy;
+  return primary;
+}
+
+/**
+ * S3-7：删除 legacy PID 文件；若它指向另一个仍在运行的进程（属于并行实例），
+ * 则保留并提示——那是别人的归属文件，删了就又退回"有进程无 PID 文件"的老坑。
+ */
+function rmLegacyUnlessOwnedByOther(legacyFile) {
+  if (!legacyFile || !existsSync(legacyFile)) return;
+  const pid = readPid(legacyFile);
+  if (pid && isAlive(pid)) {
+    console.log(`[service] 保留旧版 ${path.basename(legacyFile)}：仍指向运行中的其他实例进程（PID ${pid}）`);
+    return;
+  }
+  rmSync(legacyFile, { force: true });
+}
+
 /** 杀进程树：Windows 必须 taskkill /T（npx/cmd 中间层直接 kill 会留孤儿） */
 function killTree(pid) {
   return new Promise((resolve) => {
@@ -140,7 +181,9 @@ function killTree(pid) {
   });
 }
 
-async function stopOne(name, pidFile) {
+async function stopOne(name, primaryFile, legacyFile) {
+  const pidFile = resolvePidFile(primaryFile, legacyFile);
+  const usingLegacy = pidFile === legacyFile && existsSync(pidFile);
   const pid = readPid(pidFile);
   if (!pid) {
     if (existsSync(pidFile)) {
@@ -149,14 +192,16 @@ async function stopOne(name, pidFile) {
     } else {
       console.log(`[service] ${name}: 未运行（无 PID 文件）`);
     }
+    rmLegacyUnlessOwnedByOther(legacyFile);
     return;
   }
   if (!isAlive(pid)) {
     rmSync(pidFile, { force: true });
+    rmLegacyUnlessOwnedByOther(legacyFile);
     console.log(`[service] ${name}: PID ${pid} 已不存在（陈旧 PID 文件），已清理`);
     return;
   }
-  console.log(`[service] 停止 ${name} (PID ${pid})…`);
+  console.log(`[service] 停止 ${name} (PID ${pid}${usingLegacy ? '，旧版 PID 文件' : ''})…`);
   await killTree(pid);
   const deadline = Date.now() + 3000;
   while (isAlive(pid) && Date.now() < deadline) await sleep(200);
@@ -166,6 +211,7 @@ async function stopOne(name, pidFile) {
     await sleep(500);
   }
   rmSync(pidFile, { force: true });
+  rmLegacyUnlessOwnedByOther(legacyFile);
   console.log(`[service] ${name}: 已停止`);
 }
 
@@ -177,7 +223,7 @@ async function stopOne(name, pidFile) {
  * - { reason: 'signal', detail, startedAt }          收到了 shutdown()（SIGINT/Ctrl+C/关窗/stop 哨兵）
  * 端口预检失败返回 null（错误信息已打印）。
  */
-function runOneGeneration(env, endpoints, mode = 'start') {
+function runOneGeneration(env, endpoints, files, mode = 'start') {
   const { mainPort, dsHost, dsPort } = endpoints;
 
   // 端口占用预检：拒绝双开（PITFALLS 旧进程占端口事故防线）
@@ -270,8 +316,8 @@ function runOneGeneration(env, endpoints, mode = 'start') {
     mirror(main.stderr, mainLog);
 
     const services = [
-      { name: 'data-service', child: ds, file: path.join(logsDir, 'data-service.pid') },
-      { name: '主服务', child: main, file: path.join(logsDir, 'main.pid') },
+      { name: 'data-service', child: ds, file: files.dsPid },
+      { name: '主服务', child: main, file: files.mainPid },
     ];
     gen._services = services;
     for (const s of services) {
@@ -362,9 +408,9 @@ function bindShutdownSignals(gen) {
 
 // ---------- start ----------
 
-async function cmdStart(env, endpoints) {
+async function cmdStart(env, endpoints, files) {
   requireToken(env);
-  const gen = runOneGeneration(env, endpoints);
+  const gen = runOneGeneration(env, endpoints, files);
   const unbind = bindShutdownSignals(gen);
   const result = await gen.stopped;
   unbind();
@@ -385,15 +431,16 @@ const BACKOFF_BASE_MS = 3_000; // 退避 3s → 6s → 12s → … 封顶 60s
 const BACKOFF_CAP_MS = 60_000;
 const SENTINEL_POLL_MS = 500; // 退避等待期间哨兵轮询间隔（stop 即时打断）
 
-async function cmdSupervise(env, endpoints) {
+async function cmdSupervise(env, endpoints, files) {
   requireToken(env);
   mkdirSync(logsDir, { recursive: true });
 
-  // 幂等：清掉上次强杀遗留的哨兵，再写自身 PID
-  rmSync(supervisorStopFile, { force: true });
-  writeFileSync(supervisorPidFile, String(process.pid));
+  // 幂等：清掉上次强杀遗留的哨兵（新旧路径都清），再写自身 PID
+  rmSync(files.supStop, { force: true });
+  rmSync(files.supStopLegacy, { force: true });
+  writeFileSync(files.supPid, String(process.pid));
 
-  const supLog = createWriteStream(path.join(logsDir, 'supervisor.log'), { flags: 'a' });
+  const supLog = createWriteStream(files.supLog, { flags: 'a' });
   const slog = (msg) => {
     const line = `[supervisor ${new Date().toISOString()}] ${msg}`;
     console.log(line);
@@ -414,10 +461,10 @@ async function cmdSupervise(env, endpoints) {
   const sleepInterruptible = async (ms) => {
     const deadline = Date.now() + ms;
     while (Date.now() < deadline) {
-      if (stopRequested || existsSync(supervisorStopFile)) return false;
+      if (stopRequested || existsSync(files.supStop)) return false;
       await sleep(Math.min(SENTINEL_POLL_MS, deadline - Date.now()));
     }
-    return !stopRequested && !existsSync(supervisorStopFile);
+    return !stopRequested && !existsSync(files.supStop);
   };
 
   slog(`守护模式启动（PID ${process.pid}）。崩溃自动拉起（退避 3s 起封顶 60s，连续失败 ${MAX_CONSECUTIVE_FAILURES} 次放弃）；stop 命令终止守护。`);
@@ -425,11 +472,11 @@ async function cmdSupervise(env, endpoints) {
   let consecutiveFailures = 0;
   let exitCode = 0;
   while (true) {
-    if (stopRequested || existsSync(supervisorStopFile)) {
+    if (stopRequested || existsSync(files.supStop)) {
       slog('收到停止请求，退出守护。');
       break;
     }
-    gen = runOneGeneration(env, endpoints, 'supervise');
+    gen = runOneGeneration(env, endpoints, files, 'supervise');
     const result = await gen.stopped;
     gen = null;
     if (result === null) {
@@ -462,56 +509,104 @@ async function cmdSupervise(env, endpoints) {
     }
   }
 
-  // 收尾：清理 PID 文件与哨兵（子进程已由 generation 内部清理）
-  rmSync(supervisorPidFile, { force: true });
-  rmSync(supervisorStopFile, { force: true });
+  // 收尾：清理 PID 文件与哨兵（子进程已由 generation 内部清理）；新旧路径都清
+  rmSync(files.supPid, { force: true });
+  rmSync(files.supPidLegacy, { force: true });
+  rmSync(files.supStop, { force: true });
+  rmSync(files.supStopLegacy, { force: true });
   supLog.end();
   process.exit(exitCode);
 }
 
 // ---------- stop / status ----------
 
-async function cmdStop() {
-  // S3-5：先写哨兵再杀守护进程，杜绝"stop 完又被守护循环拉起"
-  const supPid = readPid(supervisorPidFile);
+/**
+ * 旧版守护进程归属校验（S3-7）：子服务已按新版 PID 文件运行、守护进程却命中旧版
+ * 文件时，说明该旧守护属于另一实例（如生产 supervise + 替代端口 start 并行），
+ * 不得写它的哨兵/杀它，否则停验证实例会顺手杀掉生产守护。
+ */
+function legacySupervisorBelongsElsewhere(files) {
+  const supLegacy = readPid(files.supPidLegacy);
+  if (!supLegacy || !isAlive(supLegacy)) return false; // 没有活着的旧守护，无从误杀
+  const mainFile = resolvePidFile(files.mainPid, files.mainPidLegacy);
+  const dsFile = resolvePidFile(files.dsPid, files.dsPidLegacy);
+  const childUsesPrimary = mainFile === files.mainPid || dsFile === files.dsPid;
+  return childUsesPrimary; // 子服务走新版文件 → 旧守护不是本实例的
+}
+
+async function cmdStop(files) {
+  // S3-5：先写哨兵再杀守护进程，杜绝"stop 完又被守护循环拉起"。
+  // S3-7：旧守护进程（S3-5 代码）轮询的是旧哨兵路径，回退命中旧 PID 文件时
+  // 必须把哨兵写到旧路径，否则旧守护收不到停止信号会被误杀后又被拉起；
+  // 但若旧守护属于另一实例（本子服务按新版 PID 文件运行），则一律不得触碰。
+  const belongsElsewhere = legacySupervisorBelongsElsewhere(files);
+  const supUsingLegacy =
+    !belongsElsewhere && resolvePidFile(files.supPid, files.supPidLegacy) === files.supPidLegacy && existsSync(files.supPidLegacy);
+  const supStopTarget = supUsingLegacy ? files.supStopLegacy : files.supStop;
+  let supPid = readPid(resolvePidFile(files.supPid, files.supPidLegacy));
+  if (supPid && belongsElsewhere) {
+    console.warn(
+      `[service] 检测到旧版守护进程（PID ${supPid}）属于另一实例（本子服务按新版 PID 文件运行），已跳过；` +
+        '如需停止它，请在它对应的 env/端口下执行 stop。',
+    );
+    supPid = null;
+  }
   if (supPid) {
-    writeFileSync(supervisorStopFile, String(Date.now()));
+    writeFileSync(supStopTarget, String(Date.now()));
     if (isAlive(supPid)) {
-      console.log(`[service] 停止守护进程 (PID ${supPid})…`);
+      console.log(`[service] 停止守护进程 (PID ${supPid}${supUsingLegacy ? '，旧版 supervisor PID 文件' : ''})…`);
       await killTree(supPid);
       const deadline = Date.now() + 3000;
       while (isAlive(supPid) && Date.now() < deadline) await sleep(200);
       if (isAlive(supPid)) console.log('[service] 守护进程仍在，继续清理子服务');
     }
   }
-  await stopOne('data-service', path.join(logsDir, 'data-service.pid'));
-  await stopOne('主服务', path.join(logsDir, 'main.pid'));
-  rmSync(supervisorPidFile, { force: true });
-  rmSync(supervisorStopFile, { force: true });
+  await stopOne('data-service', files.dsPid, files.dsPidLegacy);
+  await stopOne('主服务', files.mainPid, files.mainPidLegacy);
+  // 收尾：新版路径直接清；旧版路径仅在不属于其他存活实例时清（半迁移防误删）
+  rmSync(files.supPid, { force: true });
+  rmSync(files.supStop, { force: true });
+  rmLegacyUnlessOwnedByOther(files.supPidLegacy);
+  if (!existsSync(files.supPidLegacy)) rmSync(files.supStopLegacy, { force: true });
 }
 
-async function cmdStatus(endpoints) {
+async function cmdStatus(endpoints, files) {
   const { mainPort, dsPort } = endpoints;
-  // S3-5：守护进程状态行（不影响退出码）
-  const supPid = readPid(supervisorPidFile);
-  if (supPid && isAlive(supPid)) {
-    console.log(`[service] 守护进程: PID=${supPid} 运行中（supervise 模式）`);
+  // S3-5：守护进程状态行（不影响退出码）；S3-7：先新后旧回退读取 +
+  // 归属校验（旧守护属于另一实例时不把它报成本实例的守护）
+  const supFile = resolvePidFile(files.supPid, files.supPidLegacy);
+  const supUsingLegacy = supFile === files.supPidLegacy && existsSync(supFile);
+  const supPid = readPid(supFile);
+  const supAlive = supPid ? isAlive(supPid) : false;
+  if (supAlive && !(supUsingLegacy && legacySupervisorBelongsElsewhere(files))) {
+    console.log(
+      `[service] 守护进程: PID=${supPid} 运行中（supervise 模式${supUsingLegacy ? '，旧版 supervisor PID 文件' : ''}）`,
+    );
+  } else if (supAlive) {
+    console.log(`[service] 守护进程: 未运行（本实例无守护；检测到另一实例的旧版守护进程 PID=${supPid}，未代管）`);
   } else {
-    if (supPid) rmSync(supervisorPidFile, { force: true });
-    console.log('[service] 守护进程: 未运行（前台 start 模式或无守护）');
+    if (supPid) {
+      rmSync(supFile, { force: true });
+      console.log('[service] 守护进程: 未运行（陈旧 PID 文件已清理）');
+    } else {
+      console.log('[service] 守护进程: 未运行（前台 start 模式或无守护）');
+    }
   }
   const rows = [
-    { name: 'data-service', pidFile: path.join(logsDir, 'data-service.pid'), port: dsPort },
-    { name: '主服务', pidFile: path.join(logsDir, 'main.pid'), port: mainPort },
+    { name: 'data-service', pidFile: files.dsPid, pidLegacy: files.dsPidLegacy, port: dsPort },
+    { name: '主服务', pidFile: files.mainPid, pidLegacy: files.mainPidLegacy, port: mainPort },
   ];
   let allRunning = true;
   for (const r of rows) {
-    const pid = readPid(r.pidFile);
+    const pidFile = resolvePidFile(r.pidFile, r.pidLegacy);
+    const usingLegacy = pidFile === r.pidLegacy && existsSync(pidFile);
+    const pid = readPid(pidFile);
     const alive = pid ? isAlive(pid) : false;
     const listening = await portOpen(r.port);
     if (!alive || !listening) allRunning = false;
     console.log(
       `[service] ${r.name}: PID=${alive ? pid : '未运行'} 端口 ${r.port}=${listening ? '监听中' : '未监听'}` +
+        (alive && usingLegacy ? '（旧版 PID 文件）' : '') +
         (pid && !alive ? '（PID 文件陈旧，可运行 stop 清理）' : ''),
     );
   }
@@ -523,18 +618,19 @@ async function cmdStatus(endpoints) {
 const { command, envFile } = parseArgs(process.argv.slice(2));
 const env = loadServiceEnv(envFile);
 const endpoints = resolveEndpoints(env);
+const files = controlFiles(endpoints);
 
 if (command === 'start') {
-  await cmdStart(env, endpoints);
+  await cmdStart(env, endpoints, files);
 } else if (command === 'supervise') {
-  await cmdSupervise(env, endpoints);
+  await cmdSupervise(env, endpoints, files);
 } else if (command === 'stop') {
-  await cmdStop();
+  await cmdStop(files);
 } else if (command === 'status') {
-  await cmdStatus(endpoints);
+  await cmdStatus(endpoints, files);
 } else if (command === 'restart') {
-  await cmdStop();
-  await cmdStart(env, endpoints);
+  await cmdStop(files);
+  await cmdStart(env, endpoints, files);
 } else {
   fatal(`未知子命令：${command}（可用：start | supervise | stop | status | restart）`);
 }
