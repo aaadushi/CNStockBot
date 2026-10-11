@@ -719,6 +719,38 @@
 
 ---
 
+## 8. 进程管理 / 部署运维
+
+### [2026-10-11] Git Bash 里 taskkill 的 `/pid`、`/T`、`/F` 被 MSYS 路径转换吞掉：报"无效参数"，须写 `//pid`
+- **现象**：Git Bash 执行 `taskkill /pid 41452 /T /F`，报
+  `错误: 无效参数/选项 - 'D:/Program Files/Git/pid'`（把 `/pid` 当成了
+  Unix 路径并转成了 Windows 路径）。
+- **根因**：MSYS2/Git Bash 的参数路径转换（MSYS2_ARG_CONV_EXCL 未设置时）会把
+  以 `/` 开头的参数当 POSIX 路径转写；taskkill 需要的正是 `/` 开关。
+- **解法**：Git Bash 下写成双斜杠 `taskkill //pid 41452 //T //F`；或在 cmd /
+  PowerShell 里执行则保持单斜杠。
+- **涉及文件**：`scripts/service.mjs`（内部用 spawn 调用不受此影响，仅手工命令行踩坑）
+- **预防**：在 Git Bash 手工杀 Windows 进程时一律 `//` 开关；脚本里优先用
+  Node `spawn`（无 shell 转换层）。
+
+### [2026-10-11] S3-4 遗留：logs/*.pid 不按 --env-file 隔离，并行替代端口实例会覆盖生产 PID 文件
+- **现象**：生产实例（8000/18790）在跑时用 `--env-file` 起替代端口（28000/28790）
+  验证实例，`logs/main.pid` / `logs/data-service.pid` 被后者覆盖——
+  `status` / `stop` 开始指向验证实例；验证实例 stop 删 PID 文件后，
+  生产实例变成"有进程无 PID 文件"，stop-all 找不到它。
+- **根因**：`scripts/service.mjs`（S3-4）把 PID 文件路径写死为
+  `logs/<服务>.pid`，与 env 文件/端口无关；两个实例共用同一 logs 目录即互相覆盖。
+  端口预检只防"同一 env 双开"，不防这种"第二实例"。
+- **解法**：当前靠纪律规避——并行验证后生产实例用端口查找（`netstat -ano |
+  findstr :18790`）定位 PID 再 taskkill，并重新以 supervise 模式拉起
+  （重写 PID 文件）；**根治需把 PID 文件按端口/env 命名空间化**（如
+  `logs/main-<port>.pid`），留待后续需求处理。
+- **涉及文件**：`scripts/service.mjs`
+- **预防**：用 `--env-file` 起并行实例前，意识到它会覆盖生产 PID 文件；
+  验证结束要么把生产切到新模式重写 PID 文件，要么用端口定位法清理。
+
+---
+
 ## 排查速查
 
 | 症状 | 先看哪里 |

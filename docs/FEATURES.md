@@ -1312,3 +1312,33 @@
   跨用户列表与字段白名单、非管理员 403 不泄露、limit 收敛 +
   tests/feedback-admin-unset.test.ts 空配置 fail-closed）；临时实例端到端：
   401/400/200/403/管理员列表全链路实测通过。
+
+## 45. 进程守护：崩溃自动拉起 supervise 模式（S3-5，2026-10-11 新增）
+
+- **定位**：S3-4 前台监督模式的守护升级版。用户 2026-10-11 主动提出启动 S3-5 并
+  裁剪范围：**只做崩溃自动拉起；开机自启不做**（任务计划程序/systemd/pm2 均明确
+  不做），启动仍由人手动执行。需求文档
+  [docs/requirements/S3-5-supervise-crash-restart.md](requirements/S3-5-supervise-crash-restart.md)。
+- **实现**（[scripts/service.mjs](../scripts/service.mjs) 重构 + 新子命令，零新依赖）：
+  - 抽出 `runOneGeneration(env, endpoints, mode)`：端口预检 → 拉起双服务 → 写 PID
+    文件 → 镜像日志，resolve `{reason:'child-exit'|'signal', …}`；`start` 变为薄壳
+    （跑一代 → 收尾 → 退出码传递），**对外行为与 S3-4 零变化**；
+  - `supervise`：写自身 PID `logs/supervisor.pid`；崩溃自动拉起——本代运行 ≥60s
+    视为稳定（连续失败计数清零），否则计数 +1，退避 3s 起指数翻倍封顶 60s，
+    **连续失败 20 次放弃**（退出码 1 + 日志提示人工介入，防崩溃风暴）；退避等待
+    每 500ms 轮询停止哨兵，stop 即时打断；supervisor 自身日志追加写
+    `logs/supervisor.log`（时间 + 肇事服务名 + 退出码 + 重试序号），无窗运行也可查；
+  - `stop` 升级：先写 `logs/supervisor.stop` 哨兵 → 杀守护进程（taskkill /T /F）→
+    照旧按 PID 文件停两个子服务 → 清理 pid/哨兵文件；守护未运行时行为与 S3-4 一致
+    （幂等）；**杜绝"stop 完又被拉起"竞态**；
+  - `status` 增加守护进程行（运行中 PID / 未运行），退出码逻辑不变；
+  - 肇事归因：一代内先退出者为肇事者，另一个由 generation killTree 清理的退出
+    不重复记录（否则日志会把"被杀的同伴"误记成崩溃源）；
+  - 薄包装 `scripts/supervise-all.bat`（ASCII 注释）+ npm script `supervise:all`。
+- **已知边界**：PID 文件（`logs/*.pid`）不按 `--env-file` 隔离——用替代端口并行起
+  第二个实例会覆盖生产实例的 PID 文件（端口本身不受影响），见 PITFALLS 对应条目；
+  崩溃归因以"先退出者"为准，两进程同时自然崩溃时只记录第一个。
+- **验证**：替代端口（28790/28000 + 独立 DATA_DIR）端到端实测：拉起 → taskkill
+  杀主服务子进程 → 3s 退避后自动拉起且归因正确（"主服务 退出"）→ 连杀两次退避
+  递增 3s→6s → stop 后守护退出、32s 无重拉起、pid/哨兵清理干净、status 两态正确；
+  start 前台模式回归（拉起/stop 收尾）通过；typecheck + 341 用例全绿。
