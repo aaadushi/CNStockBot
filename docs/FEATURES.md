@@ -1173,7 +1173,8 @@
     `python -m uvicorn`；host/port 从 `PYTHON_SERVICE_URL` 解析）与主服务
     （`node node_modules/tsx/dist/cli.mjs src/index.ts`，**不用 tsx watch**——避开
     热重载失效坑）；日志同屏镜像 + 追加写 `logs/<服务>.log`；PID 写
-    `logs/<服务>.pid`；`DATA_SERVICE_TOKEN` 为空直接报错退出；任一子进程退出
+    `logs/<服务>-<port>.pid`（S3-7 起按端口命名空间化，并行 --env-file 实例
+    互不覆盖）；`DATA_SERVICE_TOKEN` 为空直接报错退出；任一子进程退出
     （含崩溃）→ 杀进程树整体收尾；`--env-file <path>` 可指定 env 文件（文件值优先，
     便于替代端口并行验证）；
   - `stop`：按 PID 文件停止（win32 `taskkill /T /F` 杀树，POSIX 先 SIGTERM 后
@@ -1323,21 +1324,32 @@
   - 抽出 `runOneGeneration(env, endpoints, mode)`：端口预检 → 拉起双服务 → 写 PID
     文件 → 镜像日志，resolve `{reason:'child-exit'|'signal', …}`；`start` 变为薄壳
     （跑一代 → 收尾 → 退出码传递），**对外行为与 S3-4 零变化**；
-  - `supervise`：写自身 PID `logs/supervisor.pid`；崩溃自动拉起——本代运行 ≥60s
+  - `supervise`：写自身 PID `logs/supervisor-<mainPort>.pid`（S3-7 起按端口
+    命名空间化）；崩溃自动拉起——本代运行 ≥60s
     视为稳定（连续失败计数清零），否则计数 +1，退避 3s 起指数翻倍封顶 60s，
     **连续失败 20 次放弃**（退出码 1 + 日志提示人工介入，防崩溃风暴）；退避等待
     每 500ms 轮询停止哨兵，stop 即时打断；supervisor 自身日志追加写
-    `logs/supervisor.log`（时间 + 肇事服务名 + 退出码 + 重试序号），无窗运行也可查；
-  - `stop` 升级：先写 `logs/supervisor.stop` 哨兵 → 杀守护进程（taskkill /T /F）→
+    `logs/supervisor-<mainPort>.log`（时间 + 肇事服务名 + 退出码 + 重试序号），
+    无窗运行也可查；
+  - `stop` 升级：先写 `logs/supervisor-<mainPort>.stop` 哨兵（回退命中旧版
+    守护文件时写旧哨兵路径）→ 杀守护进程（taskkill /T /F）→
     照旧按 PID 文件停两个子服务 → 清理 pid/哨兵文件；守护未运行时行为与 S3-4 一致
     （幂等）；**杜绝"stop 完又被拉起"竞态**；
   - `status` 增加守护进程行（运行中 PID / 未运行），退出码逻辑不变；
   - 肇事归因：一代内先退出者为肇事者，另一个由 generation killTree 清理的退出
     不重复记录（否则日志会把"被杀的同伴"误记成崩溃源）；
   - 薄包装 `scripts/supervise-all.bat`（ASCII 注释）+ npm script `supervise:all`。
-- **已知边界**：PID 文件（`logs/*.pid`）不按 `--env-file` 隔离——用替代端口并行起
-  第二个实例会覆盖生产实例的 PID 文件（端口本身不受影响），见 PITFALLS 对应条目；
-  崩溃归因以"先退出者"为准，两进程同时自然崩溃时只记录第一个。
+- **S3-7 命名空间与归属门（2026-10-11 根治 PITFALLS 并行实例覆盖 PID 事故）**：
+  全部控制文件按实例端口命名空间（`main-<port>.pid` / `data-service-<port>.pid` /
+  `supervisor-<mainPort>.pid|.stop|.log`）；`stop`/`status` **先新后旧回退读取**
+  legacy 路径（`logs/main.pid` 等），旧代码（S3-4/S3-5）拉起的存量实例仍可管理，
+  生产可无缝迁移；旧 PID 文件指向存活进程时**保留不误删**（`rmLegacyUnless
+  OwnedByOther`）；**守护进程归属门**："子服务走新版 PID 文件 + 守护进程命中旧版
+  文件"判定为另一实例——stop 跳过旧守护（不写哨兵不杀），status 显示"未代管"，
+  杜绝停验证实例误杀生产 supervise 守护。
+- **已知边界**：日志文件（`logs/main.log` / `logs/data-service.log`）仍为多实例
+  共享追加（内容交织但不丢数据，S3-7 明确不做隔离）；崩溃归因以"先退出者"为准，
+  两进程同时自然崩溃时只记录第一个。
 - **验证**：替代端口（28790/28000 + 独立 DATA_DIR）端到端实测：拉起 → taskkill
   杀主服务子进程 → 3s 退避后自动拉起且归因正确（"主服务 退出"）→ 连杀两次退避
   递增 3s→6s → stop 后守护退出、32s 无重拉起、pid/哨兵清理干净、status 两态正确；
