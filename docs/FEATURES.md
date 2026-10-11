@@ -1314,6 +1314,37 @@
   tests/feedback-admin-unset.test.ts 空配置 fail-closed）；临时实例端到端：
   401/400/200/403/管理员列表全链路实测通过。
 
+## 44-B. 管理后台 v2：用户总览 + 运行概览（REQ-Admin-V2，2026-10-11 新增）
+
+- **定位**：STATUS「其他候选方向」第 8 条（管理后台）的第二个切片。第一个切片
+  （反馈查看）见第 44 节；本次交付"用户总览 + 运行概览"两个**只读**区块。
+  剩余切片：推送任务运行状态/历史（需调度器运行时埋点，独立批次）。
+  需求文档 [docs/requirements/admin-v2-overview.md](requirements/admin-v2-overview.md)。
+- **存储层**（[src/storage/store.ts](../src/storage/store.ts)，无新表）：
+  - `listUserStats()`：单条 SQL 关联 users 表做相关子查询聚合（自选只数/规则数/
+    反馈数/最近登录 = sessions.created_at 最大值），按注册时间倒序，LIMIT 500 封顶；
+  - `countUsers()`：用户总数。`UserStatEntry` 字段白名单：username/createdAt/
+    lastActiveAt/watchlistCount/ruleCount/feedbackCount——**不含 userId/会话/token/
+    消息内容/密码相关字段**（隐私最小化）。
+- **API**（[src/channels/webchat.ts](../src/channels/webchat.ts)，requireAdmin 同门槛）：
+  - `GET /api/admin/overview`：构建信息（version/gitSha/startedAt，复用 health.ts 导出）
+    + `dataService`（复用 30s 缓存探测器，不新增微服务压力）+ `quoteProbe`
+    （healthProbe.ts 状态快照）+ `scheduler` 四任务（dailyReport/priceAlerts/
+    overseasPush/scannerUpdate）的开关、参数与 `nextRunInMs`（`msUntilNextRun` 的
+    工作日估算；未启用任务为 null；priceAlerts 轮询循环无固定时刻恒 null）。
+  - `GET /api/admin/users`：`{ items, total }`。
+- **前端**（[public/admin/index.html](../public/admin/index.html) 重构为三区块）：
+  运行概览（键值行 + 任务行徽章）/ 用户总览（表格：用户名/注册时间/最近登录/
+  自选/规则/反馈）/ 意见反馈（原实现不变）；共用一个 load() 60s 轮询三个端点，
+  逐区块独立 403/错误态；全部 textContent，无 innerHTML。
+- **明确不做**（REQ 清单）：任何写操作（禁用用户/代发推送/重置密码）、消息内容
+  展示、活跃度趋势图表、管理端进 LLM 技能清单。
+- **验证**：typecheck + 45 文件 346 用例全绿（tests/admin-v2-overview.test.ts 5 条：
+  未登录 401、非管理员 403 不泄露、overview 结构（dataService 双向容忍、调度开关
+  形状）、users 聚合与字段白名单精确集合、store 层聚合口径 +
+  feedback-admin-unset.test.ts 补 fail-closed 2 断言）；临时实例（18321）端到端：
+  401/403/200、用户聚合数字正确、/admin 静态页 200 全链路实测通过。
+
 ## 45. 进程守护：崩溃自动拉起 supervise 模式（S3-5，2026-10-11 新增）
 
 - **定位**：S3-4 前台监督模式的守护升级版。用户 2026-10-11 主动提出启动 S3-5 并

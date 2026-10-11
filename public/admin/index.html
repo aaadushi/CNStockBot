@@ -23,6 +23,39 @@
     }
     .list-note { font-size: 12px; color: var(--text-3); margin-top: 12px; text-align: center; }
     .block-error { color: var(--text-3); font-size: 13px; padding: 16px 4px; }
+
+    /* ---- 运行概览（REQ-Admin-V2）：键值行 + 任务行 ---- */
+    .kv-row {
+      display: flex; align-items: baseline; gap: 12px;
+      padding: 8px 0; border-bottom: 1px dashed var(--border, rgba(0,0,0,0.06));
+      font-size: 14px;
+    }
+    .kv-row:last-child { border-bottom: 0; }
+    .kv-key { color: var(--text-2); white-space: nowrap; min-width: 6em; }
+    .kv-val { color: var(--text); font-variant-numeric: tabular-nums; word-break: break-all; }
+    .kv-val.ok { color: #16a34a; }
+    .kv-val.bad { color: #dc2626; }
+    .task-row { display: flex; align-items: baseline; gap: 8px; flex-wrap: wrap; font-size: 14px; padding: 6px 0; }
+    .task-name { font-weight: 600; color: var(--text); }
+    .task-detail { color: var(--text-2); font-size: 13px; }
+    .badge {
+      display: inline-block; font-size: 12px; padding: 1px 8px; border-radius: 999px;
+      background: rgba(22, 163, 74, 0.12); color: #16a34a;
+    }
+    .badge.off { background: rgba(100, 116, 139, 0.12); color: var(--text-3); }
+    .section-note { font-size: 12px; color: var(--text-3); margin-top: 10px; }
+
+    /* ---- 用户总览（REQ-Admin-V2）：简单表格 ---- */
+    .u-table { width: 100%; border-collapse: collapse; font-size: 13px; }
+    .u-table th, .u-table td {
+      text-align: left; padding: 8px 10px;
+      border-bottom: 1px dashed var(--border, rgba(0,0,0,0.06));
+      font-variant-numeric: tabular-nums; white-space: nowrap;
+    }
+    .u-table th { color: var(--text-3); font-weight: 500; font-size: 12px; }
+    .u-table td { color: var(--text); }
+    .u-table .num { text-align: right; }
+    .u-scroll { overflow-x: auto; }
   </style>
 </head>
 <body>
@@ -36,16 +69,40 @@
   </header>
 
   <main class="page page-wide">
-    <h1 class="page-title">意见反馈</h1>
-    <div class="card" style="margin-bottom: 16px;">
-      <div style="display:flex; align-items:center; gap:12px; flex-wrap:wrap;">
-        <span>共 <b id="fb-total" class="text-up">0</b> 条</span>
-        <span style="flex:1"></span>
-        <button class="btn btn-ghost btn-sm" id="refresh-btn">刷新</button>
-      </div>
+    <div style="display:flex; align-items:center; gap:12px; flex-wrap:wrap; margin-bottom:16px;">
+      <h1 class="page-title" style="margin:0;">管理后台</h1>
+      <span style="flex:1"></span>
+      <button class="btn btn-ghost btn-sm" id="refresh-btn">刷新</button>
     </div>
 
-    <div class="card">
+    <!-- 运行概览（REQ-Admin-V2） -->
+    <h2 class="section-title" style="font-size:17px; margin:20px 0 10px;">运行概览</h2>
+    <div class="card" style="margin-bottom: 16px;">
+      <div id="ov-build"></div>
+      <div id="ov-links"></div>
+      <div id="ov-tasks"></div>
+      <div class="section-note" id="ov-note"></div>
+    </div>
+
+    <!-- 用户总览（REQ-Admin-V2） -->
+    <h2 class="section-title" style="font-size:17px; margin:20px 0 10px;">用户总览</h2>
+    <div class="card" style="margin-bottom: 16px;">
+      <div style="margin-bottom:8px; font-size:14px;">共 <b id="u-total" class="text-up">0</b> 位用户</div>
+      <div class="u-scroll">
+        <table class="u-table">
+          <thead>
+            <tr><th>用户名</th><th>注册时间</th><th>最近登录</th><th class="num">自选股</th><th class="num">监控规则</th><th class="num">反馈</th></tr>
+          </thead>
+          <tbody id="u-tbody"></tbody>
+        </table>
+      </div>
+      <div class="list-note" id="u-note"></div>
+    </div>
+
+    <!-- 意见反馈（REQ-Feedback-Admin） -->
+    <h2 class="section-title" style="font-size:17px; margin:20px 0 10px;">意见反馈</h2>
+    <div class="card" style="margin-bottom: 16px;">
+      <div style="margin-bottom:8px; font-size:14px;">共 <b id="fb-total" class="text-up">0</b> 条</div>
       <div id="fb-list" class="fb-list"></div>
       <div class="list-note" id="list-note"></div>
     </div>
@@ -72,12 +129,153 @@
     }
     function pad2(n) { return n < 10 ? '0' + n : '' + n; }
     function fmtTime(ts) {
+      if (ts === null || ts === undefined) return '—';
       const d = new Date(ts);
       return d.getFullYear() + '-' + pad2(d.getMonth() + 1) + '-' + pad2(d.getDate())
         + ' ' + pad2(d.getHours()) + ':' + pad2(d.getMinutes());
     }
+    /** 毫秒 → "约 X 小时 Y 分后"（REQ-Admin-V2 预计下次运行的可读格式） */
+    function fmtIn(ms) {
+      if (ms === null || ms === undefined) return '—';
+      const totalMin = Math.round(ms / 60000);
+      const h = Math.floor(totalMin / 60);
+      const m = totalMin % 60;
+      if (h <= 0) return '约 ' + m + ' 分钟后';
+      return '约 ' + h + ' 小时 ' + m + ' 分后';
+    }
+    /** 统一拉取管理端接口：403 → onForbidden；其余异常 → onError(msg) */
+    async function adminFetch(url, onForbidden, onError) {
+      try {
+        const res = await CNStockAuth.apiFetch(url);
+        if (res.status === 403) { onForbidden(); return null; }
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.error || ('HTTP ' + res.status));
+        return data;
+      } catch (e) {
+        onError(e.message);
+        return null;
+      }
+    }
 
-    /* ================= 意见反馈列表（REQ-Feedback-Admin） =================
+    /* ================= 运行概览（REQ-Admin-V2） ================= */
+    function kvRow(box, key, val, cls) {
+      const row = el('div', 'kv-row');
+      row.appendChild(el('span', 'kv-key', key));
+      row.appendChild(el('span', 'kv-val' + (cls ? ' ' + cls : ''), val));
+      box.appendChild(row);
+    }
+    function taskRow(box, name, enabled, detail) {
+      const row = el('div', 'task-row');
+      row.appendChild(el('span', 'task-name', name));
+      row.appendChild(el('span', 'badge' + (enabled ? '' : ' off'), enabled ? '已启用' : '已关闭'));
+      row.appendChild(el('span', 'task-detail', detail));
+      box.appendChild(row);
+    }
+    function renderOverview(data) {
+      const build = $('ov-build');
+      build.textContent = '';
+      kvRow(build, '版本', data.version + (data.gitSha ? '（' + data.gitSha + '）' : ''));
+      kvRow(build, '启动时间', fmtTime(data.startedAt));
+
+      const links = $('ov-links');
+      links.textContent = '';
+      const ds = data.dataService || {};
+      kvRow(links, '数据微服务', ds.ok
+        ? '正常（' + ds.latencyMs + ' ms）'
+        : '异常：' + (ds.error || '未知'), ds.ok ? 'ok' : 'bad');
+      const qp = data.quoteProbe || {};
+      kvRow(links, '行情探针', qp.ok
+        ? '健康' + (qp.consecutiveFailures > 0 ? '（连续失败 ' + qp.consecutiveFailures + ' 次）' : '')
+        : '故障：' + (qp.lastError || '连续失败'), qp.ok ? 'ok' : 'bad');
+
+      const tasks = $('ov-tasks');
+      tasks.textContent = '';
+      const sch = data.scheduler || {};
+      if (sch.dailyReport) {
+        taskRow(tasks, '收盘日报（15:30）', sch.dailyReport.enabled,
+          '预计下次 ' + fmtIn(sch.dailyReport.nextRunInMs) +
+          (sch.dailyReport.signals ? '' : '，技术面信号已关闭'));
+      }
+      if (sch.priceAlerts) {
+        taskRow(tasks, '盘中异动提醒', sch.priceAlerts.enabled,
+          sch.priceAlerts.enabled
+            ? '每 ' + sch.priceAlerts.intervalMinutes + ' 分钟，阈值 ±' + sch.priceAlerts.thresholdPct + '%'
+            : '');
+      }
+      if (sch.overseasPush) {
+        taskRow(tasks, '盘前外盘推送（9:10）', sch.overseasPush.enabled,
+          sch.overseasPush.enabled ? '预计下次 ' + fmtIn(sch.overseasPush.nextRunInMs) : '');
+      }
+      if (sch.scannerUpdate) {
+        taskRow(tasks, '盘后扫描更新（15:40）', sch.scannerUpdate.enabled,
+          (sch.scannerUpdate.enabled ? '预计下次 ' + fmtIn(sch.scannerUpdate.nextRunInMs) : '') +
+          (sch.scannerUpdate.push ? '，完成后推送摘要' : ''));
+      }
+      $('ov-note').textContent = '预计下次运行按工作日估算，法定节假日触发时自动跳过；60 秒自动刷新。';
+    }
+
+    function loadOverview() {
+      $('ov-build').textContent = ''; $('ov-links').textContent = ''; $('ov-tasks').textContent = '';
+      $('ov-build').appendChild(el('div', 'block-error', '加载中…'));
+      adminFetch('/api/admin/overview',
+        () => {
+          $('ov-build').textContent = '';
+          $('ov-build').appendChild(el('div', 'block-error', '无权访问：当前账号不是管理员'));
+        },
+        (msg) => {
+          $('ov-build').textContent = '';
+          $('ov-build').appendChild(el('div', 'block-error', '加载失败：' + msg));
+        },
+      ).then((data) => { if (data) renderOverview(data); });
+    }
+
+    /* ================= 用户总览（REQ-Admin-V2） ================= */
+    function renderUsers(data) {
+      $('u-total').textContent = data.total;
+      const tbody = $('u-tbody');
+      tbody.textContent = '';
+      if (!data.items || data.items.length === 0) {
+        const tr = el('tr');
+        const td = el('td', null, '暂无用户。');
+        td.colSpan = 6;
+        tr.appendChild(td);
+        tbody.appendChild(tr);
+        $('u-note').textContent = '';
+        return;
+      }
+      for (const u of data.items) {
+        const tr = el('tr');
+        tr.appendChild(el('td', null, u.username));
+        tr.appendChild(el('td', null, fmtTime(u.createdAt)));
+        tr.appendChild(el('td', null, fmtTime(u.lastActiveAt)));
+        tr.appendChild(el('td', 'num', String(u.watchlistCount)));
+        tr.appendChild(el('td', 'num', String(u.ruleCount)));
+        tr.appendChild(el('td', 'num', String(u.feedbackCount)));
+        tbody.appendChild(tr);
+      }
+      $('u-note').textContent = data.items.length < data.total
+        ? '仅显示最近注册的 ' + data.items.length + ' 位（共 ' + data.total + ' 位）'
+        : '按注册时间倒序';
+    }
+    /** 在 tbody 里放一行跨 6 列的提示（加载中/错误/无权） */
+    function usersNoteRow(cls, msg) {
+      const tbody = $('u-tbody');
+      tbody.textContent = '';
+      const td = el('td', cls, msg);
+      td.colSpan = 6;
+      const tr = el('tr');
+      tr.appendChild(td);
+      tbody.appendChild(tr);
+    }
+    function loadUsers() {
+      usersNoteRow('block-error', '加载中…');
+      adminFetch('/api/admin/users',
+        () => usersNoteRow('block-error', '无权访问：当前账号不是管理员'),
+        (msg) => usersNoteRow('block-error', '加载失败：' + msg),
+      ).then((data) => { if (data) renderUsers(data); });
+    }
+
+    /* ================= 意见反馈（REQ-Feedback-Admin） =================
      * 未登录：apiFetch 自动弹登录浮层，登录成功后续跑本请求；
      * 非管理员：403 → 显示"无权访问"，绝不渲染任何反馈数据；
      * 已读状态/删除/回复均不存在（需求文档"不做"清单）。 */
@@ -103,28 +301,24 @@
       $('list-note').textContent = '按提交时间倒序，仅显示最近 200 条（总量见上方计数）';
     }
 
-    async function load() {
+    function loadFeedback() {
       $('fb-list').textContent = '';
       $('fb-list').appendChild(el('div', 'block-error', '加载中…'));
-      try {
-        const res = await CNStockAuth.apiFetch('/api/admin/feedback?limit=200');
-        if (res.status === 403) {
-          // 已登录但非管理员（或未配置 ADMIN_USERS）：不渲染任何数据
+      adminFetch('/api/admin/feedback?limit=200',
+        () => {
           $('fb-list').textContent = '';
           $('fb-list').appendChild(el('div', 'block-error', '无权访问：当前账号不是管理员'));
           $('list-note').textContent = '';
-          return;
-        }
-        const data = await res.json();
-        if (!res.ok) throw new Error(data.error || ('HTTP ' + res.status));
-        renderList(data.items, data.total);
-      } catch (e) {
-        $('fb-list').textContent = '';
-        $('fb-list').appendChild(el('div', 'block-error', '加载失败：' + e.message));
-        $('list-note').textContent = '';
-      }
+        },
+        (msg) => {
+          $('fb-list').textContent = '';
+          $('fb-list').appendChild(el('div', 'block-error', '加载失败：' + msg));
+          $('list-note').textContent = '';
+        },
+      ).then((data) => { if (data) renderList(data.items, data.total); });
     }
 
+    function load() { loadOverview(); loadUsers(); loadFeedback(); }
     $('refresh-btn').onclick = load;
     load();
     setInterval(load, 60000);
