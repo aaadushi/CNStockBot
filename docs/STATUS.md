@@ -7,7 +7,7 @@
 > 看 [FEATURES.md](FEATURES.md)；踩过的坑看 [PITFALLS.md](PITFALLS.md)；
 > 数据源接口细节看 [DATA_SOURCES.md](DATA_SOURCES.md)。
 
-最后更新：2026-10-11（批次 45：管理后台 v2——用户总览 + 运行概览，REQ-Admin-V2）
+最后更新：2026-10-12（批次 46：隧道假活检测盲区登记为 S3-9 + PITFALLS 回填，纯文档）
 
 ---
 
@@ -93,6 +93,7 @@
 | S3-6 | ~~全页面数据链路巡检~~（2026-09-27 用户登记）：逐页验证 WebChat + 8 个网页/App 页是否有数据，输出巡检报告并把发现的问题登记为 P 编号 / 回填 PITFALLS。**清单见下方"S3-6 巡检清单"** | ✅ 2026-09-27 完成（见更新日志批次 24）：10 页全过一遍，7 页 ✅、2 页封禁期预期降级（P11 + 新增 P12）、1 页部分降级；报告写入更新日志，新发现登记为 P12 |
 | S3-7 | ~~PID 文件按端口命名空间化~~（2026-10-11 登记，根治 PITFALLS 同日条目：并行 `--env-file` 实例覆盖生产 PID 文件） | ✅ 代码 2026-10-11 完成（批次 43）：`logs/main-<port>.pid` / `data-service-<port>.pid` / `supervisor-<mainPort>.pid|.stop|.log`；`stop`/`status` 先新后旧回退读取 legacy 文件（可管理 S3-4/S3-5 旧代码拉起的存量实例），旧文件指向存活进程时保留不误删；守护进程归属门防"停验证实例误杀生产 supervise"。需求文档 [REQ-S3-7](requirements/S3-7-pid-file-namespacing.md)，FEATURES 第 45 节。**生产迁移同日完成**（新 supervise 实例跑命名空间文件，gitSha 18320ba） |
 | S3-8 | ~~Quick Tunnel 隧道无守护~~（2026-10-11 登记，根治 PITFALLS 同日"cloudflared 假活隧道"条目：进程活着但注册失败计数 146、无任何表面征兆） | ✅ 2026-10-11 完成（批次 44）：`scripts/tunnel.mjs` 隧道守护进程——崩溃自动拉起（退避 3s 起封顶 60s、连续失败 20 次放弃，与 service.mjs supervise 同规格）+ **假活检测**（每 15s 读 `--metrics` 端口，宽限 90s 后 `tunnel_register_success==0 && register_fail>0` 即强制重启）；trycloudflare URL 捕获落 `logs/tunnel-url-<port>.txt`（重启自动更新）；控制文件按端口命名空间（S3-7 同款）；子命令 `start/stop/status/url`，薄包装 `scripts/tunnel-supervise.bat`（CRLF+纯 ASCII）。`tunnel-demo.bat` 前台演示脚本保留不动。需求文档 [REQ-S3-8](requirements/S3-8-tunnel-supervision.md)，用法见 [local-tunnel.md](deploy/local-tunnel.md) |
+| S3-9 | **隧道假活检测盲区改进**（2026-10-12 登记：当日两次真机故障暴露——①URL 被 Cloudflare 服务端作废报 `Tunnel not found`，metrics success 是历史累计值不为 0、检测不触发；②本机到 CF 边缘网络抖动断窗（dial 7844 timeout），register_fail 计数不增长、status 全绿；两者都报 Error 1033 且守护进程自称"健康"。细节见 [PITFALLS 2026-10-12 条目](PITFALLS.md)） | 未做。建议修法：守护进程加"注册成功后连续连接失败/经公网 URL 探测 1033 持续 N 分钟即重启换新地址"判定（检测信号可取子进程日志关键词或 metrics 的连接状态计数）；实现前按流程先写需求文档 |
 
 #### S3-6 巡检清单（下一个 agent 照此执行）
 
@@ -404,6 +405,19 @@ App 形式在安卓手机上运行——手机上随时查行情/自选股/收�
 
 ## 更新日志
 
+
+- 2026-10-12（批次 46）：**隧道假活检测盲区登记为 S3-9**（纯文档批次，无代码改动）。
+  当日管理页经隧道访问两次报 Error 1033，排查发现 S3-8 守护进程的假活检测
+  存在两类盲区：①Quick Tunnel URL 被 Cloudflare 服务端作废
+  （`Unauthorized: Tunnel not found`）——metrics 的 success 是历史累计值
+  不为 0，`success==0 && fail>0` 判定不触发；②本机到 CF 边缘网络抖动
+  （`dial 7844 i/o timeout`）——连接级错误发生在注册之前，register_fail
+  计数不增长，断窗期间 status 全绿。应急处理（重启换新 URL + 脱离会话拉起
+  tunnel-supervise.bat）已当日完成，隧道恢复；根治方案登记为 S3-9
+  （实现前须先写需求文档）。
+  - PITFALLS 回填 2026-10-12 条目（现象/根因/应急解法/预防）；
+  - STATUS S3 表新增 S3-9 行；
+  - PR：#69（docs/s3-9-tunnel-detection-gap）。
 
 - 2026-10-11（批次 45）：**管理后台 v2——用户总览 + 运行概览完成**
   （REQ-Admin-V2，STATUS「其他候选方向」第 8 条的第二个切片）。
