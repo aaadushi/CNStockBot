@@ -767,6 +767,30 @@
 - **预防**：给异地朋友发地址前，先通过公网 URL 而非 127.0.0.1 验证一次
   /health；隧道窗口别关（Quick Tunnel 地址随进程死亡）。
 
+### [2026-10-12] S3-8 隧道守护"假活检测"的两类盲区：URL 被服务端作废、网络抖动断窗，metrics 计数器都骗得过检测
+- **现象**：管理页经隧道访问报 **Error 1033**（Cloudflare 无法解析隧道主机），
+  但 `tunnel.mjs status` 显示守护进程正常、register 计数"success=16 fail=123
+  （隧道已注册成功）"——比假活隧道更难察觉：连守护进程自己都报告"健康"。
+- **根因**：S3-8 的假活检测条件是
+  `tunnel_register_success==0 && tunnel_register_fail>0`，两类故障都绕过了它：
+  1. **URL 被 Cloudflare 服务端作废**：cloudflared 持旧 URL 反复重试，日志报
+     `Unauthorized: Tunnel not found`；metrics 的 success 是**历史累计值**
+     （作废前成功过 16 次），不为 0，检测不触发；
+  2. **本机到 Cloudflare 边缘网络抖动**：`dial tcp 198.41.192.x:7844: i/o
+     timeout` 连接级错误发生在注册之前，`tunnel_register_fail` 计数不增长，
+     进程一直活着重试，断窗几分钟内 status 全绿。
+- **解法（本次，应急）**：隧道地址打不开时，`tail logs/tunnel-<port>.log`
+  看子进程输出——`Tunnel not found` = URL 作废须重启换新地址；
+  `dial ... i/o timeout` = 网络抖动，等自动重连或重启。重启换新地址用
+  `node scripts/tunnel.mjs stop` → 脱离会话拉起 `scripts/tunnel-supervise.bat`
+  （Start-Process），新地址用 `node scripts/tunnel.mjs url` 查询，
+  并用 `curl https://<新地址>/health` 经公网验证后再发给访问者。
+- **涉及文件**：`scripts/tunnel.mjs`（S3-8 假活检测逻辑有盲区，已登记
+  STATUS S3-9 改进项：加"注册成功后连续连接失败/1033 持续 N 分钟即重启"判定）
+- **预防**：给外人发隧道地址前永远先经公网 URL 验证 /health；异地访问不通
+  时先看子进程日志的三个关键词（`Tunnel not found` / `i/o timeout` /
+  `Registered tunnel connection`），比看 status 计数器可靠。
+
 ### [2026-10-11] Git Bash 里 taskkill 的 `/pid`、`/T`、`/F` 被 MSYS 路径转换吞掉：报"无效参数"，须写 `//pid`
 - **现象**：Git Bash 执行 `taskkill /pid 41452 /T /F`，报
   `错误: 无效参数/选项 - 'D:/Program Files/Git/pid'`（把 `/pid` 当成了
